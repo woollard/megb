@@ -35,10 +35,27 @@ py-version = "3.10"
 max-line-length = 100
 
 [tool.pylint."messages control"]
-disable = ["too-few-public-methods", "too-many-instance-attributes"]
+# Kept narrow and project-wide only for patterns that recur systematically
+# across this codebase's architecture, not as a blanket way to silence the
+# new implementation. Anything triggered by one or two specific functions
+# is suppressed locally at the call site instead (see inline
+# `# pylint: disable=...` comments in src/execution/).
+disable = [
+    # Every measurement-system/optimizer/execution-backend interface in this
+    # project (BaseMeasurementSystem, BaseOptimizer, ExecutionBackend) is a
+    # single-abstract-method ABC by design: the one method *is* the whole
+    # interface, not a smell.
+    "too-few-public-methods",
+    # Most "large" classes here are frozen dataclasses that exist purely to
+    # carry a research-data schema (CandidateExecutionRequest/Result,
+    # DatasetProvenance, PrivilegedTaskView) — many fields because they are
+    # records, not because they hold excessive behavior/state.
+    "too-many-instance-attributes",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
     "integration: requires network access to fetch pinned upstream datasets",
+    "docker: requires a running Docker daemon and the megb-runner:local image",
 ]
