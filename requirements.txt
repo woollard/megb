@@ -1,0 +1,8 @@
+human-eval>=1.0.3
+hypothesis>=6.100
+pytest>=8.0
+mypy>=1.10
+pylint>=3.2
+litellm>=1.40
+matplotlib>=3.8
+seaborn>=0.13
