@@ -12,11 +12,21 @@ requires-python = ">=3.10"
 include = ["src*"]
 
 [tool.mypy]
-python_version = "3.10"
+# The project supports Python 3.10+ (see requires-python); this is pinned
+# higher so mypy can parse newer syntax appearing in third-party stubs
+# (e.g. numpy, pulled in transitively via pytest's optional numpy
+# integration) without rejecting them at the parser level. It does not
+# license using 3.11+/3.12+-only syntax in this project's own code.
+python_version = "3.12"
 strict = true
 disallow_untyped_defs = true
 warn_return_any = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["human_eval.*", "evalplus.*"]
+ignore_missing_imports = true
+follow_imports = "skip"
 
 [tool.pylint.main]
 py-version = "3.10"
@@ -25,7 +35,10 @@ py-version = "3.10"
 max-line-length = 100
 
 [tool.pylint."messages control"]
-disable = ["too-few-public-methods"]
+disable = ["too-few-public-methods", "too-many-instance-attributes"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: requires network access to fetch pinned upstream datasets",
+]

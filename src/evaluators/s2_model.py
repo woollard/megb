@@ -7,9 +7,8 @@ their most robust setting so any gaming divergence can be attributed to the
 coarse measurement model alone.
 """
 
-from typing import Any
-
 from src.evaluators.base import BaseMeasurementSystem
+from src.evaluators.schema import TaskMeasurementResult
 
 
 class S2WeakModel(BaseMeasurementSystem):
@@ -19,5 +18,5 @@ class S2WeakModel(BaseMeasurementSystem):
     def system_id(self) -> str:
         return "S2_WeakModel"
 
-    def evaluate(self, task_id: str, candidate_code: str) -> dict[str, Any]:
+    def evaluate(self, task_id: str, candidate_code: str) -> TaskMeasurementResult:
         raise NotImplementedError("S2 coarse-model evaluation not yet implemented.")

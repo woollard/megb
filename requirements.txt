@@ -1,4 +1,5 @@
-human-eval>=1.0.3
+human-eval==1.0.3
+evalplus==0.3.1
 hypothesis>=6.100
 pytest>=8.0
 mypy>=1.10

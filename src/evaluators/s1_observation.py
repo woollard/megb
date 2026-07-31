@@ -6,9 +6,8 @@ Model and Measurement Process are held at their most robust setting so any
 gaming divergence can be attributed to sparse observation evidence alone.
 """
 
-from typing import Any
-
 from src.evaluators.base import BaseMeasurementSystem
+from src.evaluators.schema import TaskMeasurementResult
 
 
 class S1WeakObservation(BaseMeasurementSystem):
@@ -18,5 +17,5 @@ class S1WeakObservation(BaseMeasurementSystem):
     def system_id(self) -> str:
         return "S1_WeakObservation"
 
-    def evaluate(self, task_id: str, candidate_code: str) -> dict[str, Any]:
+    def evaluate(self, task_id: str, candidate_code: str) -> TaskMeasurementResult:
         raise NotImplementedError("S1 sparse-observation evaluation not yet implemented.")

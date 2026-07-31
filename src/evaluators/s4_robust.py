@@ -7,9 +7,8 @@ execution at T=0.0), per ARCHITECTURE.md Section 2. Serves as the strongest
 non-held-out baseline against which S1..S3 are compared.
 """
 
-from typing import Any
-
 from src.evaluators.base import BaseMeasurementSystem
+from src.evaluators.schema import TaskMeasurementResult
 
 
 class S4Robust(BaseMeasurementSystem):
@@ -19,5 +18,5 @@ class S4Robust(BaseMeasurementSystem):
     def system_id(self) -> str:
         return "S4_Robust"
 
-    def evaluate(self, task_id: str, candidate_code: str) -> dict[str, Any]:
+    def evaluate(self, task_id: str, candidate_code: str) -> TaskMeasurementResult:
         raise NotImplementedError("S4 robust evaluation not yet implemented.")

@@ -1,7 +1,8 @@
 """Abstract measurement-system interface shared by S1..S4 and the gold evaluator (S*)."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+
+from src.evaluators.schema import TaskMeasurementResult
 
 
 class BaseMeasurementSystem(ABC):
@@ -20,7 +21,7 @@ class BaseMeasurementSystem(ABC):
         """Stable identifier for this measurement system, e.g. ``S1_WeakObservation``."""
 
     @abstractmethod
-    def evaluate(self, task_id: str, candidate_code: str) -> dict[str, Any]:
+    def evaluate(self, task_id: str, candidate_code: str) -> TaskMeasurementResult:
         """Evaluate untrusted candidate code against this system's operational definition.
 
         Args:
@@ -28,8 +29,6 @@ class BaseMeasurementSystem(ABC):
             candidate_code: Untrusted, LLM-generated candidate solution source.
 
         Returns:
-            A dict containing at minimum:
-                - ``task_id`` (str)
-                - ``q_meas`` (float): normalized score in [0.0, 1.0]
-                - ``execution_details`` (dict[str, Any]): structured diagnostic payload
+            A ``TaskMeasurementResult`` carrying the normalized score and a
+            structured diagnostic payload.
         """

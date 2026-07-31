@@ -7,9 +7,8 @@ their most robust setting so any gaming divergence can be attributed to
 process instability alone.
 """
 
-from typing import Any
-
 from src.evaluators.base import BaseMeasurementSystem
+from src.evaluators.schema import TaskMeasurementResult
 
 
 class S3WeakProcess(BaseMeasurementSystem):
@@ -19,5 +18,5 @@ class S3WeakProcess(BaseMeasurementSystem):
     def system_id(self) -> str:
         return "S3_WeakProcess"
 
-    def evaluate(self, task_id: str, candidate_code: str) -> dict[str, Any]:
+    def evaluate(self, task_id: str, candidate_code: str) -> TaskMeasurementResult:
         raise NotImplementedError("S3 LLM-judge evaluation not yet implemented.")
