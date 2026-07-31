@@ -247,3 +247,9 @@ Actively question:
 
 If a proposed implementation conflicts with these principles, explain the conflict before writing code and propose the smallest viable correction.
 
+## Project Documents
+
+Read these documents before planning or implementing work:
+
+- @PRODUCT.md
+- @ARCHITECTURE.md
