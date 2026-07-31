@@ -75,12 +75,15 @@ class CandidateExecutionResult:
 
     ``wall_time_sec`` and ``candidate_wall_time_sec`` are deliberately
     distinct: the former is the total duration the backend observed for
-    this invocation (container start + candidate execution + teardown);
-    the latter, measured by the runner itself around just the candidate
-    call, is ``None`` whenever the candidate never got to run to
-    completion or failure on its own (``TIMEOUT``, ``OUT_OF_MEMORY``,
-    ``INFRASTRUCTURE_ERROR`` — the runner was killed externally or never
-    started, so it never measured or reported its own duration).
+    this invocation (container start + candidate execution + teardown).
+    The latter is measured by the runner itself, from immediately before
+    compiling the candidate's source through the entry-point call
+    returning or failing — it covers compilation and module-level code,
+    not just the final function call — and is ``None`` whenever the
+    candidate never got to run to completion or failure on its own
+    (``TIMEOUT``, ``OUT_OF_MEMORY``, ``INFRASTRUCTURE_ERROR`` — the runner
+    was killed externally or never started, so it never measured or
+    reported its own duration).
     """
 
     invocation_id: str

@@ -51,9 +51,12 @@ class RunnerResponse:
     The controller merges this with metadata it alone can observe (exit
     code, signal, total backend duration, backend/image identity) to build
     the final ``CandidateExecutionResult``. ``candidate_wall_time_sec`` is
-    measured by the runner itself around just the candidate's own
-    execution, distinct from the controller's total backend duration (which
-    also includes container start/stop overhead).
+    measured by the runner itself, starting immediately before
+    ``compile()`` and ending when a status is determined — it covers
+    compilation, module-level code executed by ``exec()``, and the
+    entry-point call itself, not merely the final function invocation. It
+    is distinct from the controller's total backend duration (which also
+    includes container start/stop overhead the runner cannot observe).
     """
 
     status: ExecutionStatus

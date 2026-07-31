@@ -7,7 +7,7 @@ substantially slower than the rest of the suite; run with
 ``pytest -m docker``.
 """
 
-import os
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -21,6 +21,7 @@ from src.execution.protocol import (
     ExecutionLimits,
     ExecutionStatus,
 )
+from tests._execution_fixtures import DUP2_HIJACK_FD1_CANDIDATE_CODE
 
 pytestmark = pytest.mark.docker
 
@@ -331,6 +332,53 @@ def test_raw_fd_write_cannot_corrupt_the_protocol_channel() -> None:
     assert result.return_value == 42
 
 
+def test_continuous_raw_fd_write_is_bounded_by_timeout_not_left_running() -> None:
+    """A candidate that floods fd 1 directly (bypassing Python's own bound) is still contained.
+
+    Raw os.write(1, ...) is discarded to /dev/null (see runner._os_stdio_isolated),
+    so it never reaches the size-bounded Python buffer at all and cannot be
+    stopped by OUTPUT_LIMIT. The only backstop left is the wall-clock
+    timeout — this proves that backstop actually catches it, terminates the
+    container, and still produces a clean, uncorrupted structured result
+    (TIMEOUT), never a hang or a garbled response.
+    """
+    result = _run(
+        (
+            "import os\n"
+            "def f():\n"
+            "    while True:\n"
+            "        os.write(1, b'x' * 65536)\n"
+        ),
+        limits=ExecutionLimits(wall_time_sec=1.0),
+    )
+
+    assert result.status == ExecutionStatus.TIMEOUT
+    assert result.wall_time_sec < 10.0
+
+
+def test_candidate_closing_stdio_fds_still_yields_a_clean_result() -> None:
+    """A candidate that closes fd 1/2 outright still produces a valid structured result."""
+    result = _run(
+        "import os\ndef f():\n    os.close(1)\n    os.close(2)\n    return 5\n"
+    )
+
+    assert result.status == ExecutionStatus.COMPLETED
+    assert result.return_value == 5
+
+
+def test_candidate_dup2_hijack_of_fd1_does_not_corrupt_the_result() -> None:
+    """A candidate that permanently re-points fd 1 elsewhere cannot corrupt the result channel.
+
+    Same scenario as test_execution_runner.py's offline version of this
+    test, verified here end-to-end through the real container and
+    controller (not just run_invocation in-process).
+    """
+    result = _run(DUP2_HIJACK_FD1_CANDIDATE_CODE)
+
+    assert result.status == ExecutionStatus.COMPLETED
+    assert result.return_value == 3
+
+
 # --- Isolation regression -----------------------------------------------------
 
 
@@ -365,8 +413,6 @@ def test_writable_state_does_not_carry_across_invocations() -> None:
 
 
 def _list_megb_runner_containers() -> list[str]:
-    import subprocess  # pylint: disable=import-outside-toplevel
-
     proc = subprocess.run(
         ["docker", "ps", "-a", "--filter", "name=megb-runner-", "--format", "{{.Names}}"],
         capture_output=True,
@@ -377,15 +423,40 @@ def _list_megb_runner_containers() -> list[str]:
     return [name for name in proc.stdout.splitlines() if name]
 
 
-def test_no_containers_remain_after_timeout_and_normal_completion() -> None:
-    """No megb-runner-* containers are left behind after any tested exit path."""
-    _run("def f():\n    while True:\n        pass\n", limits=ExecutionLimits(wall_time_sec=1.0))
+def test_no_containers_remain_after_adversarial_exit_paths() -> None:
+    """No megb-runner-* containers are left behind after any tested exit path.
+
+    Covers: normal completion, exception, timeout, OOM, and a process-limit
+    (fork) attack — the full set of termination paths that could plausibly
+    leave a container or its descendant processes behind.
+    """
     _run("def f():\n    return 1\n")
     _run("def f():\n    raise ValueError('x')\n")
+    _run("def f():\n    while True:\n        pass\n", limits=ExecutionLimits(wall_time_sec=1.0))
+    _run(
+        (
+            "def f():\n"
+            "    data = []\n"
+            "    while True:\n"
+            "        data.append(bytearray(10 * 1024 * 1024))\n"
+        ),
+        limits=ExecutionLimits(wall_time_sec=10.0, memory_mb=64),
+    )
+    _run(
+        (
+            "import os\n"
+            "def f():\n"
+            "    forked = 0\n"
+            "    for _ in range(10000):\n"
+            "        pid = os.fork()\n"
+            "        if pid == 0:\n"
+            "            while True:\n"
+            "                pass\n"
+            "        forked += 1\n"
+            "    return forked\n"
+        ),
+        limits=ExecutionLimits(wall_time_sec=5.0, max_processes=16),
+    )
 
     leftover = _list_megb_runner_containers()
     assert leftover == []
-
-
-if __name__ == "__main__":  # pragma: no cover
-    os.environ.setdefault("MEGB_MANUAL_RUN", "1")

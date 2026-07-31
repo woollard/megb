@@ -10,6 +10,7 @@ import time
 
 from src.execution.protocol import ExecutionStatus
 from src.execution.runner import _is_process_limit_error, run_invocation
+from tests._execution_fixtures import DUP2_HIJACK_FD1_CANDIDATE_CODE
 
 _LIMITS = {"max_stdout_bytes": 65_536, "max_stderr_bytes": 65_536}
 
@@ -41,6 +42,31 @@ def test_completed_invocation_can_return_none() -> None:
 
     assert response.status == ExecutionStatus.COMPLETED
     assert response.return_value is None
+
+
+def test_candidate_wall_time_covers_module_level_code_not_just_the_call() -> None:
+    """candidate_wall_time_sec includes compilation/module-level execution, not only the call.
+
+    The candidate here does its slow work at module level (before the
+    function is even defined), and the function call itself is instant.
+    If candidate_wall_time_sec only measured the final call, it would be
+    near zero; it must instead reflect the module-level sleep too.
+    """
+    response = run_invocation(
+        candidate_code=(
+            "import time\n"
+            "time.sleep(0.2)\n"
+            "def f():\n"
+            "    return 1\n"
+        ),
+        entry_point="f",
+        args=(),
+        kwargs={},
+        **_LIMITS,
+    )
+
+    assert response.status == ExecutionStatus.COMPLETED
+    assert response.candidate_wall_time_sec >= 0.2
 
 
 def test_syntax_error_is_classified_distinctly() -> None:
@@ -154,6 +180,88 @@ def test_candidate_stdout_does_not_pollute_the_response_channel() -> None:
     assert response.status == ExecutionStatus.COMPLETED
     assert response.return_value == 1
     assert "hello from candidate" in response.stdout
+
+
+def test_candidate_closing_stdio_fds_does_not_break_the_runner() -> None:
+    """A candidate that closes fd 1/2 outright still gets a clean, well-formed result."""
+    response = run_invocation(
+        candidate_code=(
+            "import os\n"
+            "def f():\n"
+            "    os.close(1)\n"
+            "    os.close(2)\n"
+            "    return 5\n"
+        ),
+        entry_point="f",
+        args=(),
+        kwargs={},
+        **_LIMITS,
+    )
+
+    assert response.status == ExecutionStatus.COMPLETED
+    assert response.return_value == 5
+
+
+def test_candidate_replacing_sys_stdout_does_not_leak_into_captured_output() -> None:
+    """A candidate that swaps out sys.stdout for its own object cannot evade capture safely."""
+    response = run_invocation(
+        candidate_code=(
+            "import sys\n"
+            "class Fake:\n"
+            "    def write(self, s):\n"
+            "        return len(s)\n"
+            "    def flush(self):\n"
+            "        pass\n"
+            "def f():\n"
+            "    sys.stdout = Fake()\n"
+            "    print('hijacked')\n"
+            "    return 1\n"
+        ),
+        entry_point="f",
+        args=(),
+        kwargs={},
+        **_LIMITS,
+    )
+
+    assert response.status == ExecutionStatus.COMPLETED
+    assert response.return_value == 1
+    # redirect_stdout restores the real sys.stdout on exit regardless of what
+    # the candidate reassigned it to; output sent to the candidate's own
+    # fake object is simply not captured (evaded, not corrupting anything).
+    assert "hijacked" not in response.stdout
+
+
+def test_candidate_dup2_hijack_of_fd1_does_not_survive_isolation_restore() -> None:
+    """A candidate that permanently re-points fd 1 elsewhere is undone before the result is sent."""
+    response = run_invocation(
+        candidate_code=DUP2_HIJACK_FD1_CANDIDATE_CODE,
+        entry_point="f",
+        args=(),
+        kwargs={},
+        **_LIMITS,
+    )
+
+    assert response.status == ExecutionStatus.COMPLETED
+    assert response.return_value == 3
+
+
+def test_invalid_utf8_raw_write_does_not_crash_the_runner() -> None:
+    """Malformed bytes written directly to fd 1 are discarded without corrupting anything."""
+    response = run_invocation(
+        candidate_code=(
+            "import os\n"
+            "def f():\n"
+            "    os.write(1, b'\\xff\\xfe\\x00garbage')\n"
+            "    return 9\n"
+        ),
+        entry_point="f",
+        args=(),
+        kwargs={},
+        **_LIMITS,
+    )
+
+    assert response.status == ExecutionStatus.COMPLETED
+    assert response.return_value == 9
 
 
 def test_process_limit_heuristic_matches_known_resource_errors() -> None:

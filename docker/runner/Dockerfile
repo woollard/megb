@@ -1,7 +1,14 @@
 # Minimal, non-root runner image for untrusted MEGB candidate code (MEGB-02).
 #
 # Build context must be the repository root:
-#   docker build -f docker/runner/Dockerfile -t megb-runner:<tag> .
+#   docker build --provenance=false --sbom=false -f docker/runner/Dockerfile -t megb-runner:<tag> .
+# (--provenance/--sbom=false: BuildKit otherwise embeds a build-timestamped
+# attestation that makes the image ID differ across rebuilds of identical
+# content, defeating the point of content-addressed provenance.)
+#
+# Or simply: ./docker/runner/compute_provenance.sh, which builds with the
+# right flags and prints the full provenance chain (base digest, Dockerfile
+# hash, build-context hash, resulting image ID).
 #
 # Base image pinned by digest for reproducibility. See
 # docs/security/execution-sandbox.md for the update/re-pin procedure.
