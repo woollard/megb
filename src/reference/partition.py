@@ -52,6 +52,16 @@ EXCLUDED_TASK_ID = "HumanEval/39"
 EXPECTED_VALIDATION_TASK_COUNT = 164
 EXPECTED_EXPERIMENT_TASK_COUNT = 163
 
+# Privileged-artifact policy (see docs/measurement/privileged-artifact-policy.md):
+# full manifest bytes live outside git; a committed lock file anchors their
+# identity via checksums, size, and generation provenance.
+LOCK_SCHEMA_VERSION = "partition-lock-v1"
+COMMITTED_OUTPUT_DIR = Path("artifacts/reference/partition")
+PRIVILEGED_OUTPUT_DIR = Path("artifacts/privileged/reference/partition")
+LOCK_PATH = COMMITTED_OUTPUT_DIR / "partition.lock.json"
+AUGMENTATION_RESULTS_PATH = Path("artifacts/reference/augmentation/augmentation_results.json")
+BUILD_COMMAND = "python -m src.reference.partition_cli build"
+
 
 class PartitionInfeasibleError(ValueError):
     """Raised when a task cannot support the required development + reference-only budget."""
@@ -505,62 +515,19 @@ This report covers partition assignment only.
 """
 
 
-def main() -> None:
-    """Build, validate, and write the MEGB-03B partition artifacts from the real corpus."""
+def load_real_corpus_inputs() -> tuple[
+    Mapping[str, Sequence[CaseWithProvenance]],
+    Mapping[str, TaskAugmentationResult],
+    DatasetProvenance,
+]:
+    """Load the pinned corpus and reconstruct the eligible-cases-by-task view.
+
+    Shared by the build/verify CLI (``partition_cli.py``) and anything else
+    that needs the same real-corpus inputs used to build the manifests.
+    """
     priv = {t.task_id: t for t in load_privileged_view()}
     pub = {t.task_id: t.prompt for t in load_public_view()}
     provenance = load_provenance()
-
     cases_by_task, augmentation_results = gather_eligible_cases(priv, pub)
-    verify_augmentation_reproducibility(
-        augmentation_results, Path("artifacts/reference/augmentation/augmentation_results.json")
-    )
-
-    validation_manifest = build_reference_validation_manifest(cases_by_task, provenance)
-    experiment_manifest = build_primary_experiment_manifest(cases_by_task, provenance)
-    checks = validate_primary_experiment_manifest(experiment_manifest)
-
-    # Determinism check: rebuild from scratch, same inputs.
-    rebuild_manifest = build_primary_experiment_manifest(cases_by_task, provenance)
-    # Seed-sensitivity check: same inputs, different seed.
-    reseeded_manifest = build_primary_experiment_manifest(
-        cases_by_task, provenance, partition_seed="megb-03b-seed-v1-ALTERNATE"
-    )
-
-    output_dir = Path("artifacts/reference/partition")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    (output_dir / "reference_validation_task_manifest.json").write_text(
-        json.dumps(dataclasses.asdict(validation_manifest), indent=2, sort_keys=True, default=str)
-        + "\n"
-    )
-    (output_dir / "primary_experiment_task_manifest.json").write_text(
-        json.dumps(dataclasses.asdict(experiment_manifest), indent=2, sort_keys=True, default=str)
-        + "\n"
-    )
-    (output_dir / "primary_experiment_task_manifest_redacted.json").write_text(
-        json.dumps(
-            redact_primary_experiment_manifest(experiment_manifest),
-            indent=2,
-            sort_keys=True,
-            default=str,
-        )
-        + "\n"
-    )
-    (output_dir / "partition_validation_report.md").write_text(
-        render_validation_report(
-            experiment_manifest,
-            validation_manifest,
-            checks,
-            rebuild_checksum=rebuild_manifest.manifest_checksum,
-            reseeded_checksum=reseeded_manifest.manifest_checksum,
-        )
-    )
-
-    print("checks:", checks)
-    print("experiment manifest checksum:", experiment_manifest.manifest_checksum)
-    print("validation manifest checksum:", validation_manifest.manifest_checksum)
-
-
-if __name__ == "__main__":
-    main()
+    verify_augmentation_reproducibility(augmentation_results, AUGMENTATION_RESULTS_PATH)
+    return cases_by_task, augmentation_results, provenance

@@ -20,3 +20,11 @@ venv/
 # Local secrets/environment overrides. No .env file exists in this repo
 # today; this guards against ever accidentally committing one.
 .env
+
+# Privileged research artifacts (MEGB-03B policy, extended to all later
+# MEGB-03 subtasks producing oracle/reference data): full manifests and
+# oracle bytes stay out of git entirely. Their identity is anchored by a
+# committed *.lock.json (checksums, sizes, generation provenance) instead;
+# see docs/measurement/privileged-artifact-policy.md. Regenerate via each
+# module's `build`/`verify` CLI mode rather than trusting a copy on disk.
+artifacts/privileged/

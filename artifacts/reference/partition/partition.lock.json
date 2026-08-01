@@ -1,0 +1,59 @@
+{
+  "entries": [
+    {
+      "algorithm_version": "partition-v1",
+      "artifact_id": "primary_experiment_task_manifest",
+      "augmentation_checksums": {
+        "HumanEval/55": "860e422d519590be2d8670523f421f85be2f1c7dd51046f00a9c7fd7add96761",
+        "HumanEval/6": "8c7505e37823bfe876fe5f52156624a54f661dda0499e9a4c70864d9b92a90de",
+        "HumanEval/63": "bce7ff18a1e6d6ccbca5e945e65925a38840fbd7c523500dfbbc60f49efa6bbd"
+      },
+      "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+      "expected_case_summary": {
+        "development_cases_per_task": 40,
+        "min_reference_only_cases_per_task": 30
+      },
+      "expected_task_count": 163,
+      "generating_code_dirty": true,
+      "generating_code_revision": "0d5819f37961de8ec16ed4a706e9edbf8a302e54",
+      "generation_command": "python -m src.reference.partition_cli build",
+      "logical_sha256": "c85ec9d3cd073821e06b875ccb54e9a7d2b958eeb093dd30afda37f2d5ac1b71",
+      "partition_seed": "megb-03b-seed-v1",
+      "privileged_path": "artifacts/privileged/reference/partition/primary_experiment_task_manifest.json",
+      "schema_version": "partition-lock-v1",
+      "size_bytes": 9517190,
+      "trusted_consumers": [
+        "MEGB-03C"
+      ]
+    },
+    {
+      "algorithm_version": "partition-v1",
+      "artifact_id": "reference_validation_task_manifest",
+      "augmentation_checksums": {
+        "HumanEval/55": "860e422d519590be2d8670523f421f85be2f1c7dd51046f00a9c7fd7add96761",
+        "HumanEval/6": "8c7505e37823bfe876fe5f52156624a54f661dda0499e9a4c70864d9b92a90de",
+        "HumanEval/63": "bce7ff18a1e6d6ccbca5e945e65925a38840fbd7c523500dfbbc60f49efa6bbd"
+      },
+      "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+      "expected_case_summary": {
+        "total_case_count": 124493
+      },
+      "expected_task_count": 164,
+      "generating_code_dirty": true,
+      "generating_code_revision": "0d5819f37961de8ec16ed4a706e9edbf8a302e54",
+      "generation_command": "python -m src.reference.partition_cli build",
+      "logical_sha256": "832620da24471ffe85946fc1ccac7e7ff8a375ab16a452b0b2d60a1b9d8a59b9",
+      "partition_seed": "megb-03b-seed-v1",
+      "privileged_path": "artifacts/privileged/reference/partition/reference_validation_task_manifest.json",
+      "schema_version": "partition-lock-v1",
+      "size_bytes": 9486515,
+      "trusted_consumers": [
+        "MEGB-03C",
+        "MEGB-03D",
+        "MEGB-03H"
+      ]
+    }
+  ],
+  "generated_at": "2026-08-01T05:58:41.157768+00:00",
+  "lock_schema_version": "partition-lock-v1"
+}
