@@ -1,0 +1,714 @@
+{
+  "section2_distribution": {
+    "n_tasks": 164,
+    "min": 12,
+    "p5": 109.45,
+    "p10": 136.2,
+    "p25": 445.25,
+    "median": 977.0,
+    "p75": 1005.0,
+    "p90": 1008.0,
+    "p95": 1010.0,
+    "max": 1100,
+    "mean": 755.9817073170732
+  },
+  "section3_grid": [
+    {
+      "dev_target": 31,
+      "ref_minimum": 1,
+      "required_total": 32,
+      "num_satisfying": 163,
+      "num_failing": 1,
+      "failing_tasks": [
+        "HumanEval/39"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "min_resulting_reference_count": 14,
+      "median_resulting_reference_count": 946
+    },
+    {
+      "dev_target": 31,
+      "ref_minimum": 10,
+      "required_total": 41,
+      "num_satisfying": 163,
+      "num_failing": 1,
+      "failing_tasks": [
+        "HumanEval/39"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "min_resulting_reference_count": 14,
+      "median_resulting_reference_count": 946
+    },
+    {
+      "dev_target": 31,
+      "ref_minimum": 20,
+      "required_total": 51,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 34,
+      "median_resulting_reference_count": 947.0
+    },
+    {
+      "dev_target": 31,
+      "ref_minimum": 30,
+      "required_total": 61,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 34,
+      "median_resulting_reference_count": 947.0
+    },
+    {
+      "dev_target": 31,
+      "ref_minimum": 50,
+      "required_total": 81,
+      "num_satisfying": 159,
+      "num_failing": 5,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "min_resulting_reference_count": 56,
+      "median_resulting_reference_count": 951
+    },
+    {
+      "dev_target": 35,
+      "ref_minimum": 1,
+      "required_total": 36,
+      "num_satisfying": 163,
+      "num_failing": 1,
+      "failing_tasks": [
+        "HumanEval/39"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "min_resulting_reference_count": 10,
+      "median_resulting_reference_count": 942
+    },
+    {
+      "dev_target": 35,
+      "ref_minimum": 10,
+      "required_total": 45,
+      "num_satisfying": 163,
+      "num_failing": 1,
+      "failing_tasks": [
+        "HumanEval/39"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "min_resulting_reference_count": 10,
+      "median_resulting_reference_count": 942
+    },
+    {
+      "dev_target": 35,
+      "ref_minimum": 20,
+      "required_total": 55,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 30,
+      "median_resulting_reference_count": 943.0
+    },
+    {
+      "dev_target": 35,
+      "ref_minimum": 30,
+      "required_total": 65,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 30,
+      "median_resulting_reference_count": 943.0
+    },
+    {
+      "dev_target": 35,
+      "ref_minimum": 50,
+      "required_total": 85,
+      "num_satisfying": 159,
+      "num_failing": 5,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "min_resulting_reference_count": 52,
+      "median_resulting_reference_count": 947
+    },
+    {
+      "dev_target": 40,
+      "ref_minimum": 1,
+      "required_total": 41,
+      "num_satisfying": 163,
+      "num_failing": 1,
+      "failing_tasks": [
+        "HumanEval/39"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "min_resulting_reference_count": 5,
+      "median_resulting_reference_count": 937
+    },
+    {
+      "dev_target": 40,
+      "ref_minimum": 10,
+      "required_total": 50,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 25,
+      "median_resulting_reference_count": 938.0
+    },
+    {
+      "dev_target": 40,
+      "ref_minimum": 20,
+      "required_total": 60,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 25,
+      "median_resulting_reference_count": 938.0
+    },
+    {
+      "dev_target": 40,
+      "ref_minimum": 30,
+      "required_total": 70,
+      "num_satisfying": 160,
+      "num_failing": 4,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "min_resulting_reference_count": 39,
+      "median_resulting_reference_count": 940.5
+    },
+    {
+      "dev_target": 40,
+      "ref_minimum": 50,
+      "required_total": 90,
+      "num_satisfying": 158,
+      "num_failing": 6,
+      "failing_tasks": "6 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6"
+      ],
+      "min_resulting_reference_count": 55,
+      "median_resulting_reference_count": 942.5
+    },
+    {
+      "dev_target": 50,
+      "ref_minimum": 1,
+      "required_total": 51,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 15,
+      "median_resulting_reference_count": 928.0
+    },
+    {
+      "dev_target": 50,
+      "ref_minimum": 10,
+      "required_total": 60,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 15,
+      "median_resulting_reference_count": 928.0
+    },
+    {
+      "dev_target": 50,
+      "ref_minimum": 20,
+      "required_total": 70,
+      "num_satisfying": 160,
+      "num_failing": 4,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "min_resulting_reference_count": 29,
+      "median_resulting_reference_count": 930.5
+    },
+    {
+      "dev_target": 50,
+      "ref_minimum": 30,
+      "required_total": 80,
+      "num_satisfying": 159,
+      "num_failing": 5,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "min_resulting_reference_count": 37,
+      "median_resulting_reference_count": 932
+    },
+    {
+      "dev_target": 50,
+      "ref_minimum": 50,
+      "required_total": 100,
+      "num_satisfying": 157,
+      "num_failing": 7,
+      "failing_tasks": "7 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6"
+      ],
+      "min_resulting_reference_count": 54,
+      "median_resulting_reference_count": 933
+    },
+    {
+      "dev_target": 60,
+      "ref_minimum": 1,
+      "required_total": 61,
+      "num_satisfying": 162,
+      "num_failing": 2,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 5,
+      "median_resulting_reference_count": 918.0
+    },
+    {
+      "dev_target": 60,
+      "ref_minimum": 10,
+      "required_total": 70,
+      "num_satisfying": 160,
+      "num_failing": 4,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "min_resulting_reference_count": 19,
+      "median_resulting_reference_count": 920.5
+    },
+    {
+      "dev_target": 60,
+      "ref_minimum": 20,
+      "required_total": 80,
+      "num_satisfying": 159,
+      "num_failing": 5,
+      "failing_tasks": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "failing_tasks_sample": [
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6",
+        "HumanEval/63"
+      ],
+      "min_resulting_reference_count": 27,
+      "median_resulting_reference_count": 922
+    },
+    {
+      "dev_target": 60,
+      "ref_minimum": 30,
+      "required_total": 90,
+      "num_satisfying": 158,
+      "num_failing": 6,
+      "failing_tasks": "6 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6"
+      ],
+      "min_resulting_reference_count": 35,
+      "median_resulting_reference_count": 922.5
+    },
+    {
+      "dev_target": 60,
+      "ref_minimum": 50,
+      "required_total": 110,
+      "num_satisfying": 155,
+      "num_failing": 9,
+      "failing_tasks": "9 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/106",
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 52,
+      "median_resulting_reference_count": 923
+    },
+    {
+      "dev_target": 90,
+      "ref_minimum": 1,
+      "required_total": 91,
+      "num_satisfying": 158,
+      "num_failing": 6,
+      "failing_tasks": "6 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6"
+      ],
+      "min_resulting_reference_count": 5,
+      "median_resulting_reference_count": 892.5
+    },
+    {
+      "dev_target": 90,
+      "ref_minimum": 10,
+      "required_total": 100,
+      "num_satisfying": 157,
+      "num_failing": 7,
+      "failing_tasks": "7 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55",
+        "HumanEval/6"
+      ],
+      "min_resulting_reference_count": 14,
+      "median_resulting_reference_count": 893
+    },
+    {
+      "dev_target": 90,
+      "ref_minimum": 20,
+      "required_total": 110,
+      "num_satisfying": 155,
+      "num_failing": 9,
+      "failing_tasks": "9 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/106",
+        "HumanEval/39",
+        "HumanEval/41",
+        "HumanEval/55"
+      ],
+      "min_resulting_reference_count": 22,
+      "median_resulting_reference_count": 893
+    },
+    {
+      "dev_target": 90,
+      "ref_minimum": 30,
+      "required_total": 120,
+      "num_satisfying": 151,
+      "num_failing": 13,
+      "failing_tasks": "13 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/100",
+        "HumanEval/106",
+        "HumanEval/130",
+        "HumanEval/138"
+      ],
+      "min_resulting_reference_count": 37,
+      "median_resulting_reference_count": 896
+    },
+    {
+      "dev_target": 90,
+      "ref_minimum": 50,
+      "required_total": 140,
+      "num_satisfying": 146,
+      "num_failing": 18,
+      "failing_tasks": "18 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/100",
+        "HumanEval/106",
+        "HumanEval/123",
+        "HumanEval/130"
+      ],
+      "min_resulting_reference_count": 55,
+      "median_resulting_reference_count": 896.5
+    },
+    {
+      "dev_target": 150,
+      "ref_minimum": 1,
+      "required_total": 151,
+      "num_satisfying": 145,
+      "num_failing": 19,
+      "failing_tasks": "19 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/100",
+        "HumanEval/106",
+        "HumanEval/123",
+        "HumanEval/130"
+      ],
+      "min_resulting_reference_count": 2,
+      "median_resulting_reference_count": 837
+    },
+    {
+      "dev_target": 150,
+      "ref_minimum": 10,
+      "required_total": 160,
+      "num_satisfying": 142,
+      "num_failing": 22,
+      "failing_tasks": "22 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/100",
+        "HumanEval/106",
+        "HumanEval/123",
+        "HumanEval/130"
+      ],
+      "min_resulting_reference_count": 10,
+      "median_resulting_reference_count": 838.5
+    },
+    {
+      "dev_target": 150,
+      "ref_minimum": 20,
+      "required_total": 170,
+      "num_satisfying": 139,
+      "num_failing": 25,
+      "failing_tasks": "25 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/100",
+        "HumanEval/106",
+        "HumanEval/123",
+        "HumanEval/130"
+      ],
+      "min_resulting_reference_count": 22,
+      "median_resulting_reference_count": 839
+    },
+    {
+      "dev_target": 150,
+      "ref_minimum": 30,
+      "required_total": 180,
+      "num_satisfying": 137,
+      "num_failing": 27,
+      "failing_tasks": "27 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/100",
+        "HumanEval/106",
+        "HumanEval/107",
+        "HumanEval/123"
+      ],
+      "min_resulting_reference_count": 30,
+      "median_resulting_reference_count": 840
+    },
+    {
+      "dev_target": 150,
+      "ref_minimum": 50,
+      "required_total": 200,
+      "num_satisfying": 134,
+      "num_failing": 30,
+      "failing_tasks": "30 tasks (see failing_tasks_sample)",
+      "failing_tasks_sample": [
+        "HumanEval/1",
+        "HumanEval/100",
+        "HumanEval/106",
+        "HumanEval/107",
+        "HumanEval/123"
+      ],
+      "min_resulting_reference_count": 50,
+      "median_resulting_reference_count": 841.5
+    }
+  ],
+  "section4_replicates": [
+    {
+      "dev_target": 31,
+      "tasks_excluded_cannot_form_even_one_replicate": 1,
+      "excluded_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "tasks_considered": 163,
+      "tasks_with_duplicate_o4_sets": 43,
+      "duplicate_o4_task_examples": [
+        "HumanEval/1",
+        "HumanEval/10",
+        "HumanEval/102",
+        "HumanEval/105",
+        "HumanEval/107"
+      ],
+      "mean_pairwise_intersection_avg_across_tasks": 29.026993865030676,
+      "mean_pairwise_jaccard_avg_across_tasks": 0.9372254106471403,
+      "median_total_distinct_dev_cases_used": 31,
+      "median_reference_only_cases_remaining": 946,
+      "min_reference_only_cases_remaining": 14
+    },
+    {
+      "dev_target": 40,
+      "tasks_excluded_cannot_form_even_one_replicate": 1,
+      "excluded_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "tasks_considered": 163,
+      "tasks_with_duplicate_o4_sets": 0,
+      "duplicate_o4_task_examples": [],
+      "mean_pairwise_intersection_avg_across_tasks": 22.52760736196319,
+      "mean_pairwise_jaccard_avg_across_tasks": 0.6028564677855263,
+      "median_total_distinct_dev_cases_used": 40,
+      "median_reference_only_cases_remaining": 937,
+      "min_reference_only_cases_remaining": 5
+    },
+    {
+      "dev_target": 50,
+      "tasks_excluded_cannot_form_even_one_replicate": 1,
+      "excluded_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "tasks_considered": 163,
+      "tasks_with_duplicate_o4_sets": 0,
+      "duplicate_o4_task_examples": [],
+      "mean_pairwise_intersection_avg_across_tasks": 18.053374233128835,
+      "mean_pairwise_jaccard_avg_across_tasks": 0.43288361178849216,
+      "median_total_distinct_dev_cases_used": 50,
+      "median_reference_only_cases_remaining": 927,
+      "min_reference_only_cases_remaining": 0
+    },
+    {
+      "dev_target": 60,
+      "tasks_excluded_cannot_form_even_one_replicate": 1,
+      "excluded_tasks_sample": [
+        "HumanEval/39"
+      ],
+      "tasks_considered": 163,
+      "tasks_with_duplicate_o4_sets": 0,
+      "duplicate_o4_task_examples": [],
+      "mean_pairwise_intersection_avg_across_tasks": 15.084049079754601,
+      "mean_pairwise_jaccard_avg_across_tasks": 0.3384657290820783,
+      "median_total_distinct_dev_cases_used": 58,
+      "median_reference_only_cases_remaining": 917,
+      "min_reference_only_cases_remaining": 0
+    }
+  ],
+  "blocked_task_detail": {
+    "HumanEval/39": {
+      "unique_case_count": 12
+    },
+    "HumanEval/55": {
+      "unique_case_count": 45
+    }
+  }
+}
