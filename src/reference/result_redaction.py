@@ -13,14 +13,26 @@ established in MEGB-03B/03C/03D (see
   these exclude failing inputs, expected outputs, per-case pass/fail
   vectors, canonical outputs, exception details containing test data, and
   unapproved reference-test counts (``reference_case_total``/
-  ``reference_case_pass_count`` — excluded unless explicitly approved via
-  ``include_reference_case_counts``). ``diagnostics`` is never included at
-  all: it is the one field free-form enough to accidentally carry any of
-  the above. Task-level classifications, the binary ``q_ref_task``/
-  aggregate ``q_ref`` scores, full-suite outcome *labels* and aggregate
-  base/plus counts (not per-case vectors), and categorical
-  execution-failure tallies are all safe to expose and are included by
-  default — this schema has no case-level identifiers anywhere to leak.
+  ``reference_case_pass_count`` — excluded by default, shown only when
+  ``include_reference_case_counts=True``). ``diagnostics`` is never
+  included at all, under either value of that flag: it is the one field
+  free-form enough to accidentally carry any of the above. Task-level
+  classifications, the binary ``q_ref_task``/aggregate ``q_ref`` scores,
+  full-suite outcome *labels* and aggregate base/plus counts (not per-case
+  vectors), and categorical execution-failure tallies are all safe to
+  expose and are included by default — this schema has no case-level
+  identifiers anywhere to leak.
+
+``include_reference_case_counts`` is a schema-level presentation option,
+not an authorization mechanism: it performs no caller-identity check, and
+the two aggregate integers it exposes (``reference_case_total``,
+``reference_case_pass_count``) are not themselves privileged artifacts —
+they never reveal case content, only how many required cases exist and
+how many passed. No production caller of either ``redact_*`` function
+exists yet in this repository. Any future ticket that introduces the
+first production caller of ``redact_task_result``/``redact_benchmark_result``
+must document, at that point, whether and why that consumer enables the
+flag.
 """
 
 from typing import Any, Mapping

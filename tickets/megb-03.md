@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E complete, pending acceptance)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted, commits `728c601`/`951c309`; MEGB-03F authorized and in progress)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -930,7 +930,7 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 
 ### Status
 
-**Status:** Complete, pending acceptance. Executed per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics. Commit `728c601`.
+**Status:** ACCEPTED. Executed per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics. Commits `728c601` (implementation and tests), `951c309` (ticket completion record).
 
 ### Objective
 
@@ -1056,7 +1056,7 @@ Produce the standard checkpoint report and stop. MEGB-03F requires explicit auth
 
 ### Completion Record
 
-- Status: Complete, pending acceptance.
+- Status: ACCEPTED.
 - Commit: `728c601`.
 - Completed: 2026-08-01.
 - Tests: `src/reference/result_schema.py` + `src/reference/result_redaction.py`, 84 new tests across `tests/test_result_schema.py` (60) and `tests/test_result_redaction.py` (24), all offline/synthetic (no Docker, no network). Organized to map onto the ticket's "Required Tests" list:
