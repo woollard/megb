@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted; MEGB-03D authorized and in progress)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -812,7 +812,27 @@ Produce the standard checkpoint report and stop. MEGB-03D requires explicit auth
 
 ### Status
 
-**Status:** Not started
+**Status:** Authorized and in progress. See the "Approved Execution Amendment (MEGB-03D)" below for the authorized construction rules; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule.
+
+### Approved Execution Amendment (MEGB-03D)
+
+Authorized execution rules (supersede conflicting original "Requirements" text below per this ticket's amendment-precedence rule):
+
+1. Freeze a nonexperimental parity/validation corpus before running parity analysis.
+2. Include: corrected canonical solutions; candidates failing original HumanEval evidence; candidates passing original evidence but failing expanded EvalPlus evidence; hardcoded candidates; boundary-condition failures; type-handling failures; numerical-tolerance failures; mutation-sensitive failures; stateful candidates; and resource-exhausting candidates where the MEGB-02 validation harness can classify them safely.
+3. Include at least one validated `PASS_BASE_FAIL_PLUS` candidate. Preserve its task, source hash, provenance, and upstream/MEGB classifications.
+4. Compare the pinned upstream EvalPlus implementation with the MEGB oracle/comparison layer on the fixed corpus.
+5. Require task-level classification agreement for every upstream-comparable sample. A mismatch must: block parity acceptance; identify the task, comparison profile, and semantic difference; avoid exposing hidden expected outputs in public reports; and be resolved or approved as a new versioned semantic profile.
+6. Keep three concepts separate: upstream full-suite HumanEval+ compatibility; primary 163-task reference-only experimental measurement; 164-task reference-evaluator validation. Full-suite compatibility performance is never labeled as held out.
+7. Do not use confirmatory experimental candidates or any outcomes from MEGB-05/06.
+8. Do not implement the production MEGB-03F evaluator early. Candidate execution for parity uses a narrowly scoped validation harness over MEGB-02; expected outputs and comparison stay on the trusted side; candidate code never receives reference evidence; the harness is clearly marked validation-only.
+9. HumanEval/6, /55, and /63 have no upstream EvalPlus counterpart. Validate them separately: independent implementation or independently specified contract-derived oracle where practical; task-appropriate boundary and metamorphic checks; comparison against the MEGB-03C expected outputs; reported as supplementary-oracle validation, not upstream parity.
+10. Verify the exhaustive 12-case HumanEval/39 validation profile separately from the 163-task parity corpus.
+11. Record pinned EvalPlus version, private/internal API dependencies (e.g. `_poly`), Python/NumPy versions, corpus checksum, commands, and environment.
+12. Full parity and supplementary-validation artifacts follow the privileged/redacted artifact policy (`docs/measurement/privileged-artifact-policy.md`). Public reports contain classifications and aggregate counts only — no expected outputs or hidden case details.
+13. Required acceptance evidence: frozen parity-corpus checksum; zero unexplained upstream/MEGB classification mismatches; at least one `PASS_BASE_FAIL_PLUS` example; complete supplementary-oracle validation for tasks 6, 55, and 63; exhaustive HumanEval/39 validation; no privileged leakage; deterministic rerun; full regression, mypy, and pylint results.
+
+Non-goals unchanged from below: no typed evaluator-result implementation (MEGB-03E), no production task-level evaluator (MEGB-03F).
 
 ### Objective
 
