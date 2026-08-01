@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted, commits `728c601`/`951c309`; MEGB-03F authorized and in progress)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted, commits `728c601`/`951c309`; MEGB-03F complete, pending acceptance, commit `410388d`)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -211,7 +211,7 @@ After producing the report, stop. Do not begin the next subtask.
 - [x] MEGB-03C — Construct the privileged oracle artifact
 - [x] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
 - [x] MEGB-03E — Implement typed result models and scoring semantics
-- [ ] MEGB-03F — Implement the task-level reference evaluator
+- [x] MEGB-03F — Implement the task-level reference evaluator
 - [ ] MEGB-03G — Implement aggregation, caching, redaction, and audit
 - [ ] MEGB-03H — Calibrate resources and verify deterministic measurement
 - [ ] MEGB-03I — Add CLI, configuration, documentation, CI, and final acceptance
@@ -1101,7 +1101,7 @@ The "Full offline regression suite ... 283 passed, 0 failed (up from 263 before 
 
 ### Status
 
-**Status:** Not started
+**Status:** Complete, pending acceptance. Executed per the original "Requirements" below — no execution amendment was needed. The literal 3-argument illustrative signature (`evaluate_reference(task_id, candidate_code, context)`) was extended with explicit `evidence`, `backend`, and `profile` parameters — documented as a deviation below — since a pure 3-argument function cannot discover privileged oracle evidence or a backend/profile on its own; the ticket itself invites "an interface similar to" this signature. Commit `410388d`.
 
 ### Objective
 
@@ -1185,12 +1185,32 @@ Produce the standard checkpoint report and stop. MEGB-03G requires explicit auth
 
 ### Completion Record
 
-- Status: Not started
-- Commit: —
-- Completed: —
-- Tests: —
-- Deviations: —
-- Handoff: —
+- Status: Complete, pending acceptance.
+- Commit: `410388d`.
+- Completed: 2026-08-01.
+- Tests: `src/reference/reference_evaluator.py`, 46 new tests across `tests/test_reference_evaluator.py` (43, offline/synthetic, no Docker) and `tests/test_reference_evaluator_docker.py` (3, real Docker vertical slice against the actual dataset via `DockerPerInvocationBackend`). Organized against the ticket's "Required Tests" list:
+  - Correct candidate and wrong-output tests: offline (synthetic `double` task) and real-Docker (HumanEval/0 `has_close_elements`) coverage of both.
+  - Syntax/exception/timeout/memory/process/output-limit mapping: parametrized test over all 6 candidate-attributable `ExecutionStatus` values, plus an exhaustiveness test (`test_every_execution_status_value_is_mapped`) asserting every `ExecutionStatus` member is accounted for — guards requirement 11 ("prevent unclassified failures from becoming valid zero scores").
+  - Candidate-hash verification: mismatch raises `CandidateIdentityMismatchError` before any `backend.execute()` call.
+  - Missing/corrupt oracle: a case with a `ORACLE_STATUS_GENERATION_FAILED` record produces `INVALID_ORACLE`, `q_ref_task=None`.
+  - Sandbox-backend/malformed-response injection: `PROTOCOL_ERROR`/`INFRASTRUCTURE_ERROR` execution statuses invalidate the task and stop early (remaining cases never attempted).
+  - Deterministic ordering: `ReferenceTaskEvidence` rejects unsorted/duplicate `case_id`s at construction; requests are sent in `case_id` order.
+  - Cross-case state isolation: each case gets its own request with only its own args (never another case's), and `backend.execute()` is called exactly once per case with a distinct request object each time.
+  - Privileged-evidence exfiltration attempts: `CandidateExecutionRequest`'s fixed field set is asserted to have no room for oracle content; candidate source is passed through byte-for-byte; none of `context`'s privileged identifiers ever appear in a request; the real-Docker malicious-candidate test attempts to read an oracle-flavored file path and is confirmed to neither crash the evaluator nor receive anything it wasn't given.
+  - Full-versus-mini identifiers: `FULL_EXECUTION_PROFILE`/`REDUCED_DEV_EXECUTION_PROFILE` have distinct `profile_id`/`evaluator_version`; a reduced-profile run evaluates fewer cases and its result's context always carries the reduced (never full) evaluator_version.
+  - Configuration/version validation (additional, beyond the literal required-tests list but needed for requirement 3): mismatches on `context.dataset_version`/`partition_version`/`execution_profile_id`/`evaluator_version` and on `evidence.oracle_version`/`protocol_version`/`comparison_profile.profile_version` all raise `ReferenceEvaluatorVersionMismatchError` before any execution.
+  - Full offline regression suite (`pytest -m "not integration and not docker"`): 326 passed, 0 failed (up from 283 before this subtask; +43 new offline tests).
+  - Real Docker vertical slice (`pytest tests/test_reference_evaluator_docker.py`): 3/3 passed against the real dataset and the real pinned `megb-runner:local` image.
+  - `mypy --strict` over `src/`: clean, 40 source files.
+  - `pylint` over `src/` and `tests/`: 10.00/10 (one pre-existing, already-accepted `duplicate-code` note in `tests/test_parity_lock.py`, unrelated to this subtask; a second, narrowly-scoped `duplicate-code` disable was added in `tests/test_reference_evaluator_docker.py` for HumanEval/0's own canonical algorithm text, which also appears verbatim as unrelated fixture data in `parity_corpus.py`).
+- Deviations:
+  1. **Signature extension** (documented in Status above): `evaluate_reference` takes explicit `evidence: ReferenceTaskEvidence`, `backend: ExecutionBackend`, and `profile: ExecutionProfile` parameters beyond the ticket's illustrative `(task_id, candidate_code, context)`. `ReferenceTaskEvidence` is a new, non-MEGB-03E type bundling the task's authorized cases (`ReferenceCase`: `case_id`/`args`/`OracleRecord`), entry point, comparison profile, and version/checksum metadata — the trusted-side evidence bundle a pure 3-argument function has no way to locate on its own.
+  2. **Real bugs caught before landing** (see commit message for detail): (a) `OracleRecord.expected_output` is tagged-JSON and must be `decode_value()`-d before `compare_outputs` — confirmed against MEGB-03D's own `parity.py` usage pattern, which always decodes fresh rather than reading a stored tagged value; (b) MEGB-03E's accepted `ReferenceTaskResult` schema requires a measurement-apparatus `FailureCategory` (never `NONE`) for any non-VALID, non-INCOMPLETE status — caught by the schema's own validation firing during testing, not assumed. Both fixed before any test was declared passing.
+  3. **INVALID_ORACLE's FailureCategory**: MEGB-03E's accepted taxonomy has no dedicated oracle-failure category; `INVALID_ORACLE` results are stamped `FailureCategory.INFRASTRUCTURE_ERROR` (a broken/missing oracle record is an evaluation-infrastructure defect, not a candidate/sandbox protocol failure) — a scoping choice within the existing accepted categories, not a change to MEGB-03E's schema itself.
+  4. **Reduced-development profile**: implemented as a smaller, deterministic case subset (`max_cases_per_task`) run through the exact same `ExecutionBackend` as the full profile — never a less-isolated execution mechanism — with a distinct `profile_id`/`evaluator_version` so a reduced result's `ReferenceEvaluationContext.evaluator_version` can never be mistaken for full S*.
+  5. **Batching/persistent workers**: not implemented (an explicit non-goal); every case is one independent, sequential `backend.execute()` call.
+  6. **Privileged per-case diagnostic persistence**: `PrivilegedCaseDiagnostic` is returned in-memory (as the second element of `evaluate_reference`'s return tuple) but never written to durable storage — that is MEGB-03G's "Audit" responsibility, per its own ticket title and MEGB-03E's Non-Goals excluding "persistent caching or audit storage."
+- Handoff: `src/reference/reference_evaluator.py` (`evaluate_reference`, `ReferenceCase`, `ReferenceTaskEvidence`, `ExecutionProfile`, `FULL_EXECUTION_PROFILE`/`REDUCED_DEV_EXECUTION_PROFILE`, `PrivilegedCaseDiagnostic`, and the three error types) is ready for MEGB-03G to build aggregation, caching, redaction, and audit storage on top of. MEGB-03G will need to assemble `ReferenceTaskEvidence` per task (from the privileged oracle artifacts and partition case/args data — not yet wired into an automatic loader; MEGB-03F only defines the evidence *shape*, construction is currently manual/test-only) and call `evaluate_reference` once per task to build up a `ReferenceBenchmarkResult`.
 
 ---
 
