@@ -1,6 +1,12 @@
 """Tests for MEGB-03B's privileged-artifact lock (write/verify of the two full
 manifests kept outside git, anchored by a committed partition.lock.json)."""
 
+# This test intentionally reconstructs production lock/provenance fields
+# independently to verify the serialized contract. Sharing the production
+# implementation would weaken the test by allowing implementation and
+# verification to fail identically.
+# pylint: disable=duplicate-code
+
 import dataclasses
 import json
 from pathlib import Path
