@@ -46,7 +46,7 @@ from src.reference.reference_evaluator import (
     ReferenceTaskEvidence,
     evaluate_reference,
 )
-from src.reference.result_schema import MeasurementStatus, ReferenceEvaluationContext
+from src.reference.result_schema import MeasurementStatus, ReferenceRunContext
 
 pytestmark = pytest.mark.docker
 
@@ -98,20 +98,22 @@ def _build_evidence() -> ReferenceTaskEvidence:
     )
 
 
-def _context_for(candidate_code: str) -> ReferenceEvaluationContext:
-    return ReferenceEvaluationContext(
+def _run_context() -> ReferenceRunContext:
+    return ReferenceRunContext(
         experiment_run_id="exp-1",
         optimization_run_id="opt-1",
-        candidate_id="cand-1",
-        candidate_sha256=hashlib.sha256(candidate_code.encode("utf-8")).hexdigest(),
-        candidate_frozen_at="2026-08-01T00:00:00Z",
-        candidate_selection_rule="best_of_run",
         optimization_config_sha256="b" * 64,
+        portfolio_frozen_at="2026-08-01T00:00:00Z",
+        portfolio_selection_rule="best_of_run",
         evaluator_version=EVALUATOR_VERSION_FULL,
         dataset_version=HUMANEVAL_PLUS_VERSION,
         partition_version=PARTITION_ALGORITHM_VERSION,
         execution_profile_id=EXECUTION_PROFILE_ID_FULL,
     )
+
+
+def _candidate_identity(candidate_code: str) -> tuple[str, str]:
+    return "cand-1", hashlib.sha256(candidate_code.encode("utf-8")).hexdigest()
 
 
 _PROMPT_HEADER = "from typing import List\n\n\n"
@@ -148,11 +150,18 @@ _MALICIOUS_CANDIDATE = (
 def test_correct_candidate_passes_real_vertical_slice() -> None:
     """A genuinely correct candidate passes both real cases via real Docker execution."""
     evidence = _build_evidence()
-    context = _context_for(_CORRECT_CANDIDATE)
+    run_context = _run_context()
+    candidate_id, candidate_sha256 = _candidate_identity(_CORRECT_CANDIDATE)
     backend = DockerPerInvocationBackend()
 
     result, diagnostics = evaluate_reference(
-        evidence, _CORRECT_CANDIDATE, context, backend=backend, profile=FULL_EXECUTION_PROFILE
+        evidence,
+        _CORRECT_CANDIDATE,
+        candidate_id,
+        candidate_sha256,
+        run_context,
+        backend=backend,
+        profile=FULL_EXECUTION_PROFILE,
     )
 
     assert result.status == MeasurementStatus.VALID
@@ -163,11 +172,18 @@ def test_correct_candidate_passes_real_vertical_slice() -> None:
 def test_incorrect_candidate_produces_valid_zero_via_real_docker() -> None:
     """A candidate that always returns False fails at least one real case."""
     evidence = _build_evidence()
-    context = _context_for(_INCORRECT_CANDIDATE)
+    run_context = _run_context()
+    candidate_id, candidate_sha256 = _candidate_identity(_INCORRECT_CANDIDATE)
     backend = DockerPerInvocationBackend()
 
     result, _diagnostics = evaluate_reference(
-        evidence, _INCORRECT_CANDIDATE, context, backend=backend, profile=FULL_EXECUTION_PROFILE
+        evidence,
+        _INCORRECT_CANDIDATE,
+        candidate_id,
+        candidate_sha256,
+        run_context,
+        backend=backend,
+        profile=FULL_EXECUTION_PROFILE,
     )
 
     assert result.status == MeasurementStatus.VALID
@@ -180,11 +196,18 @@ def test_malicious_exfiltration_attempt_does_not_crash_or_leak() -> None:
     executes normally — no leakage, no evaluator crash — and is scored on its
     actual (correct) logic alone."""
     evidence = _build_evidence()
-    context = _context_for(_MALICIOUS_CANDIDATE)
+    run_context = _run_context()
+    candidate_id, candidate_sha256 = _candidate_identity(_MALICIOUS_CANDIDATE)
     backend = DockerPerInvocationBackend()
 
     result, diagnostics = evaluate_reference(
-        evidence, _MALICIOUS_CANDIDATE, context, backend=backend, profile=FULL_EXECUTION_PROFILE
+        evidence,
+        _MALICIOUS_CANDIDATE,
+        candidate_id,
+        candidate_sha256,
+        run_context,
+        backend=backend,
+        profile=FULL_EXECUTION_PROFILE,
     )
 
     assert result.status == MeasurementStatus.VALID

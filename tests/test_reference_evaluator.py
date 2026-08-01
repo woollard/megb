@@ -1,4 +1,4 @@
-"""Tests for src.reference.reference_evaluator (MEGB-03F).
+"""Tests for src.reference.reference_evaluator (MEGB-03F, v2 Approved Correction).
 
 Organized to map onto the ticket's "Required Tests" list: correct/wrong-
 output, execution-status mapping, candidate-hash verification, missing/
@@ -7,6 +7,10 @@ ordering, cross-case state isolation, privileged-evidence exfiltration
 attempts, and full-versus-mini identifiers. A real Docker-backed vertical
 slice (correct/incorrect/malicious) lives in
 ``tests/test_reference_evaluator_docker.py``.
+
+Since v2, ``evaluate_reference`` takes this task's own ``candidate_id``/
+``candidate_sha256`` as explicit parameters alongside the shared
+``ReferenceRunContext`` — every call site below reflects that split.
 """
 
 import dataclasses
@@ -43,6 +47,7 @@ from src.reference.reference_evaluator import (
     REDUCED_DEV_EXECUTION_PROFILE,
     CandidateIdentityMismatchError,
     ExecutionProfile,
+    PrivilegedCaseDiagnostic,
     ReferenceCase,
     ReferenceEvaluatorVersionMismatchError,
     ReferenceTaskEvidence,
@@ -50,12 +55,19 @@ from src.reference.reference_evaluator import (
     _INVALID_MEASUREMENT_STATUS_BY_EXECUTION_STATUS,
     evaluate_reference,
 )
-from src.reference.result_schema import MeasurementStatus, ReferenceEvaluationContext
+from src.reference.result_schema import (
+    MeasurementStatus,
+    ReferenceRunContext,
+    ReferenceTaskResult,
+)
 
 _ENTRY_POINT = "double"
 _PROMPT = f"def {_ENTRY_POINT}(n):\n"
 _CANONICAL_SOLUTION = "    return n * 2\n"
 _TASK_ID = "Test/0"
+
+_CANDIDATE_CODE = "def double(n):\n    return n * 2\n"
+_CANDIDATE_ID = "cand-Test/0"
 
 
 class FakeExecutionBackend(ExecutionBackend):
@@ -137,29 +149,49 @@ def _evidence(cases: list[ReferenceCase], **overrides: object) -> ReferenceTaskE
     return ReferenceTaskEvidence(**fields)  # type: ignore[arg-type]
 
 
-def _context(candidate_sha256: str, **overrides: object) -> ReferenceEvaluationContext:
+def _run_context(**overrides: object) -> ReferenceRunContext:
     fields: dict[str, object] = {
         "experiment_run_id": "exp-1",
         "optimization_run_id": "opt-1",
-        "candidate_id": "cand-1",
-        "candidate_sha256": candidate_sha256,
-        "candidate_frozen_at": "2026-08-01T00:00:00Z",
-        "candidate_selection_rule": "best_of_run",
         "optimization_config_sha256": "b" * 64,
+        "portfolio_frozen_at": "2026-08-01T00:00:00Z",
+        "portfolio_selection_rule": "best_of_run",
         "evaluator_version": EVALUATOR_VERSION_FULL,
         "dataset_version": HUMANEVAL_PLUS_VERSION,
         "partition_version": PARTITION_ALGORITHM_VERSION,
         "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
     }
     fields.update(overrides)
-    return ReferenceEvaluationContext(**fields)  # type: ignore[arg-type]
+    return ReferenceRunContext(**fields)  # type: ignore[arg-type]
 
 
 def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-_CANDIDATE_CODE = "def double(n):\n    return n * 2\n"
+_CANDIDATE_SHA256 = _sha256(_CANDIDATE_CODE)
+
+
+def _evaluate(  # pylint: disable=too-many-arguments
+    evidence: ReferenceTaskEvidence,
+    candidate_code: str,
+    run_context: ReferenceRunContext,
+    *,
+    backend: ExecutionBackend,
+    profile: ExecutionProfile = FULL_EXECUTION_PROFILE,
+    candidate_id: str = _CANDIDATE_ID,
+    candidate_sha256: str = _CANDIDATE_SHA256,
+) -> tuple[ReferenceTaskResult, tuple[PrivilegedCaseDiagnostic, ...]]:
+    """Thin wrapper fixing this file's default task-specific candidate identity."""
+    return evaluate_reference(
+        evidence,
+        candidate_code,
+        candidate_id,
+        candidate_sha256,
+        run_context,
+        backend=backend,
+        profile=profile,
+    )
 
 
 # --- Correct candidate and wrong-output tests --------------------------
@@ -169,18 +201,20 @@ def test_correct_candidate_all_cases_pass() -> None:
     """A candidate matching every case's expected output yields q_ref_task=1.0."""
     cases = [_case("c0", 3), _case("c1", 5)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [_execution_result(return_value=6), _execution_result(return_value=10)]
     )
 
-    result, diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    result, diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert result.status == MeasurementStatus.VALID
     assert result.q_ref_task == 1.0
     assert result.reference_case_total == 2
     assert result.reference_case_pass_count == 2
     assert result.first_failure_category == FailureCategory.NONE
+    assert result.candidate_id == _CANDIDATE_ID
+    assert result.candidate_sha256 == _CANDIDATE_SHA256
     assert len(diagnostics) == 2
     assert all(d.matched is True for d in diagnostics)
 
@@ -189,10 +223,10 @@ def test_wrong_output_candidate_produces_valid_zero() -> None:
     """A candidate returning a wrong value yields q_ref_task=0.0, category WRONG_OUTPUT."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([_execution_result(return_value=999)])
 
-    result, diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    result, diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert result.status == MeasurementStatus.VALID
     assert result.q_ref_task == 0.0
@@ -220,10 +254,10 @@ def test_candidate_failure_status_maps_to_valid_zero_with_category(
     """Every candidate-attributable ExecutionStatus maps to a valid zero score."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([_execution_result(status=status, return_value=None)])
 
-    result, _diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    result, _diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert result.status == MeasurementStatus.VALID
     assert result.q_ref_task == 0.0
@@ -244,14 +278,16 @@ def test_every_execution_status_value_is_mapped() -> None:
 
 
 def test_candidate_hash_mismatch_blocks_execution() -> None:
-    """A candidate/context sha256 mismatch raises before any case executes."""
+    """A candidate/expected sha256 mismatch raises before any case executes."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256="0" * 64)
+    run_context = _run_context()
     backend = FakeExecutionBackend([])
 
     with pytest.raises(CandidateIdentityMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(
+            evidence, _CANDIDATE_CODE, run_context, backend=backend, candidate_sha256="0" * 64
+        )
 
     assert not backend.requests
 
@@ -270,10 +306,10 @@ def test_corrupt_oracle_record_produces_invalid_oracle_measurement() -> None:
     )
     corrupt_case = ReferenceCase(case_id="c0", args=(3,), oracle_record=corrupt_record)
     evidence = _evidence([corrupt_case])
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([_execution_result(return_value=6)])
 
-    result, diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    result, diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert result.status == MeasurementStatus.INVALID_ORACLE
     assert result.q_ref_task is None
@@ -288,7 +324,7 @@ def test_protocol_error_invalidates_measurement_and_stops_early() -> None:
     and never proceeds to remaining cases."""
     cases = [_case("c0", 3), _case("c1", 5)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [
             _execution_result(status=ExecutionStatus.PROTOCOL_ERROR),
@@ -296,7 +332,7 @@ def test_protocol_error_invalidates_measurement_and_stops_early() -> None:
         ]
     )
 
-    result, diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    result, diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert result.status == MeasurementStatus.INVALID_PROTOCOL
     assert result.q_ref_task is None
@@ -308,7 +344,7 @@ def test_infrastructure_error_invalidates_measurement_and_stops_early() -> None:
     """An INFRASTRUCTURE_ERROR (backend/sandbox failure) invalidates the task."""
     cases = [_case("c0", 3), _case("c1", 5)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [
             _execution_result(status=ExecutionStatus.INFRASTRUCTURE_ERROR),
@@ -316,7 +352,7 @@ def test_infrastructure_error_invalidates_measurement_and_stops_early() -> None:
         ]
     )
 
-    result, _diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    result, _diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert result.status == MeasurementStatus.INVALID_INFRASTRUCTURE
     assert result.q_ref_task is None
@@ -344,7 +380,7 @@ def test_cases_sent_to_backend_in_case_id_order() -> None:
     """Requests are sent to the backend in evidence.cases order, deterministically."""
     cases = [_case("c0", 1), _case("c1", 2), _case("c2", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [
             _execution_result(return_value=2),
@@ -353,7 +389,7 @@ def test_cases_sent_to_backend_in_case_id_order() -> None:
         ]
     )
 
-    evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert [request.args for request in backend.requests] == [(1,), (2,), (3,)]
 
@@ -365,7 +401,7 @@ def test_each_case_gets_independent_request_with_only_its_own_args() -> None:
     """No request's args ever contains another case's input (no state/data leakage)."""
     cases = [_case("c0", 1), _case("c1", 2), _case("c2", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [
             _execution_result(return_value=2),
@@ -374,7 +410,7 @@ def test_each_case_gets_independent_request_with_only_its_own_args() -> None:
         ]
     )
 
-    evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     for index, request in enumerate(backend.requests):
         assert request.args == cases[index].args
@@ -387,12 +423,12 @@ def test_backend_called_exactly_once_per_case() -> None:
     """Each case results in exactly one backend.execute() call, never reused/batched."""
     cases = [_case("c0", 1), _case("c1", 2)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [_execution_result(return_value=2), _execution_result(return_value=4)]
     )
 
-    evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert len(backend.requests) == len(cases)
     assert len({id(r) for r in backend.requests}) == len(cases)
@@ -419,29 +455,32 @@ def test_request_candidate_code_passed_through_unmodified() -> None:
     """The candidate source sent to the backend is exactly what was given, never augmented."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([_execution_result(return_value=6)])
 
-    evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert backend.requests[0].candidate_code == _CANDIDATE_CODE
 
 
-def test_request_never_carries_evaluation_context_fields() -> None:
-    """None of the trusted-side context's privileged identifiers ever appear in a request."""
+def test_request_never_carries_evaluation_context_or_candidate_identity() -> None:
+    """None of the trusted-side run_context's identifiers, nor this task's own
+    candidate_id/candidate_sha256, ever appear in a request."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([_execution_result(return_value=6)])
 
-    evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     request = backend.requests[0]
     sensitive_values = [
-        context.experiment_run_id,
-        context.optimization_run_id,
-        context.candidate_frozen_at,
-        context.optimization_config_sha256,
+        run_context.experiment_run_id,
+        run_context.optimization_run_id,
+        run_context.portfolio_frozen_at,
+        run_context.optimization_config_sha256,
+        _CANDIDATE_ID,
+        _CANDIDATE_SHA256,
     ]
     request_text = f"{request.candidate_code}{request.entry_point}{request.args}{request.kwargs}"
     for value in sensitive_values:
@@ -452,10 +491,10 @@ def test_request_kwargs_are_always_empty() -> None:
     """evaluate_reference never injects hidden kwargs alongside a case's positional args."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([_execution_result(return_value=6)])
 
-    evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert backend.requests[0].kwargs == {}
 
@@ -481,8 +520,7 @@ def test_reduced_profile_evaluates_fewer_cases() -> None:
         limits=ExecutionLimits(),
         max_cases_per_task=2,
     )
-    context = _context(
-        candidate_sha256=_sha256(_CANDIDATE_CODE),
+    run_context = _run_context(
         evaluator_version=EVALUATOR_VERSION_REDUCED_DEV,
         execution_profile_id=EXECUTION_PROFILE_ID_REDUCED_DEV,
     )
@@ -490,8 +528,8 @@ def test_reduced_profile_evaluates_fewer_cases() -> None:
         [_execution_result(return_value=2), _execution_result(return_value=4)]
     )
 
-    result, diagnostics = evaluate_reference(
-        evidence, _CANDIDATE_CODE, context, backend=backend, profile=reduced_profile
+    result, diagnostics = _evaluate(
+        evidence, _CANDIDATE_CODE, run_context, backend=backend, profile=reduced_profile
     )
 
     assert result.reference_case_total == 2
@@ -503,15 +541,18 @@ def test_reduced_result_never_carries_full_evaluator_version() -> None:
     """A reduced-profile result's context always declares the reduced evaluator_version."""
     cases = [_case("c0", 1)]
     evidence = _evidence(cases)
-    context = _context(
-        candidate_sha256=_sha256(_CANDIDATE_CODE),
+    run_context = _run_context(
         evaluator_version=EVALUATOR_VERSION_REDUCED_DEV,
         execution_profile_id=EXECUTION_PROFILE_ID_REDUCED_DEV,
     )
     backend = FakeExecutionBackend([_execution_result(return_value=2)])
 
-    result, _diagnostics = evaluate_reference(
-        evidence, _CANDIDATE_CODE, context, backend=backend, profile=REDUCED_DEV_EXECUTION_PROFILE
+    result, _diagnostics = _evaluate(
+        evidence,
+        _CANDIDATE_CODE,
+        run_context,
+        backend=backend,
+        profile=REDUCED_DEV_EXECUTION_PROFILE,
     )
 
     assert result.context.evaluator_version == EVALUATOR_VERSION_REDUCED_DEV
@@ -522,58 +563,50 @@ def test_reduced_result_never_carries_full_evaluator_version() -> None:
 
 
 def test_dataset_version_mismatch_on_context_rejected() -> None:
-    """context.dataset_version must match the live pinned HumanEval+ version."""
+    """run_context.dataset_version must match the live pinned HumanEval+ version."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(
-        candidate_sha256=_sha256(_CANDIDATE_CODE), dataset_version="stale-version"
-    )
+    run_context = _run_context(dataset_version="stale-version")
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
     assert not backend.requests
 
 
 def test_partition_version_mismatch_on_context_rejected() -> None:
-    """context.partition_version must match the live PARTITION_ALGORITHM_VERSION."""
+    """run_context.partition_version must match the live PARTITION_ALGORITHM_VERSION."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(
-        candidate_sha256=_sha256(_CANDIDATE_CODE), partition_version="stale-partition"
-    )
+    run_context = _run_context(partition_version="stale-partition")
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
     assert not backend.requests
 
 
 def test_execution_profile_id_mismatch_on_context_rejected() -> None:
-    """context.execution_profile_id must match the profile actually being used."""
+    """run_context.execution_profile_id must match the profile actually being used."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(
-        candidate_sha256=_sha256(_CANDIDATE_CODE), execution_profile_id="wrong-profile"
-    )
+    run_context = _run_context(execution_profile_id="wrong-profile")
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
     assert not backend.requests
 
 
 def test_evaluator_version_mismatch_on_context_rejected() -> None:
-    """context.evaluator_version must match the profile actually being used."""
+    """run_context.evaluator_version must match the profile actually being used."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
-    context = _context(
-        candidate_sha256=_sha256(_CANDIDATE_CODE), evaluator_version="wrong-evaluator"
-    )
+    run_context = _run_context(evaluator_version="wrong-evaluator")
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
     assert not backend.requests
 
 
@@ -581,11 +614,11 @@ def test_evidence_oracle_version_mismatch_rejected() -> None:
     """evidence.oracle_version must match the live ORACLE_ALGORITHM_VERSION."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases, oracle_version="stale-oracle")
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
     assert not backend.requests
 
 
@@ -593,11 +626,11 @@ def test_evidence_protocol_version_mismatch_rejected() -> None:
     """evidence.protocol_version must match the live EXECUTION_PROTOCOL_VERSION."""
     cases = [_case("c0", 3)]
     evidence = _evidence(cases, protocol_version="stale-protocol")
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
     assert not backend.requests
 
 
@@ -609,11 +642,11 @@ def test_evidence_comparison_profile_version_mismatch_rejected() -> None:
         comparison_profile_for_task(_ENTRY_POINT, atol=0.0), profile_version="stale-comparison"
     )
     evidence = _evidence(cases, comparison_profile=stale_profile)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):
-        evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
     assert not backend.requests
 
 
@@ -685,7 +718,7 @@ def test_duration_seconds_sums_every_case_wall_time() -> None:
     """result.duration_seconds is the sum of every case's execution wall time."""
     cases = [_case("c0", 1), _case("c1", 2)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [
             _execution_result(return_value=2, wall_time_sec=0.3),
@@ -693,7 +726,7 @@ def test_duration_seconds_sums_every_case_wall_time() -> None:
         ]
     )
 
-    result, _diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    result, _diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert result.duration_seconds == pytest.approx(1.0)
 
@@ -702,7 +735,7 @@ def test_privileged_diagnostics_capture_per_case_detail() -> None:
     """PrivilegedCaseDiagnostic entries record execution status/match/timing per case."""
     cases = [_case("c0", 1), _case("c1", 2)]
     evidence = _evidence(cases)
-    context = _context(candidate_sha256=_sha256(_CANDIDATE_CODE))
+    run_context = _run_context()
     backend = FakeExecutionBackend(
         [
             _execution_result(return_value=2, invocation_id="inv-a"),
@@ -710,7 +743,7 @@ def test_privileged_diagnostics_capture_per_case_detail() -> None:
         ]
     )
 
-    _result, diagnostics = evaluate_reference(evidence, _CANDIDATE_CODE, context, backend=backend)
+    _result, diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
 
     assert diagnostics[0].invocation_id == "inv-a"
     assert diagnostics[0].matched is True

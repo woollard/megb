@@ -24,8 +24,29 @@ This module defines schema and validation only: no candidate execution
 (MEGB-03F's job), no persistent caching or audit storage, and no
 benchmark-gaming delta calculation (MEGB-06's job) — see the ticket's
 Non-Goals.
+
+**Approved Correction (v2, post-MEGB-03F trust-boundary review):** v1 forced
+every ``ReferenceTaskResult`` in a benchmark to carry an *identical*
+candidate identity (via a single shared ``ReferenceEvaluationContext``
+that embedded ``candidate_id``/``candidate_sha256``), which cannot
+represent a real 164-task benchmark run — HumanEval tasks are independent
+programming problems, so a legitimate run necessarily evaluates 164
+*different* task-specific candidate solutions, one per task. v2 splits this
+into: a shared :class:`ReferenceRunContext` (run/evaluator/dataset/
+partition/execution-profile identity, genuinely common across all 164
+tasks); a task-specific ``candidate_id``/``candidate_sha256`` directly on
+:class:`ReferenceTaskResult`; and a versioned, self-checksummed
+:class:`CandidateSetManifest` binding the frozen, ordered task-to-candidate
+mapping for the whole benchmark, verified against every task result by
+:class:`ReferenceBenchmarkResult`. This is a breaking schema change —
+``RESULT_SCHEMA_VERSION`` is incremented accordingly, and v1 payloads are
+rejected explicitly (see ``src.reference.result_redaction``) rather than
+silently misparsed under v2 field names. No v1 artifact has ever been
+persisted (no code wired v1 into any lock/build/CLI pipeline), so no
+migration path is required or provided.
 """
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -33,8 +54,11 @@ from typing import Any, Mapping
 
 from src.evaluators.schema import FailureCategory
 
-RESULT_SCHEMA_VERSION = "reference-result-schema-v1"
+RESULT_SCHEMA_VERSION = "reference-result-schema-v2"
 REQUIRED_TASK_COUNT = 164
+
+CANDIDATE_SET_MANIFEST_SCHEMA_VERSION = "candidate-set-manifest-v1"
+CANDIDATE_SET_ALGORITHM_VERSION = "candidate-set-v1"
 
 _SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _VALID_FAILURE_CATEGORY_VALUES = frozenset(category.value for category in FailureCategory)
@@ -50,24 +74,49 @@ class InvalidReferenceResultError(ValueError):
     """
 
 
-@dataclass(frozen=True)
-class ReferenceEvaluationContext:
-    """Immutable identity/provenance for one candidate's reference evaluation.
+class InvalidCandidateSetManifestError(InvalidReferenceResultError):
+    """Raised when a :class:`CandidateSetManifest` is internally inconsistent
+    or its checksum does not match its own recomputed contents.
 
-    Required by the Global Architectural Constraint "No adaptive reference
-    evaluation": a candidate must be frozen (``candidate_frozen_at``) before
-    S* is invoked, and every reference evaluation must record the
-    run/config/selection-rule identifiers that let a later audit
-    reconstruct exactly why and when this candidate was evaluated.
+    A subclass of :class:`InvalidReferenceResultError` so existing callers
+    that catch the base type continue to catch this too.
+    """
+
+
+class UnsupportedResultSchemaVersionError(InvalidReferenceResultError):
+    """Raised when deserializing a payload stamped with a different
+    ``RESULT_SCHEMA_VERSION`` than this module currently implements.
+
+    Deserialization must fail explicitly on a version mismatch rather than
+    attempt to parse an older (or newer) payload shape under the current
+    field names.
+    """
+
+
+@dataclass(frozen=True)
+class ReferenceRunContext:
+    """Immutable identity/provenance shared across every task result in one
+    reference-evaluation benchmark run.
+
+    Deliberately contains no candidate-identity field: a benchmark run
+    evaluates 164 *different* task-specific candidate solutions (one per
+    independent HumanEval task), so nothing here may vary per task or imply
+    a single candidate. Task-specific candidate identity lives on
+    :class:`ReferenceTaskResult` instead, and the whole set's identity lives
+    in :class:`CandidateSetManifest`. ``portfolio_frozen_at``/
+    ``portfolio_selection_rule`` describe the one atomic freeze/selection
+    event that produced the entire 164-solution portfolio evaluated in this
+    run, per the Global Architectural Constraint "No adaptive reference
+    evaluation" — required to record run/config/selection-rule identifiers
+    letting a later audit reconstruct exactly why and when this portfolio
+    was evaluated.
     """
 
     experiment_run_id: str
     optimization_run_id: str
-    candidate_id: str
-    candidate_sha256: str
-    candidate_frozen_at: str
-    candidate_selection_rule: str
     optimization_config_sha256: str
+    portfolio_frozen_at: str
+    portfolio_selection_rule: str
     evaluator_version: str
     dataset_version: str
     partition_version: str
@@ -76,11 +125,9 @@ class ReferenceEvaluationContext:
     def __post_init__(self) -> None:
         _require_nonempty_str(self, "experiment_run_id")
         _require_nonempty_str(self, "optimization_run_id")
-        _require_nonempty_str(self, "candidate_id")
-        _require_sha256_hex(self, "candidate_sha256")
-        _require_nonempty_str(self, "candidate_frozen_at")
-        _require_nonempty_str(self, "candidate_selection_rule")
         _require_sha256_hex(self, "optimization_config_sha256")
+        _require_nonempty_str(self, "portfolio_frozen_at")
+        _require_nonempty_str(self, "portfolio_selection_rule")
         _require_nonempty_str(self, "evaluator_version")
         _require_nonempty_str(self, "dataset_version")
         _require_nonempty_str(self, "partition_version")
@@ -238,8 +285,130 @@ class FullSuiteDiagnostic:
 
 
 @dataclass(frozen=True)
+class CandidateSetEntry:
+    """One task's binding within a :class:`CandidateSetManifest`: which
+    task-specific candidate was frozen for evaluation against that task.
+
+    No room for privileged content: exactly three plain string identifiers,
+    never a source blob, expected output, or test case.
+    """
+
+    task_id: str
+    candidate_id: str
+    candidate_sha256: str
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self, "task_id")
+        _require_nonempty_str(self, "candidate_id")
+        _require_sha256_hex(self, "candidate_sha256")
+
+
+def _candidate_set_manifest_checksum(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    manifest_schema_version: str,
+    algorithm_version: str,
+    task_manifest_id: str,
+    task_manifest_checksum: str,
+    selection_provenance_sha256: str,
+    entries: tuple[CandidateSetEntry, ...],
+) -> str:
+    hasher = hashlib.sha256()
+    for value in (
+        manifest_schema_version,
+        algorithm_version,
+        task_manifest_id,
+        task_manifest_checksum,
+        selection_provenance_sha256,
+    ):
+        hasher.update(value.encode("utf-8"))
+        hasher.update(b"\x00")
+    for entry in entries:
+        hasher.update(entry.task_id.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(entry.candidate_id.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(entry.candidate_sha256.encode("utf-8"))
+        hasher.update(b"\x00")
+    return hasher.hexdigest()
+
+
+@dataclass(frozen=True)
+class CandidateSetManifest:
+    """Versioned, self-checksummed binding of the whole benchmark's
+    task-to-candidate mapping: exactly one :class:`CandidateSetEntry` per
+    required task, ordered by ``task_id``.
+
+    ``manifest_checksum`` is always recomputed from the manifest's own
+    canonical contents at construction time — never accepted as an
+    unverified caller-provided value. If a caller supplies a nonempty
+    ``manifest_checksum`` that does not match the recomputation, this is a
+    tampered or corrupted manifest and construction fails; otherwise the
+    recomputed value is stamped in automatically. This is the same
+    auto-compute-or-reject pattern already established by
+    :class:`~src.reference.reference_evaluator.ReferenceTaskEvidence`, so
+    reordering, duplicating, or hand-editing one entry after the fact is
+    caught the moment the manifest is (re)constructed — including when
+    reloaded from persisted storage (see
+    ``src.reference.result_redaction.candidate_set_manifest_from_dict``,
+    which reconstructs through this same constructor).
+    """
+
+    manifest_schema_version: str
+    algorithm_version: str
+    task_manifest_id: str
+    task_manifest_checksum: str
+    selection_provenance_sha256: str
+    entries: tuple[CandidateSetEntry, ...]
+    expected_task_count: int = REQUIRED_TASK_COUNT
+    manifest_checksum: str = ""
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self, "manifest_schema_version")
+        _require_nonempty_str(self, "algorithm_version")
+        _require_nonempty_str(self, "task_manifest_id")
+        _require_sha256_hex(self, "task_manifest_checksum")
+        _require_sha256_hex(self, "selection_provenance_sha256")
+        _require_non_negative_int(self, "expected_task_count")
+        if self.expected_task_count != REQUIRED_TASK_COUNT:
+            raise InvalidCandidateSetManifestError(
+                f"expected_task_count must be exactly {REQUIRED_TASK_COUNT} "
+                f"(never a silently different denominator), got {self.expected_task_count}"
+            )
+        if len(self.entries) != self.expected_task_count:
+            raise InvalidCandidateSetManifestError(
+                f"candidate_set_manifest must contain exactly {self.expected_task_count} "
+                f"entries (one per required task), got {len(self.entries)}"
+            )
+        task_ids = [entry.task_id for entry in self.entries]
+        if len(task_ids) != len(set(task_ids)):
+            raise InvalidCandidateSetManifestError(
+                "candidate_set_manifest entries contains duplicate task_id entries"
+            )
+        if task_ids != sorted(task_ids):
+            raise InvalidCandidateSetManifestError(
+                "candidate_set_manifest entries must be sorted by task_id for "
+                "deterministic, reorder-proof serialization"
+            )
+        expected_checksum = _candidate_set_manifest_checksum(
+            self.manifest_schema_version,
+            self.algorithm_version,
+            self.task_manifest_id,
+            self.task_manifest_checksum,
+            self.selection_provenance_sha256,
+            self.entries,
+        )
+        if self.manifest_checksum and self.manifest_checksum != expected_checksum:
+            raise InvalidCandidateSetManifestError(
+                f"manifest_checksum {self.manifest_checksum!r} does not match the "
+                f"recomputed checksum {expected_checksum!r} over its own contents — "
+                f"tampered or corrupted candidate-set manifest"
+            )
+        object.__setattr__(self, "manifest_checksum", expected_checksum)
+
+
+@dataclass(frozen=True)
 class ReferenceTaskResult:
-    """One task's reference-evaluation (S*) result for one frozen candidate.
+    """One task's reference-evaluation (S*) result for its own task-specific
+    frozen candidate solution.
 
     Deliberately separates *candidate correctness* (``q_ref_task``) from
     *measurement validity* (``status``): a broken oracle or infrastructure
@@ -247,11 +416,17 @@ class ReferenceTaskResult:
     candidate failure must never be silently folded into a measurement
     failure. ``full_suite_diagnostic`` is an independent, optional
     diagnostic and is never used to derive or override ``q_ref_task`` —
-    requirement 6 keeps these concepts separate.
+    requirement 6 keeps these concepts separate. ``candidate_id``/
+    ``candidate_sha256`` are this task's own candidate identity — every task
+    in a real 164-task benchmark run has different code and therefore a
+    different hash here; only ``context`` (the shared
+    :class:`ReferenceRunContext`) must be identical across all 164 tasks.
     """
 
     task_id: str
-    context: ReferenceEvaluationContext
+    candidate_id: str
+    candidate_sha256: str
+    context: ReferenceRunContext
     status: MeasurementStatus
     q_ref_task: float | None
     reference_case_total: int
@@ -267,6 +442,8 @@ class ReferenceTaskResult:
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self, "task_id")
+        _require_nonempty_str(self, "candidate_id")
+        _require_sha256_hex(self, "candidate_sha256")
         _require_nonempty_str(self, "evaluated_at")
         _require_nonempty_str(self, "oracle_version")
         _require_sha256_hex(self, "reference_case_checksum")
@@ -392,8 +569,13 @@ _AGGREGATE_STATUS_PRIORITY = (
 
 @dataclass(frozen=True)
 class ReferenceBenchmarkResult:
-    """Aggregate reference-evaluation (S*) result for one frozen candidate
-    across the full 164-task reference-evaluator validation corpus.
+    """Aggregate reference-evaluation (S*) result for one frozen 164-solution
+    candidate portfolio across the full 164-task reference-evaluator
+    validation corpus — the MEGB-03 evaluator-validation aggregate. This is
+    a distinct concept from MEGB-06's 163-task experimental aggregate: this
+    type's ``expected_task_count``/denominator is always exactly 164 and
+    must never be silently reused as or confused with MEGB-06's separate
+    163-task primary-experiment metric.
 
     ``q_ref`` enforces "never silently change the denominator": it is only
     ever computed as an average over exactly ``expected_task_count`` VALID
@@ -402,10 +584,16 @@ class ReferenceBenchmarkResult:
     substituted denominator. ``task_manifest_checksum`` pins exactly which
     164-task reference-validation manifest this benchmark was evaluated
     against, so the denominator's identity — not just its size — cannot
-    silently drift between runs.
+    silently drift between runs. ``candidate_set_manifest`` pins exactly
+    which task-specific candidate solution was evaluated for every task;
+    every task result's own ``candidate_id``/``candidate_sha256`` must match
+    its manifest entry exactly, so a task result cannot silently claim to
+    measure a different candidate than the one the frozen portfolio
+    actually bound to that task.
     """
 
-    candidate_context: ReferenceEvaluationContext
+    run_context: ReferenceRunContext
+    candidate_set_manifest: CandidateSetManifest
     task_results: tuple[ReferenceTaskResult, ...]
     task_manifest_checksum: str
     oracle_version: str
@@ -425,6 +613,18 @@ class ReferenceBenchmarkResult:
                 f"(the reference-evaluator validation-corpus denominator), "
                 f"got {self.expected_task_count}"
             )
+        if self.candidate_set_manifest.expected_task_count != self.expected_task_count:
+            raise InvalidReferenceResultError(
+                f"candidate_set_manifest.expected_task_count "
+                f"({self.candidate_set_manifest.expected_task_count}) does not match "
+                f"expected_task_count ({self.expected_task_count})"
+            )
+        if self.candidate_set_manifest.task_manifest_checksum != self.task_manifest_checksum:
+            raise InvalidReferenceResultError(
+                f"candidate_set_manifest.task_manifest_checksum "
+                f"({self.candidate_set_manifest.task_manifest_checksum!r}) does not match "
+                f"task_manifest_checksum ({self.task_manifest_checksum!r})"
+            )
         task_ids = [result.task_id for result in self.task_results]
         if len(task_ids) != len(set(task_ids)):
             raise InvalidReferenceResultError("task_results contains duplicate task_id entries")
@@ -433,17 +633,45 @@ class ReferenceBenchmarkResult:
                 f"task_results has {len(self.task_results)} entries, more than "
                 f"expected_task_count={self.expected_task_count}"
             )
+        candidate_by_task_id = {
+            entry.task_id: entry for entry in self.candidate_set_manifest.entries
+        }
         for result in self.task_results:
-            if result.context != self.candidate_context:
-                raise InvalidReferenceResultError(
-                    f"task_result for {result.task_id!r} was evaluated under a different "
-                    f"context than candidate_context"
-                )
-            if result.oracle_version != self.oracle_version:
-                raise InvalidReferenceResultError(
-                    f"task_result for {result.task_id!r} has oracle_version "
-                    f"{result.oracle_version!r}, expected {self.oracle_version!r}"
-                )
+            self._validate_task_result_against_run(result, candidate_by_task_id)
+
+    def _validate_task_result_against_run(
+        self,
+        result: ReferenceTaskResult,
+        candidate_by_task_id: Mapping[str, CandidateSetEntry],
+    ) -> None:
+        if result.context != self.run_context:
+            raise InvalidReferenceResultError(
+                f"task_result for {result.task_id!r} was evaluated under a different "
+                f"run_context than this benchmark's run_context"
+            )
+        if result.oracle_version != self.oracle_version:
+            raise InvalidReferenceResultError(
+                f"task_result for {result.task_id!r} has oracle_version "
+                f"{result.oracle_version!r}, expected {self.oracle_version!r}"
+            )
+        entry = candidate_by_task_id.get(result.task_id)
+        if entry is None:
+            raise InvalidReferenceResultError(
+                f"task_result for {result.task_id!r} has no corresponding entry in "
+                f"candidate_set_manifest"
+            )
+        candidate_identity_matches = (
+            entry.candidate_id == result.candidate_id
+            and entry.candidate_sha256 == result.candidate_sha256
+        )
+        if not candidate_identity_matches:
+            raise InvalidReferenceResultError(
+                f"task_result for {result.task_id!r} candidate identity "
+                f"(candidate_id={result.candidate_id!r}, "
+                f"candidate_sha256={result.candidate_sha256!r}) does not match "
+                f"candidate_set_manifest entry (candidate_id={entry.candidate_id!r}, "
+                f"candidate_sha256={entry.candidate_sha256!r})"
+            )
 
     @property
     def evaluated_task_count(self) -> int:

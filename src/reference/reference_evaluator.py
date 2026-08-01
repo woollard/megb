@@ -56,7 +56,7 @@ from src.reference.oracle import (
 from src.reference.partition import PARTITION_ALGORITHM_VERSION
 from src.reference.result_schema import (
     MeasurementStatus,
-    ReferenceEvaluationContext,
+    ReferenceRunContext,
     ReferenceTaskResult,
 )
 
@@ -104,7 +104,8 @@ _MEASUREMENT_FAILURE_CATEGORY_BY_INVALID_STATUS: Mapping[MeasurementStatus, Fail
 
 
 class CandidateIdentityMismatchError(ValueError):
-    """The candidate source's SHA-256 does not match ``context.candidate_sha256``.
+    """The candidate source's SHA-256 does not match the expected
+    task-specific ``candidate_sha256``.
 
     Blocks execution outright (acceptance criterion: "Candidate hash
     mismatch blocks execution") — this is a caller-contract violation, not
@@ -115,7 +116,7 @@ class CandidateIdentityMismatchError(ValueError):
 
 class ReferenceEvaluatorVersionMismatchError(ValueError):
     """A version/checksum ``evaluate_reference`` depends on does not match
-    what ``context`` or ``evidence`` declares.
+    what ``run_context`` or ``evidence`` declares.
 
     Raised before any candidate code executes — refuses to silently
     evaluate against a stale or inconsistent dataset/partition/oracle/
@@ -275,25 +276,25 @@ class PrivilegedCaseDiagnostic:
     runner_image_digest: str
 
 
-def _verify_candidate_identity(candidate_code: str, context: ReferenceEvaluationContext) -> None:
+def _verify_candidate_identity(candidate_code: str, candidate_sha256: str) -> None:
     actual_sha256 = hashlib.sha256(candidate_code.encode("utf-8")).hexdigest()
-    if actual_sha256 != context.candidate_sha256:
+    if actual_sha256 != candidate_sha256:
         raise CandidateIdentityMismatchError(
-            f"candidate source sha256 {actual_sha256!r} does not match "
-            f"context.candidate_sha256 {context.candidate_sha256!r}"
+            f"candidate source sha256 {actual_sha256!r} does not match the expected "
+            f"task-specific candidate_sha256 {candidate_sha256!r}"
         )
 
 
 def _verify_versions(
-    context: ReferenceEvaluationContext, evidence: ReferenceTaskEvidence, profile: ExecutionProfile
+    run_context: ReferenceRunContext, evidence: ReferenceTaskEvidence, profile: ExecutionProfile
 ) -> None:
     checks = (
-        ("dataset_version", context.dataset_version, evidence.dataset_version),
+        ("dataset_version", run_context.dataset_version, evidence.dataset_version),
         ("dataset_version", evidence.dataset_version, HUMANEVAL_PLUS_VERSION),
-        ("partition_version", context.partition_version, evidence.partition_version),
+        ("partition_version", run_context.partition_version, evidence.partition_version),
         ("partition_version", evidence.partition_version, PARTITION_ALGORITHM_VERSION),
-        ("execution_profile_id", context.execution_profile_id, profile.profile_id),
-        ("evaluator_version", context.evaluator_version, profile.evaluator_version),
+        ("execution_profile_id", run_context.execution_profile_id, profile.profile_id),
+        ("evaluator_version", run_context.evaluator_version, profile.evaluator_version),
         ("oracle_version", evidence.oracle_version, ORACLE_ALGORITHM_VERSION),
         (
             "comparison_profile_version",
@@ -371,31 +372,38 @@ def _classify_execution_result(
     raise UnclassifiedExecutionStatusError(f"no known mapping for ExecutionStatus {status!r}")
 
 
-def evaluate_reference(  # pylint: disable=too-many-locals
+def evaluate_reference(  # pylint: disable=too-many-locals,too-many-arguments,too-many-positional-arguments
     evidence: ReferenceTaskEvidence,
     candidate_code: str,
-    context: ReferenceEvaluationContext,
+    candidate_id: str,
+    candidate_sha256: str,
+    run_context: ReferenceRunContext,
     *,
     backend: ExecutionBackend,
     profile: ExecutionProfile = FULL_EXECUTION_PROFILE,
 ) -> tuple[ReferenceTaskResult, tuple[PrivilegedCaseDiagnostic, ...]]:
-    """Evaluate one frozen candidate against one task's frozen reference-only evidence.
+    """Evaluate one frozen, task-specific candidate against one task's frozen
+    reference-only evidence.
 
     Deviates from the ticket's minimal illustrative signature
     (``evaluate_reference(task_id, candidate_code, context)``) by taking the
-    trusted evidence bundle, execution backend, and execution profile as
-    explicit parameters rather than discovering them internally — the
-    ticket itself invites "an interface similar to" this signature, and a
-    pure 3-argument function cannot function without knowing where to load
-    privileged oracle evidence from or which backend/profile to use.
+    trusted evidence bundle, this task's own candidate identity, the shared
+    run context, execution backend, and execution profile as explicit
+    parameters rather than discovering them internally — the ticket itself
+    invites "an interface similar to" this signature, and a pure 3-argument
+    function cannot function without knowing where to load privileged
+    oracle evidence from or which backend/profile to use. ``candidate_id``/
+    ``candidate_sha256`` are this task's *own* candidate identity (Approved
+    Correction, v2): a real 164-task benchmark run calls this once per task
+    with a different candidate each time, sharing only ``run_context``.
 
     Every case is sent through ``backend.execute()`` exactly once,
     sequentially, in ``evidence.cases`` order (already validated as sorted
     by ``case_id``) — never batched, never in the trusted controller
     process, never carrying the oracle's expected output.
     """
-    _verify_candidate_identity(candidate_code, context)
-    _verify_versions(context, evidence, profile)
+    _verify_candidate_identity(candidate_code, candidate_sha256)
+    _verify_versions(run_context, evidence, profile)
 
     selected_cases = _select_cases(evidence, profile)
     reference_case_total = len(selected_cases)
@@ -450,7 +458,9 @@ def evaluate_reference(  # pylint: disable=too-many-locals
     if invalid_status is not None:
         result = ReferenceTaskResult(
             task_id=evidence.task_id,
-            context=context,
+            candidate_id=candidate_id,
+            candidate_sha256=candidate_sha256,
+            context=run_context,
             status=invalid_status,
             q_ref_task=None,
             reference_case_total=len(diagnostics),
@@ -467,7 +477,9 @@ def evaluate_reference(  # pylint: disable=too-many-locals
     q_ref_task = 1.0 if reference_case_pass_count == reference_case_total else 0.0
     result = ReferenceTaskResult(
         task_id=evidence.task_id,
-        context=context,
+        candidate_id=candidate_id,
+        candidate_sha256=candidate_sha256,
+        context=run_context,
         status=MeasurementStatus.VALID,
         q_ref_task=q_ref_task,
         reference_case_total=reference_case_total,

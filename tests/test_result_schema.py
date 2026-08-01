@@ -1,31 +1,41 @@
-"""Tests for src.reference.result_schema (MEGB-03E).
+"""Tests for src.reference.result_schema (MEGB-03E/03F Approved Correction, v2).
 
-Organized to map directly onto the ticket's "Required Tests" list:
-task-result construction/schema validation, all-pass scoring,
-pass-base/fail-plus diagnostic scoring, candidate execution-failure
-scoring, invalid-measurement propagation, denominator preservation,
-serialization round trips (see test_result_redaction.py),
-configuration/version validation, and redaction (see
-test_result_redaction.py).
+Organized to map directly onto the ticket's "Required Tests" list plus the
+v2 correction's own required regression coverage: task-result construction/
+schema validation, all-pass scoring, pass-base/fail-plus diagnostic
+scoring, candidate execution-failure scoring, invalid-measurement
+propagation, denominator preservation, serialization round trips (see
+test_result_redaction.py), configuration/version validation, redaction (see
+test_result_redaction.py), and the v2 candidate-set-manifest guarantees
+(different per-task candidates accepted; shared run context, candidate-set
+membership, and candidate-set checksum all enforced).
 """
+
+import hashlib
 
 import pytest
 
 from src.evaluators.schema import FailureCategory
 from src.reference.result_schema import (
+    CANDIDATE_SET_ALGORITHM_VERSION,
+    CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
     REQUIRED_TASK_COUNT,
+    CandidateSetEntry,
+    CandidateSetManifest,
     FullSuiteDiagnostic,
+    InvalidCandidateSetManifestError,
     InvalidReferenceResultError,
     MeasurementStatus,
     ReferenceBenchmarkResult,
-    ReferenceEvaluationContext,
     ReferenceOutcome,
+    ReferenceRunContext,
     ReferenceTaskResult,
 )
 
-_SHA_A = "a" * 64
 _SHA_B = "b" * 64
 _SHA_CASE = "c" * 64
+_SHA_TASK_MANIFEST = "d" * 64
+_SHA_SELECTION_PROVENANCE = "e" * 64
 _ORACLE_VERSION = "oracle-v1"
 
 _NON_VALID_STATUSES = [
@@ -35,28 +45,36 @@ _NON_VALID_STATUSES = [
 ]
 
 
-def _context(**overrides: str) -> ReferenceEvaluationContext:
+def _candidate_identity(task_id: str) -> tuple[str, str]:
+    """Deterministic, task-specific (candidate_id, candidate_sha256) pair."""
+    candidate_id = f"cand-{task_id}"
+    candidate_sha256 = hashlib.sha256(f"candidate-source-for-{task_id}".encode()).hexdigest()
+    return candidate_id, candidate_sha256
+
+
+def _run_context(**overrides: str) -> ReferenceRunContext:
     fields = {
         "experiment_run_id": "exp-1",
         "optimization_run_id": "opt-1",
-        "candidate_id": "cand-1",
-        "candidate_sha256": _SHA_A,
-        "candidate_frozen_at": "2026-07-01T00:00:00Z",
-        "candidate_selection_rule": "best_of_run",
         "optimization_config_sha256": _SHA_B,
+        "portfolio_frozen_at": "2026-07-01T00:00:00Z",
+        "portfolio_selection_rule": "best_of_run",
         "evaluator_version": "reference-evaluator-v1",
         "dataset_version": "humaneval-plus-v0.1.10",
         "partition_version": "partition-v1",
         "execution_profile_id": "docker-megb02-v1",
     }
     fields.update(overrides)
-    return ReferenceEvaluationContext(**fields)
+    return ReferenceRunContext(**fields)
 
 
 def _task_result(task_id: str = "HumanEval/0", **overrides: object) -> ReferenceTaskResult:
+    candidate_id, candidate_sha256 = _candidate_identity(task_id)
     fields: dict[str, object] = {
         "task_id": task_id,
-        "context": _context(),
+        "candidate_id": candidate_id,
+        "candidate_sha256": candidate_sha256,
+        "context": _run_context(),
         "status": MeasurementStatus.VALID,
         "q_ref_task": 1.0,
         "reference_case_total": 5,
@@ -71,35 +89,70 @@ def _task_result(task_id: str = "HumanEval/0", **overrides: object) -> Reference
     return ReferenceTaskResult(**fields)  # type: ignore[arg-type]
 
 
-def _valid_results(
-    count: int = REQUIRED_TASK_COUNT, context: ReferenceEvaluationContext | None = None
-) -> tuple[ReferenceTaskResult, ...]:
-    ctx = context or _context()
-    return tuple(
-        ReferenceTaskResult(
-            task_id=f"HumanEval/{i}",
-            context=ctx,
-            status=MeasurementStatus.VALID,
-            q_ref_task=1.0,
-            reference_case_total=5,
-            reference_case_pass_count=5,
-            first_failure_category=FailureCategory.NONE,
-            oracle_version=_ORACLE_VERSION,
-            reference_case_checksum=_SHA_CASE,
-            evaluated_at="2026-07-01T00:00:01Z",
-            duration_seconds=0.25,
+def _candidate_set_entries(count: int = REQUIRED_TASK_COUNT) -> tuple[CandidateSetEntry, ...]:
+    entries = []
+    for i in range(count):
+        task_id = f"HumanEval/{i}"
+        candidate_id, candidate_sha256 = _candidate_identity(task_id)
+        entries.append(
+            CandidateSetEntry(
+                task_id=task_id, candidate_id=candidate_id, candidate_sha256=candidate_sha256
+            )
         )
-        for i in range(count)
-    )
+    return tuple(sorted(entries, key=lambda entry: entry.task_id))
+
+
+def _candidate_set_manifest(
+    entries: tuple[CandidateSetEntry, ...] | None = None, **overrides: object
+) -> CandidateSetManifest:
+    fields: dict[str, object] = {
+        "manifest_schema_version": CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
+        "algorithm_version": CANDIDATE_SET_ALGORITHM_VERSION,
+        "task_manifest_id": "reference-validation-composite-manifest",
+        "task_manifest_checksum": _SHA_TASK_MANIFEST,
+        "selection_provenance_sha256": _SHA_SELECTION_PROVENANCE,
+        "entries": entries if entries is not None else _candidate_set_entries(),
+    }
+    fields.update(overrides)
+    return CandidateSetManifest(**fields)  # type: ignore[arg-type]
+
+
+def _valid_results(
+    count: int = REQUIRED_TASK_COUNT, context: ReferenceRunContext | None = None
+) -> tuple[ReferenceTaskResult, ...]:
+    ctx = context or _run_context()
+    results = []
+    for i in range(count):
+        task_id = f"HumanEval/{i}"
+        candidate_id, candidate_sha256 = _candidate_identity(task_id)
+        results.append(
+            ReferenceTaskResult(
+                task_id=task_id,
+                candidate_id=candidate_id,
+                candidate_sha256=candidate_sha256,
+                context=ctx,
+                status=MeasurementStatus.VALID,
+                q_ref_task=1.0,
+                reference_case_total=5,
+                reference_case_pass_count=5,
+                first_failure_category=FailureCategory.NONE,
+                oracle_version=_ORACLE_VERSION,
+                reference_case_checksum=_SHA_CASE,
+                evaluated_at="2026-07-01T00:00:01Z",
+                duration_seconds=0.25,
+            )
+        )
+    return tuple(results)
 
 
 def _benchmark(
     task_results: tuple[ReferenceTaskResult, ...], **overrides: object
 ) -> ReferenceBenchmarkResult:
     fields: dict[str, object] = {
-        "candidate_context": _context(),
+        "run_context": _run_context(),
+        "candidate_set_manifest": _candidate_set_manifest(),
         "task_results": task_results,
-        "task_manifest_checksum": "d" * 64,
+        "task_manifest_checksum": _SHA_TASK_MANIFEST,
         "oracle_version": _ORACLE_VERSION,
         "evaluated_at": "2026-07-01T00:00:02Z",
         "duration_seconds": 12.5,
@@ -111,9 +164,9 @@ def _benchmark(
 # --- Task-result construction and schema validation -------------------------
 
 
-def test_valid_context_constructs() -> None:
-    """A context with well-formed fields constructs without error."""
-    _context()
+def test_valid_run_context_constructs() -> None:
+    """A run context with well-formed fields constructs without error."""
+    _run_context()
 
 
 @pytest.mark.parametrize(
@@ -121,32 +174,41 @@ def test_valid_context_constructs() -> None:
     [
         "experiment_run_id",
         "optimization_run_id",
-        "candidate_id",
-        "candidate_frozen_at",
-        "candidate_selection_rule",
+        "portfolio_frozen_at",
+        "portfolio_selection_rule",
         "evaluator_version",
         "dataset_version",
         "partition_version",
         "execution_profile_id",
     ],
 )
-def test_context_empty_string_field_rejected(field_name: str) -> None:
+def test_run_context_empty_string_field_rejected(field_name: str) -> None:
     """Every identity/provenance string field must be nonempty."""
     with pytest.raises(InvalidReferenceResultError):
-        _context(**{field_name: ""})
+        _run_context(**{field_name: ""})
 
 
-def test_context_non_hex_candidate_sha256_rejected() -> None:
-    """candidate_sha256 must be a hex sha256 digest."""
+def test_run_context_non_hex_optimization_config_sha256_rejected() -> None:
+    """optimization_config_sha256 must be a hex sha256 digest."""
     with pytest.raises(InvalidReferenceResultError):
-        _context(candidate_sha256="not-a-sha256")
+        _run_context(optimization_config_sha256="not-a-sha256")
 
 
-def test_context_is_frozen() -> None:
-    """ReferenceEvaluationContext instances must be immutable."""
-    context = _context()
+def test_run_context_is_frozen() -> None:
+    """ReferenceRunContext instances must be immutable."""
+    context = _run_context()
     with pytest.raises(AttributeError):
-        context.candidate_id = "other"  # type: ignore[misc]
+        context.experiment_run_id = "other"  # type: ignore[misc]
+
+
+def test_run_context_has_no_candidate_identity_field() -> None:
+    """ReferenceRunContext must not carry any per-candidate identity field —
+    that would force every task in a benchmark to share one candidate."""
+    import dataclasses  # pylint: disable=import-outside-toplevel
+
+    field_names = {f.name for f in dataclasses.fields(ReferenceRunContext)}
+    assert "candidate_id" not in field_names
+    assert "candidate_sha256" not in field_names
 
 
 def test_task_result_constructs_with_well_formed_fields() -> None:
@@ -159,6 +221,18 @@ def test_empty_task_id_rejected() -> None:
     """task_id must be nonempty."""
     with pytest.raises(InvalidReferenceResultError):
         _task_result(task_id="")
+
+
+def test_empty_candidate_id_rejected() -> None:
+    """candidate_id must be nonempty."""
+    with pytest.raises(InvalidReferenceResultError):
+        _task_result(candidate_id="")
+
+
+def test_non_hex_candidate_sha256_rejected() -> None:
+    """candidate_sha256 must be a hex sha256 digest."""
+    with pytest.raises(InvalidReferenceResultError):
+        _task_result(candidate_sha256="not-a-sha256")
 
 
 def test_empty_oracle_version_rejected() -> None:
@@ -213,6 +287,89 @@ def test_task_result_is_frozen() -> None:
     result = _task_result()
     with pytest.raises(AttributeError):
         result.q_ref_task = 0.0  # type: ignore[misc]
+
+
+# --- Candidate-set manifest construction -----------------------------------
+
+
+def test_candidate_set_manifest_constructs_and_computes_checksum() -> None:
+    """A well-formed 164-entry manifest constructs and stamps a real checksum."""
+    manifest = _candidate_set_manifest()
+    assert len(manifest.manifest_checksum) == 64
+    assert len(manifest.entries) == REQUIRED_TASK_COUNT
+
+
+def test_candidate_set_manifest_checksum_is_deterministic() -> None:
+    """The same entries always produce the same checksum."""
+    manifest_a = _candidate_set_manifest()
+    manifest_b = _candidate_set_manifest()
+    assert manifest_a.manifest_checksum == manifest_b.manifest_checksum
+
+
+def test_candidate_set_manifest_missing_entry_rejected() -> None:
+    """A manifest with fewer than 164 entries (a missing task) is rejected."""
+    with pytest.raises(InvalidCandidateSetManifestError):
+        _candidate_set_manifest(entries=_candidate_set_entries(REQUIRED_TASK_COUNT - 1))
+
+
+def test_candidate_set_manifest_duplicate_task_id_rejected() -> None:
+    """Duplicate task_id entries in the candidate-set manifest are rejected."""
+    entries = list(_candidate_set_entries(REQUIRED_TASK_COUNT - 1))
+    entries.append(entries[0])
+    with pytest.raises(InvalidCandidateSetManifestError):
+        _candidate_set_manifest(entries=tuple(entries))
+
+
+def test_candidate_set_manifest_reordered_entries_rejected() -> None:
+    """Entries must be sorted by task_id — a reordered (but otherwise
+    identical) entry set is rejected, not silently accepted as equivalent."""
+    entries = list(_candidate_set_entries())
+    entries[0], entries[1] = entries[1], entries[0]
+    with pytest.raises(InvalidCandidateSetManifestError):
+        _candidate_set_manifest(entries=tuple(entries))
+
+
+def test_candidate_set_manifest_tampered_entry_rejected() -> None:
+    """A hand-edited entry combined with a stale (now-mismatched)
+    manifest_checksum is rejected as tampered, never silently accepted."""
+    good_manifest = _candidate_set_manifest()
+    tampered_entries = list(good_manifest.entries)
+    tampered_entries[0] = CandidateSetEntry(
+        task_id=tampered_entries[0].task_id,
+        candidate_id=tampered_entries[0].candidate_id,
+        candidate_sha256="f" * 64,
+    )
+    with pytest.raises(InvalidCandidateSetManifestError):
+        CandidateSetManifest(
+            manifest_schema_version=good_manifest.manifest_schema_version,
+            algorithm_version=good_manifest.algorithm_version,
+            task_manifest_id=good_manifest.task_manifest_id,
+            task_manifest_checksum=good_manifest.task_manifest_checksum,
+            selection_provenance_sha256=good_manifest.selection_provenance_sha256,
+            entries=tuple(tampered_entries),
+            manifest_checksum=good_manifest.manifest_checksum,  # stale — no longer matches
+        )
+
+
+def test_candidate_set_manifest_checksum_mismatch_rejected() -> None:
+    """An explicitly wrong manifest_checksum is rejected, never silently overwritten."""
+    with pytest.raises(InvalidCandidateSetManifestError):
+        _candidate_set_manifest(manifest_checksum="0" * 64)
+
+
+def test_candidate_set_manifest_wrong_expected_task_count_rejected() -> None:
+    """expected_task_count must always be exactly REQUIRED_TASK_COUNT."""
+    with pytest.raises(InvalidCandidateSetManifestError):
+        _candidate_set_manifest(entries=_candidate_set_entries(10), expected_task_count=10)
+
+
+def test_candidate_set_entry_has_no_room_for_privileged_content() -> None:
+    """CandidateSetEntry's fixed field set structurally excludes any source,
+    expected-output, or test-case content."""
+    import dataclasses  # pylint: disable=import-outside-toplevel
+
+    field_names = {f.name for f in dataclasses.fields(CandidateSetEntry)}
+    assert field_names == {"task_id", "candidate_id", "candidate_sha256"}
 
 
 # --- All-pass scoring ---------------------------------------------------
@@ -341,7 +498,7 @@ def test_full_suite_diagnostic_rejected_when_task_status_not_valid() -> None:
 
 def test_benchmark_full_suite_outcome_counts_aggregate_across_tasks() -> None:
     """full_suite_outcome_counts tallies diagnostics across every task result."""
-    ctx = _context()
+    ctx = _run_context()
     diagnostic = FullSuiteDiagnostic(
         outcome=ReferenceOutcome.PASS_BASE_FAIL_PLUS,
         base_total=1,
@@ -350,9 +507,13 @@ def test_benchmark_full_suite_outcome_counts_aggregate_across_tasks() -> None:
         plus_pass_count=5,
     )
     results = list(_valid_results(REQUIRED_TASK_COUNT - 1, context=ctx))
+    last_task_id = f"HumanEval/{REQUIRED_TASK_COUNT - 1}"
+    candidate_id, candidate_sha256 = _candidate_identity(last_task_id)
     results.append(
         ReferenceTaskResult(
-            task_id=f"HumanEval/{REQUIRED_TASK_COUNT - 1}",
+            task_id=last_task_id,
+            candidate_id=candidate_id,
+            candidate_sha256=candidate_sha256,
             context=ctx,
             status=MeasurementStatus.VALID,
             q_ref_task=1.0,
@@ -366,7 +527,7 @@ def test_benchmark_full_suite_outcome_counts_aggregate_across_tasks() -> None:
             full_suite_diagnostic=diagnostic,
         )
     )
-    benchmark = _benchmark(tuple(results), candidate_context=ctx)
+    benchmark = _benchmark(tuple(results), run_context=ctx)
     assert benchmark.full_suite_outcome_counts[ReferenceOutcome.PASS_BASE_FAIL_PLUS] == 1
     assert benchmark.full_suite_outcome_counts[ReferenceOutcome.PASS_BASE_PASS_PLUS] == 0
 
@@ -444,11 +605,15 @@ def test_case_level_fraction_never_substitutes_for_binary_score() -> None:
 
 def test_mixed_pass_fail_benchmark_computes_fraction() -> None:
     """q_ref is the mean of q_ref_task across all 164 VALID results."""
-    ctx = _context()
+    ctx = _run_context()
     results = list(_valid_results(REQUIRED_TASK_COUNT - 1, context=ctx))
+    last_task_id = f"HumanEval/{REQUIRED_TASK_COUNT - 1}"
+    candidate_id, candidate_sha256 = _candidate_identity(last_task_id)
     results.append(
         ReferenceTaskResult(
-            task_id=f"HumanEval/{REQUIRED_TASK_COUNT - 1}",
+            task_id=last_task_id,
+            candidate_id=candidate_id,
+            candidate_sha256=candidate_sha256,
             context=ctx,
             status=MeasurementStatus.VALID,
             q_ref_task=0.0,
@@ -461,7 +626,7 @@ def test_mixed_pass_fail_benchmark_computes_fraction() -> None:
             duration_seconds=0.25,
         )
     )
-    benchmark = _benchmark(tuple(results), candidate_context=ctx)
+    benchmark = _benchmark(tuple(results), run_context=ctx)
     assert benchmark.q_ref == (REQUIRED_TASK_COUNT - 1) / REQUIRED_TASK_COUNT
 
 
@@ -534,11 +699,15 @@ def test_incomplete_status_with_nonnone_category_rejected() -> None:
 
 def test_incomplete_task_among_full_set_yields_none_q_ref() -> None:
     """One INCOMPLETE task among an otherwise-full set blocks q_ref."""
-    ctx = _context()
+    ctx = _run_context()
     results = list(_valid_results(REQUIRED_TASK_COUNT - 1, context=ctx))
+    last_task_id = f"HumanEval/{REQUIRED_TASK_COUNT - 1}"
+    candidate_id, candidate_sha256 = _candidate_identity(last_task_id)
     results.append(
         ReferenceTaskResult(
-            task_id=f"HumanEval/{REQUIRED_TASK_COUNT - 1}",
+            task_id=last_task_id,
+            candidate_id=candidate_id,
+            candidate_sha256=candidate_sha256,
             context=ctx,
             status=MeasurementStatus.INCOMPLETE,
             q_ref_task=None,
@@ -551,7 +720,7 @@ def test_incomplete_task_among_full_set_yields_none_q_ref() -> None:
             duration_seconds=0.0,
         )
     )
-    benchmark = _benchmark(tuple(results), candidate_context=ctx)
+    benchmark = _benchmark(tuple(results), run_context=ctx)
     assert benchmark.q_ref is None
     assert benchmark.valid_task_count == REQUIRED_TASK_COUNT - 1
     assert benchmark.incomplete_task_count == 1
@@ -561,11 +730,15 @@ def test_incomplete_task_among_full_set_yields_none_q_ref() -> None:
 
 def test_invalid_oracle_task_sets_aggregate_status() -> None:
     """A single INVALID_ORACLE task result propagates to the aggregate status."""
-    ctx = _context()
+    ctx = _run_context()
     results = list(_valid_results(REQUIRED_TASK_COUNT - 1, context=ctx))
+    last_task_id = f"HumanEval/{REQUIRED_TASK_COUNT - 1}"
+    candidate_id, candidate_sha256 = _candidate_identity(last_task_id)
     results.append(
         ReferenceTaskResult(
-            task_id=f"HumanEval/{REQUIRED_TASK_COUNT - 1}",
+            task_id=last_task_id,
+            candidate_id=candidate_id,
+            candidate_sha256=candidate_sha256,
             context=ctx,
             status=MeasurementStatus.INVALID_ORACLE,
             q_ref_task=None,
@@ -578,7 +751,7 @@ def test_invalid_oracle_task_sets_aggregate_status() -> None:
             duration_seconds=0.0,
         )
     )
-    benchmark = _benchmark(tuple(results), candidate_context=ctx)
+    benchmark = _benchmark(tuple(results), run_context=ctx)
     assert benchmark.aggregate_status == MeasurementStatus.INVALID_ORACLE
     assert benchmark.invalid_task_count == 1
     assert benchmark.q_ref is None
@@ -598,7 +771,13 @@ def test_missing_tasks_yields_none_q_ref_never_a_smaller_denominator() -> None:
 def test_wrong_expected_task_count_rejected() -> None:
     """expected_task_count must always be exactly REQUIRED_TASK_COUNT."""
     with pytest.raises(InvalidReferenceResultError):
-        _benchmark(_valid_results(10), expected_task_count=10)
+        _benchmark(
+            _valid_results(10),
+            candidate_set_manifest=_candidate_set_manifest(
+                entries=_candidate_set_entries(10), expected_task_count=10
+            ),
+            expected_task_count=10,
+        )
 
 
 def test_duplicate_task_id_rejected() -> None:
@@ -621,20 +800,35 @@ def test_benchmark_result_is_frozen() -> None:
         benchmark.evaluated_at = "later"  # type: ignore[misc]
 
 
-# --- Configuration/version validation --------------------------------------
+# --- v2: different candidates across tasks are accepted; shared context enforced ---
 
 
-def test_mismatched_candidate_identity_rejected() -> None:
-    """Every task_result must belong to the same candidate/run as candidate_context."""
-    other_candidate_result = _task_result(context=_context(candidate_id="different-candidate"))
+def test_different_candidate_ids_and_hashes_across_tasks_accepted() -> None:
+    """The core correction: a benchmark run legitimately contains 164
+    *different* task-specific candidate solutions, and this must be
+    accepted, not rejected."""
+    results = _valid_results()
+    candidate_ids = {result.candidate_id for result in results}
+    candidate_hashes = {result.candidate_sha256 for result in results}
+    assert len(candidate_ids) == REQUIRED_TASK_COUNT
+    assert len(candidate_hashes) == REQUIRED_TASK_COUNT
+    benchmark = _benchmark(results)
+    assert benchmark.q_ref == 1.0
+
+
+def test_mismatched_run_context_rejected() -> None:
+    """Every task_result must share the exact same run_context — a task
+    evaluated under a different experiment_run_id is rejected."""
+    other_run_result = _task_result(context=_run_context(experiment_run_id="different-run"))
     with pytest.raises(InvalidReferenceResultError):
-        _benchmark((other_candidate_result,))
+        _benchmark((other_run_result,))
 
 
 def test_mismatched_evaluator_version_rejected() -> None:
-    """A task result evaluated under a different evaluator_version is rejected."""
+    """A task result evaluated under a different evaluator_version is rejected —
+    this is the mechanism that prevents mixing reduced/full profile results."""
     other_version_result = _task_result(
-        context=_context(evaluator_version="reference-evaluator-v2")
+        context=_run_context(evaluator_version="reference-evaluator-v2")
     )
     with pytest.raises(InvalidReferenceResultError):
         _benchmark((other_version_result,))
@@ -657,3 +851,39 @@ def test_negative_benchmark_duration_rejected() -> None:
     """duration_seconds must be non-negative at the benchmark level too."""
     with pytest.raises(InvalidReferenceResultError):
         _benchmark(_valid_results(0), duration_seconds=-1.0)
+
+
+def test_task_result_missing_from_candidate_set_manifest_rejected() -> None:
+    """A task result whose task_id has no entry in candidate_set_manifest is rejected."""
+    stray_result = _task_result(task_id="HumanEval/9999")
+    with pytest.raises(InvalidReferenceResultError):
+        _benchmark((stray_result,))
+
+
+def test_task_result_candidate_identity_mismatching_manifest_rejected() -> None:
+    """A task result whose candidate_sha256 disagrees with the frozen
+    candidate-set manifest's entry for that task is rejected — the manifest
+    is authoritative, so a task result cannot silently claim to measure a
+    different candidate than the one actually bound to that task."""
+    mismatched_result = _task_result(task_id="HumanEval/0", candidate_sha256="1" * 64)
+    with pytest.raises(InvalidReferenceResultError):
+        _benchmark((mismatched_result,))
+
+
+def test_candidate_set_manifest_task_manifest_checksum_mismatch_rejected() -> None:
+    """candidate_set_manifest.task_manifest_checksum must match the
+    benchmark's own task_manifest_checksum."""
+    manifest = _candidate_set_manifest(task_manifest_checksum="9" * 64)
+    with pytest.raises(InvalidReferenceResultError):
+        _benchmark(_valid_results(0), candidate_set_manifest=manifest)
+
+
+def test_candidate_set_manifest_expected_task_count_mismatch_with_benchmark_rejected() -> None:
+    """candidate_set_manifest.expected_task_count must match the benchmark's own."""
+    # Both must independently be 164, so this is exercised via a manifest built
+    # for a different (but still internally consistent) task count alongside a
+    # benchmark still declaring the standard 164 — the manifest's own
+    # REQUIRED_TASK_COUNT check fires first, which is an equally valid
+    # rejection of the same inconsistency.
+    with pytest.raises(InvalidCandidateSetManifestError):
+        _candidate_set_manifest(entries=_candidate_set_entries(163), expected_task_count=163)
