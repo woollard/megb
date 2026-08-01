@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted (original scope, commits `728c601`/`951c309`), Approved Correction v2 pending acceptance (commits `99b921d`/`55435da`); MEGB-03F complete including Approved Correction v2, pending acceptance (commits `410388d`, `99b921d`, `55435da`))  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted (original scope, commits `728c601`/`951c309`), Approved Correction v2 pending acceptance (commits `99b921d`/`55435da`); MEGB-03F complete including Approved Correction v2, pending acceptance (commits `410388d`, `99b921d`, `55435da`); MEGB-03G not started, Approved MEGB-03G Compatibility Amendment accepted as a specification-only correction — implementation not yet authorized)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -1248,7 +1248,148 @@ This is distinct from MEGB-06's primary-execution workload, which must never be 
 
 ### Status
 
-**Status:** Not started
+**Status:** Not started. **Approved MEGB-03G Compatibility Amendment applied** (see below); the original "Objective" through "Completion Record" text beneath it is preserved verbatim as historical context per this ticket's amendment-precedence rule, and is superseded wherever it conflicts with the amendment. Implementation is not yet authorized.
+
+### Approved MEGB-03G Compatibility Amendment
+
+Authorized following a read-only downstream compatibility review of MEGB-03G against the accepted MEGB-03E/F Approved Correction (v2) schema and the installed MEGB-04 through MEGB-09 specifications. That review found two defects that make the original text below unimplementable or unsafe as written, and two production-readiness gaps the original text left unaddressed:
+
+1. The original requirement 1 signature — `aggregate_reference_results(task_results: Sequence[ReferenceTaskResult]) -> ReferenceBenchmarkResult` — cannot construct a valid v2 `ReferenceBenchmarkResult`. That type's `__post_init__` mandatorily requires `run_context: ReferenceRunContext` and `candidate_set_manifest: ReferenceValidationCandidateSetManifest` as separate inputs, neither of which is derivable from a bare `Sequence[ReferenceTaskResult]` alone.
+2. The original requirement 7 cache-key tuple omitted `reference_case_checksum` — a field that exists on `ReferenceTaskResult` since the MEGB-03E/F Approved Correction (v2) — creating a real risk of stale cache reuse across a corrected reference case.
+3. The original text specified caching and resumption but no production execution strategy, despite MEGB-06's worst-case volume (5,216 × R_s unique task-candidate pairs) being sequentially infeasible at the measured ~3 minutes/task-candidate rate (~260.8 × R_s sequential hours).
+4. The original text did not explicitly require the aggregator to reject mixed-profile or reduced-development task results from the primary 164-task aggregate, though this was implied by the instruction to preserve distinct full-suite-compatibility identifiers.
+
+This amendment corrects all four points. It governs MEGB-03G's eventual implementation; it does not itself authorize that implementation, and it does not amend MEGB-04 through MEGB-09.
+
+#### 1. Corrected aggregation interface
+
+Replace the original requirement 1 signature with a nonredundant interface equivalent to:
+
+```python
+def aggregate_reference_results(
+    task_results: Sequence[ReferenceTaskResult],
+    candidate_set_manifest: ReferenceValidationCandidateSetManifest,
+) -> ReferenceBenchmarkResult:
+    ...
+```
+
+The implementation must:
+
+- require exactly 164 nonempty task results;
+- derive the shared `ReferenceRunContext` from the task results themselves (e.g. from their common `context` field) rather than accepting it as a second, independently suppliable argument;
+- verify every task result carries the identical run context; reject any run-context mismatch;
+- verify every task result's `candidate_id`/`candidate_sha256` matches its corresponding `candidate_set_manifest` entry exactly;
+- verify task-manifest identity/checksum, oracle version, evaluator version, comparison-profile identity, execution-profile identity, and schema-version consistency across every task result and against the manifest;
+- reject missing, duplicate, reordered, or otherwise inconsistent task results (e.g. two results for the same task ID, a task ID absent from the manifest, or a result count that does not match the manifest's 164 entries);
+- never synthesize, default, or fill in a run context or candidate-set manifest that was not itself present in and validated against the supplied inputs.
+
+If a separate run-context argument is preferred over deriving it from the task results, define one typed aggregation-input object binding context, manifest, and results together (e.g. a `ReferenceAggregationInput` dataclass) rather than accepting duplicated, independently suppliable context and results arguments — a caller must never be able to pass a run context that disagrees with what the task results themselves carry without that disagreement being rejected before aggregation proceeds.
+
+#### 2. Explicit profile separation
+
+The primary 164-task validation aggregate — the one whose `q_ref` is the primary \(Q_{\mathrm{ref}}\) — must accept only task results produced under the full reference-only evaluator and execution profile (`FULL_EXECUTION_PROFILE`).
+
+`aggregate_reference_results` must reject, rather than silently average over:
+
+- task results produced under `REDUCED_DEV_EXECUTION_PROFILE` or any other non-full profile;
+- a task-result set that mixes evaluator, execution, comparison, or oracle profile identities across tasks;
+- full-suite HumanEval+ compatibility diagnostics (`FullSuiteDiagnostic`) presented or substituted as primary `q_ref_task` values;
+- any task result whose task ID belongs to the 163-task `primary_experiment_task_manifest` rather than the 164-task `reference_validation_task_manifest` (i.e. any attempt to hand MEGB-06's experimental candidate set to this aggregator).
+
+The following must remain distinct artifacts, never collapsed into one number or one identifier:
+
+- full reference-only primary task results (the ones this aggregator consumes);
+- reduced-development smoke results (MEGB-03F's reduced profile, used during development only);
+- full-suite HumanEval+ compatibility diagnostics (preserved under their own identifier, per the original requirement 6);
+- the 164-task validation \(Q_{\mathrm{ref}}\) aggregate this subtask produces;
+- MEGB-06's later, separately built 163-task experimental aggregate.
+
+MEGB-03G must not implement, construct, or expose any interface for MEGB-06's 163-task experimental aggregate. That aggregate is MEGB-06I's own responsibility, built from its own dataset builder against `primary_experiment_task_manifest`; MEGB-03G's aggregator and cache exist to serve the 164-task validation aggregate and to supply reusable, content-addressed `S^*` results that MEGB-06H may consume, not to compute MEGB-06's estimands itself.
+
+#### 3. Complete cache identity
+
+Add `reference_case_checksum` to the cache key.
+
+The complete content-addressed cache key must bind every outcome-affecting input, including at least:
+
+- task ID;
+- candidate SHA-256;
+- reference-case checksum;
+- dataset identity/checksum;
+- partition identity/checksum;
+- oracle identity/checksum;
+- comparison-profile identity/version;
+- full evaluator version;
+- execution-profile identity;
+- protocol version;
+- any other relevant implementation or artifact version that affects the measured outcome.
+
+Run IDs, experiment/optimization run identities, and selection-coordinate identities (e.g. `random_control_replicate_id`) belong in audit and coordinate-to-result mapping records — per the original requirement 9 and per MEGB-06H's own mapping requirement — not in the content-addressed cache key itself, unless a specific run or selection identity is later shown to affect execution semantics (in which case it must be added to the key, not layered on top as a second, weaker identity check).
+
+Only a valid, completed result may be reused as a valid cache hit. Invalid or incomplete results must never be reused as if valid; they follow the frozen recovery/resumption policy (retry under the accepted MEGB-03 infrastructure-failure policy), never a silent second attempt disguised as a cache hit.
+
+#### 4. Production execution orchestration
+
+MEGB-03G must not merely record the sequential baseline as an accepted limitation. It must implement and validate a production task-candidate orchestration path providing:
+
+- content-addressed caching (per section 3 above);
+- safe resumption after interruption, without duplicating a valid accepted result or silently re-executing it;
+- bounded, configurable parallelism across task-candidate pairs;
+- resource-aware queueing and backpressure, so bounded parallelism cannot exceed the isolation boundary's safe concurrent-container capacity;
+- deterministic result ordering and identity, independent of actual execution or completion order;
+- append-only execution/audit records for every invocation, whether served from cache or newly executed;
+- controlled interruption and restart, with no ambiguous or double-counted in-flight execution;
+- exact reconciliation of expected, observed, cache-hit, and newly executed counts after any run.
+
+The accepted MEGB-02 isolation boundary must remain unchanged by this orchestration work — bounded parallelism means more concurrent isolated executions, never a weaker or shared execution boundary between them.
+
+Case batching (executing multiple reference cases for one candidate in a single process/container invocation, as distinct from parallelizing across task-candidate pairs) is not mandatory. If any batched candidate-execution path is introduced, it requires explicit validation, before acceptance, of: equivalence with the unbatched path's results; resource-limit behavior under batching; cross-case state isolation (no candidate may retain state or infer information across cases within a batch); output-bound behavior; timeout behavior; and adversarial-input behavior — mirroring the equivalence-and-isolation evidence MEGB-07E requirement 23 requires of any batched path proposed for the private evaluator.
+
+#### 5. Throughput evidence
+
+Benchmark, at minimum:
+
+- the current sequential execution path;
+- representative bounded-concurrency configurations (at least two distinct concurrency levels beyond sequential);
+- cold-cache behavior (no prior cached results available);
+- warm-cache behavior (a representative fraction of results already cached);
+- interruption/resumption behavior (measuring correctness and any resumption overhead, not just wall time).
+
+For each configuration, record: environment description; concurrency level; task and case counts exercised; cache state; wall time; throughput (task-candidates per unit time); resource usage (at minimum CPU and memory); and failure counts by category.
+
+Using the measured rates, project:
+
+- the full 164-task validation-portfolio runtime under each benchmarked configuration;
+- MEGB-06's worst-case volume of 5,216 × \(R_s\) unique task-candidate pairs;
+- the ~260.8 × \(R_s\) sequential-hour baseline these worst-case pairs imply at the current ~3-minute/task-candidate sequential rate;
+- the corresponding measured bounded-parallel projection(s) for the same worst-case volume.
+
+MEGB-03G's checkpoint report must state one of the following explicitly, supported by the measured throughput evidence above:
+
+- production reference execution is ready for MEGB-06A's feasibility evaluation, with the measured throughput and projected runtime/cost figures MEGB-06A needs to reason about \(R_s\); or
+- downstream readiness is **BLOCKED**, with the specific measured reason (e.g. concurrency ceiling, resource limit, or cost).
+
+MEGB-03G must not assume that MEGB-06H will independently solve any missing execution capacity — MEGB-06A is the downstream feasibility gate that consumes this evidence, and it is authorized to reduce \(R_s\), request further optimization, or halt on the basis of what MEGB-03G actually measured, not on an unstated assumption that capacity will materialize later.
+
+#### 6. Required tests (in addition to the original "Required Tests" below)
+
+- v2 aggregation construction from a valid 164-entry manifest and matching task-result set.
+- Manifest/result identity mismatch rejection: mismatched run context, mismatched candidate identity, mismatched task-manifest checksum, mismatched oracle/evaluator/comparison/execution/schema versions.
+- Repeated candidate SHA-256 values across *different* tasks remain valid (per the MEGB-03E/F Approved Correction (v2) — candidate-hash uniqueness is never required across tasks).
+- Rejection of reduced-development-profile results, full-suite-compatibility diagnostics presented as primary `q_ref_task`, mixed-profile task-result sets, and 163-task experimental task IDs presented to the 164-task aggregator.
+- Cache-key sensitivity to every key component listed in section 3, with a dedicated test for `reference_case_checksum` specifically (two otherwise-identical results differing only in `reference_case_checksum` must produce different cache keys and must not be treated as a cache hit for one another).
+- Valid-result reuse (cache hit) and invalid/incomplete-result nonreuse (never a cache hit; follows the frozen recovery policy instead).
+- Sequential/parallel semantic equivalence: the same task-candidate inputs produce the same accepted results and the same final aggregate regardless of concurrency level.
+- Bounded concurrency and backpressure behavior, including a configuration that intentionally exceeds available capacity.
+- Interruption/resumption without duplicate accepted results and without silently dropping an in-flight execution.
+- Deterministic canonical ordering of results in the aggregate output, independent of execution/completion order.
+- Audit/execution-count reconciliation: expected, cache-hit, newly executed, failed, and total counts reconcile exactly after a run, including an interrupted-and-resumed run.
+- Protected-data and reference-isolation checks: the orchestration and cache layers expose no reference-only evidence, expected outputs, or canonical solutions outside the accepted privileged boundary.
+- Throughput-report schema and reproducibility: the throughput report itself is typed, versioned, checksummed, and its projections are recomputable from its recorded raw measurements.
+
+#### 7. Preserved scope
+
+This amendment is specification-only. It does not amend MEGB-04 through MEGB-09; none of their text is affected. It does not authorize exposing privileged evidence beyond the boundary already accepted in MEGB-03B/03C/03D. It does not authorize beginning MEGB-03G implementation — that remains a separate, explicitly authorized step.
 
 ### Objective
 
