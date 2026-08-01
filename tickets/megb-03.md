@@ -555,7 +555,7 @@ explicitly deferred) — not merely specified.
 ### Completion Record
 
 - Status: Executed (see Status field above — supplementary-evidence review acceptance still pending)
-- Commit: (recorded in a follow-up commit; see repository log for "MEGB-03A.1: execute...")
+- Commit: d56231a628c71d1c665b74ab6c6f7c6e7c8deb4a
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_reference_augmentation.py -v` — 13/13 passed; full offline suite 119/119 passed; mypy clean (37 files); pylint 10.00/10.
 - Deviations: None from the authorized decisions. The `development_target=40`/`minimum_reference_only=30` policy evaluation and the `<70`-case classification both reused MEGB-03A's already-computed grid data rather than recomputing, since nothing about the underlying corpus changed.
