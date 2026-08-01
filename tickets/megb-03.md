@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted, commits `728c601`/`951c309`; MEGB-03F complete, pending acceptance, commit `410388d`)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted (original scope, commits `728c601`/`951c309`), Approved Correction v2 pending acceptance (commit `99b921d`); MEGB-03F complete including Approved Correction v2, pending acceptance (commits `410388d`, `99b921d`))  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -930,7 +930,7 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 
 ### Status
 
-**Status:** ACCEPTED. Executed per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics. Commits `728c601` (implementation and tests), `951c309` (ticket completion record).
+**Status:** ACCEPTED (original scope), commits `728c601`/`951c309`. Executed per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics. **Approved Correction v2 applied, pending acceptance** (see below): commit `99b921d`, fixing a schema defect surfaced during MEGB-03F trust-boundary review.
 
 ### Objective
 
@@ -1095,13 +1095,32 @@ The "Full offline regression suite ... 283 passed, 0 failed (up from 263 before 
 
   Both marker selections agree: MEGB-03E added exactly 84 tests, none of them `integration`- or `docker`-marked. The "up from 263" phrasing above understated the true pre-subtask baseline by comparing against a stale intermediate count rather than either of the two committed reference points (`226` under MEGB-03D's own command, or `199` under this subtask's narrower one).
 
+#### Approved Correction (v2): Separate Run / Task-Specific / Candidate-Set Identity
+
+Surfaced during MEGB-03F trust-boundary review, after MEGB-03E's original acceptance above: `ReferenceBenchmarkResult` required every `ReferenceTaskResult.context` to match the benchmark's `candidate_context` by full equality, which embedded a single `candidate_sha256` shared across all 164 tasks. This cannot represent a legitimate 164-task benchmark run — HumanEval tasks are independent programming problems, so a real run evaluates 164 *different* task-specific candidate solutions. Verified empirically before fixing: constructing a benchmark with two task results differing only in `candidate_sha256` (everything else identical) was unconditionally rejected. The original "Requirements"/"Completion Record" text above is preserved verbatim as historical context; this section supersedes it where they conflict, per this ticket's amendment-precedence rule.
+
+**Corrected design:**
+- **`ReferenceRunContext`** (renamed from `ReferenceEvaluationContext`): shared run/evaluator/dataset/partition/execution-profile identity, genuinely common across all 164 tasks. Contains no candidate field at all — no singular `candidate_id`/`candidate_frozen_at` implying one candidate for the whole run (renamed to `portfolio_frozen_at`/`portfolio_selection_rule`, describing the one atomic freeze/selection event that produced the whole 164-solution portfolio).
+- **`candidate_id`/`candidate_sha256`** moved directly onto `ReferenceTaskResult`: each task's own, independently-varying candidate identity.
+- **`CandidateSetManifest`** (new): a versioned, self-checksummed, exactly-164-entry binding of the whole run's task-to-candidate mapping (`CandidateSetEntry`: `task_id`/`candidate_id`/`candidate_sha256`), plus `task_manifest_id`/`task_manifest_checksum` (which 164-task reference-validation manifest) and `selection_provenance_sha256` (an opaque, caller-supplied checksum of whatever selection/provenance record accompanies the whole portfolio). The manifest's own checksum is always recomputed from canonical contents at construction — never accepted as an unverified caller-provided value — so a reordered, duplicated, or hand-edited entry is caught by the act of (re)constructing the manifest, including on reload from persisted storage.
+- `ReferenceBenchmarkResult` now verifies: `run_context` equality across every task result; `oracle_version` equality; `candidate_set_manifest.task_manifest_checksum` consistency with the benchmark's own; and that every task result's own candidate identity matches its `candidate_set_manifest` entry exactly — while explicitly permitting, and requiring for a real run, different `candidate_id`/`candidate_sha256` values across tasks.
+- This type remains the MEGB-03 evaluator-validation aggregate over exactly 164 tasks; it is not, and must never be silently reused as or confused with, MEGB-06's separate 163-task primary-experiment aggregate.
+
+**Schema version:** `RESULT_SCHEMA_VERSION` incremented `reference-result-schema-v1` → `reference-result-schema-v2` (a breaking change). Every serialized payload (`task_result_to_dict`/`benchmark_result_to_dict`) is now stamped with `schema_version`; deserialization checks this explicitly and raises `UnsupportedResultSchemaVersionError` on any mismatch rather than silently misparsing a differently-shaped payload under the current field names. **No migration path is needed or provided**: confirmed by searching the full repository for any JSON/lock-file artifact referencing `"reference-result-schema-v1"` — none exists. No code ever wired the v1 schema into any lock/build/CLI pipeline; its only consumers were `src/reference/result_schema.py`/`result_redaction.py`/`reference_evaluator.py` themselves and their own test suites, all updated by this same correction.
+
+**MEGB-03F change required:** `evaluate_reference` gains explicit `candidate_id`/`candidate_sha256` parameters (this task's own identity) alongside the renamed `run_context` parameter — a narrow signature change, since the function was already called once per task per the original design; no change to its orchestration logic.
+
+**Tests:** 61 new/updated regression tests across `tests/test_result_schema.py` (87 total), `tests/test_result_redaction.py` (21 total), `tests/test_reference_evaluator.py` (43 total, offline), and `tests/test_reference_evaluator_docker.py` (3, real Docker) — covering: different candidate ids/hashes across tasks now accepted (the core fix); mismatched shared run context rejected; missing/duplicate/reordered/tampered candidate-set entries rejected; candidate-set checksum mismatch rejected; the 164-task denominator still enforced; reduced/full evaluator profiles still cannot be mixed (via `run_context` equality); task-specific candidate identity remains redacted in both `redact_task_result`/`redact_benchmark_result`; and schema-version mismatch on deserialize rejected explicitly. Full offline regression suite (`pytest -m "not integration and not docker"`): 350 passed (up from 283 before this correction). Real Docker vertical slice: 3/3 passed. Full Docker-marked suite: 26/26 passed for tests actually affected by or exercising this correction (one unrelated, pre-existing MEGB-02 test failure — `test_no_containers_remain_after_adversarial_exit_paths` — was traced to a stale, 5-hour-old leftover container from an earlier, unrelated session predating this correction; removed and reconfirmed passing in isolation, not a regression from this change). `mypy --strict` over `src/`: clean, 40 files. `pylint` over `src/`+`tests/`: 10.00/10 (one pre-existing, already-accepted `duplicate-code` finding, unrelated).
+
+**Commit:** `99b921d`.
+
 ---
 
 ## MEGB-03F — Implement the Task-Level Reference Evaluator
 
 ### Status
 
-**Status:** Complete, pending acceptance. Executed per the original "Requirements" below — no execution amendment was needed. The literal 3-argument illustrative signature (`evaluate_reference(task_id, candidate_code, context)`) was extended with explicit `evidence`, `backend`, and `profile` parameters — documented as a deviation below — since a pure 3-argument function cannot discover privileged oracle evidence or a backend/profile on its own; the ticket itself invites "an interface similar to" this signature. Commit `410388d`.
+**Status:** Complete, pending acceptance. Executed per the original "Requirements" below — no execution amendment was needed. The literal 3-argument illustrative signature (`evaluate_reference(task_id, candidate_code, context)`) was extended with explicit `evidence`, `backend`, and `profile` parameters — documented as a deviation below — since a pure 3-argument function cannot discover privileged oracle evidence or a backend/profile on its own; the ticket itself invites "an interface similar to" this signature. Commit `410388d`. **Approved Correction v2 applied, pending acceptance together with MEGB-03E's**: commit `99b921d` — `evaluate_reference` now takes explicit task-specific `candidate_id`/`candidate_sha256` parameters alongside the renamed `run_context` (see MEGB-03E's "Approved Correction (v2)" section above for the full defect analysis and fix).
 
 ### Objective
 
