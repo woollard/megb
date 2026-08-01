@@ -215,6 +215,53 @@ def test_cannot_modify_root_filesystem() -> None:
     assert result.return_value in ("OSError", "PermissionError", "ReadOnlyFileSystemError")
 
 
+# --- 10b: runtime privilege controls (non-root, zero capabilities, no-new-privs) --
+
+
+def test_runtime_privilege_controls_are_actually_enforced() -> None:
+    """--user/--cap-drop ALL/--security-opt no-new-privileges are enforced at runtime.
+
+    Previously these flags were only known to be *applied* on every
+    invocation (visible in _build_docker_run_command), with no test that
+    checked their effect from inside the container. This probes all four
+    properties directly: effective UID isn't 0, the process's effective
+    capability set is empty, the kernel-reported NoNewPrivs flag is set,
+    and a privileged syscall (os.setuid(0)) is actually denied.
+    """
+    result = _run(
+        (
+            "import os\n"
+            "def f():\n"
+            "    euid = os.geteuid()\n"
+            "    with open('/proc/self/status') as fh:\n"
+            "        status = fh.read()\n"
+            "    cap_eff_line = [l for l in status.splitlines() if l.startswith('CapEff:')][0]\n"
+            "    cap_eff_hex = cap_eff_line.split()[1]\n"
+            "    nnp_line = [l for l in status.splitlines() if l.startswith('NoNewPrivs:')][0]\n"
+            "    no_new_privs = int(nnp_line.split()[1])\n"
+            "    try:\n"
+            "        os.setuid(0)\n"
+            "        privileged_op_denied = False\n"
+            "    except PermissionError:\n"
+            "        privileged_op_denied = True\n"
+            "    return {\n"
+            "        'euid': euid,\n"
+            "        'cap_eff_hex': cap_eff_hex,\n"
+            "        'no_new_privs': no_new_privs,\n"
+            "        'privileged_op_denied': privileged_op_denied,\n"
+            "    }\n"
+        )
+    )
+
+    assert result.status == ExecutionStatus.COMPLETED
+    assert isinstance(result.return_value, dict)
+    privilege_info = result.return_value
+    assert privilege_info["euid"] != 0
+    assert privilege_info["cap_eff_hex"] == "0" * len(privilege_info["cap_eff_hex"])
+    assert privilege_info["no_new_privs"] == 1
+    assert privilege_info["privileged_op_denied"] is True
+
+
 # --- 11: can write within the bounded temp directory ------------------------
 
 
