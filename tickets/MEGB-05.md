@@ -33,6 +33,12 @@ Depends on:
 
 **Status:** Approved, pre-experimental.
 
+**Amendment precedence:** where this amendment conflicts with earlier text
+elsewhere in this ticket — including hardcoded task counts, denominators,
+or task-set language — the amendment governs. Original text is preserved
+verbatim throughout as historical context; it is not authoritative once
+superseded.
+
 This ticket does not hardcode a task count, so no numerical requirement
 here changes. However, "every task" throughout this ticket (candidate
 generation, the candidate-stream manifest, the measurement evaluation

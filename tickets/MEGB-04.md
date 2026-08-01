@@ -35,6 +35,12 @@ The partition must be frozen, versioned, checksummed, and completed before any e
 
 **Status:** Approved, pre-experimental.
 
+**Amendment precedence:** where this amendment conflicts with earlier text
+elsewhere in this ticket — including hardcoded task counts, denominators,
+or task-set language — the amendment governs. Original text is preserved
+verbatim throughout as historical context; it is not authoritative once
+superseded.
+
 This ticket's original text assumes a single, undifferentiated 164-task
 population throughout. MEGB-03A.1 resolved that `HumanEval/39` is
 structurally ineligible for the primary factorial experiment (its

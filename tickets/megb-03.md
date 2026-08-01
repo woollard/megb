@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 executed, supplementary-evidence review acceptance pending; MEGB-03B not yet authorized)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B authorized and in progress)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -21,6 +21,13 @@ The evaluator must combine:
 The evaluator produces the privileged reference measurement \(Q_{\mathrm{ref}}\). It must never be exposed to, queried by, or used as feedback within candidate generation, revision, or selection.
 
 ## Approved Design Amendment
+
+**Amendment precedence:** where any approved amendment in this ticket
+(this section and MEGB-03A.1's own amendment content) conflicts with
+earlier text elsewhere in this ticket — including hardcoded task counts,
+denominators, or task-set language — the amendment governs. Original text
+is preserved verbatim throughout as historical context; it is not
+authoritative once superseded by an approved amendment.
 
 The original MEGB-03 specification treated the full HumanEval+ suite as \(S^*\). MEGB-04 subsequently required the evidence to be divided into disjoint development and reference-only pools.
 
@@ -199,7 +206,7 @@ After producing the report, stop. Do not begin the next subtask.
 ## Subtask Status
 
 - [x] MEGB-03A — Inventory EvalPlus evidence and validate partition feasibility
-- [ ] MEGB-03A.1 — Resolve evidence-limited task eligibility
+- [x] MEGB-03A.1 — Resolve evidence-limited task eligibility
 - [ ] MEGB-03B — Build and freeze the development/reference partition
 - [ ] MEGB-03C — Construct the privileged oracle artifact
 - [ ] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
@@ -313,7 +320,7 @@ Produce the standard checkpoint report and stop. MEGB-03B requires explicit auth
 
 ### Status
 
-**Status:** Executed. Policy finalized, task eligibility resolved, supplementary evidence generated and reviewed (per-task review artifacts produced), and cross-ticket amendments applied. Per Decision 8, the generated supplementary evidence itself still requires separate, explicit review acceptance before it is eligible for MEGB-03B partitioning — that acceptance has not yet been granted.
+**Status:** ACCEPTED. Policy finalized, task eligibility resolved, supplementary evidence generated and reviewed (per-task review artifacts produced), and cross-ticket amendments applied. The supplementary evidence's review acceptance (Decision 8) is granted for **partition eligibility only** — expected outputs and semantic oracle validity remain MEGB-03C's responsibility and are not addressed or claimed by this acceptance.
 
 ### Objective
 
@@ -554,8 +561,8 @@ explicitly deferred) — not merely specified.
 
 ### Completion Record
 
-- Status: Executed (see Status field above — supplementary-evidence review acceptance still pending)
-- Commit: d56231a628c71d1c665b74ab6c6f7c6e7c8deb4a
+- Status: ACCEPTED
+- Commits: d56231a (execution), 4b8362d (commit-hash record)
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_reference_augmentation.py -v` — 13/13 passed; full offline suite 119/119 passed; mypy clean (37 files); pylint 10.00/10.
 - Deviations: None from the authorized decisions. The `development_target=40`/`minimum_reference_only=30` policy evaluation and the `<70`-case classification both reused MEGB-03A's already-computed grid data rather than recomputing, since nothing about the underlying corpus changed.

@@ -30,6 +30,12 @@ All upstream artifacts, configurations, validation suites, and manifests must be
 
 **Status:** Approved, pre-experimental (adopted before any candidate generation, model exposure, or reference-evaluator invocation for this ticket).
 
+**Amendment precedence:** where this amendment conflicts with earlier text
+elsewhere in this ticket — including hardcoded task counts, denominators,
+or task-set language — the amendment governs. Original text is preserved
+verbatim throughout as historical context; it is not authoritative once
+superseded.
+
 MEGB-03A.1 resolved that `HumanEval/39`'s complete legitimate domain has
 exactly 12 inputs, all already present in the pinned evidence — it is
 therefore structurally ineligible for the primary factorial experiment
