@@ -290,7 +290,7 @@ Produce the standard checkpoint report and stop. MEGB-03B requires explicit auth
 ### Completion Record
 
 - Status: Accepted (pending explicit authorization to begin MEGB-03B)
-- Commit: (recorded in a follow-up commit immediately after; see repository log for "MEGB-03A: ...")
+- Commit: 81005b9ffc1d1ffb4629c4e8b32d9619c56c4b01
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_reference_case_serialization.py tests/test_reference_inventory.py -v` — 24/24 passed (6 serialization + 18 inventory, including 3 real-corpus integration tests); full offline suite 106/106 passed; mypy clean (35 files); pylint 10.00/10.
 - Deviations: Recommended-policy numeric constants (30 dev / 20 reference-only / 150 target) are MEGB-03A's own justified recommendation, not literal ticket text (the ticket asks for "a" allocation rule with justification, not a specific number). `mutation_sensitive_info` is reported as explicitly unavailable rather than fabricated, since EvalPlus's integrated fields carry no per-case generation-strategy tag.
