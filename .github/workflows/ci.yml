@@ -1,0 +1,97 @@
+name: CI
+
+# Two intentionally separate jobs (MEGB-02E):
+#   - `offline`: fast, no Docker dependency, runs on every push/PR.
+#   - `docker-sandbox`: the adversarial sandbox suite, requires Docker,
+#     builds the exact same pinned runner image this repo documents in
+#     docs/security/execution-sandbox.md.
+#
+# Neither job passes any repository secret to the runner image or to
+# candidate code: the `docker run` invocations in
+# src/execution/docker_backend.py never pass `-e`/`--env-file`, and this
+# workflow references no `secrets.*` context anywhere. Candidate code
+# executed by the docker-sandbox job is test fixture code checked into this
+# repo (tests/test_execution_sandbox.py), never externally supplied input.
+#
+# All third-party actions are pinned to immutable commit SHAs (not floating
+# tags), resolved from each action's own tag history at the time this
+# workflow was written; see the trailing `# vX.Y.Z` comment on each `uses:`
+# line for the human-readable version that SHA corresponds to.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    name: Offline tests, mypy, pylint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: mypy
+        run: python -m mypy src tests
+
+      - name: pylint
+        run: python -m pylint src tests
+
+      - name: Offline test suite (no Docker)
+        run: python -m pytest -m "not docker" -v
+
+  docker-sandbox:
+    name: Docker adversarial sandbox suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Docker is available
+        # Intentionally fails the job outright if Docker is missing, rather
+        # than letting the sandbox tests be silently skipped — a runner
+        # without Docker must be a visible CI failure, not a quiet pass.
+        run: |
+          if ! docker version; then
+            echo "::error::Docker is not available on this runner; the adversarial sandbox suite cannot run. Failing rather than skipping."
+            exit 1
+          fi
+
+      - name: Build the pinned runner image and record provenance
+        run: ./docker/runner/compute_provenance.sh | tee runner-image-provenance.txt
+
+      - name: Docker-backed adversarial suite
+        run: python -m pytest -m docker -v
+
+      - name: Post-suite leftover-container check
+        if: always()
+        run: |
+          leftover="$(docker ps -a --filter 'name=megb-runner-' --format '{{.Names}}')"
+          if [ -n "$leftover" ]; then
+            echo "::error::Leftover megb-runner-* containers found after the suite: $leftover"
+            docker rm -f $leftover
+            exit 1
+          fi
+          echo "No leftover megb-runner-* containers."
+
+      - name: Upload provenance and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: runner-image-provenance
+          path: runner-image-provenance.txt
+          retention-days: 30
