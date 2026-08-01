@@ -2,9 +2,9 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03B not yet authorized)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 specified and not yet authorized; MEGB-03B not yet authorized)  
 **Execution mode:** Sequential gated subtasks  
-**Subtasks:** MEGB-03A through MEGB-03I  
+**Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
 
 ## Epic Objective
@@ -189,6 +189,7 @@ After producing the report, stop. Do not begin the next subtask.
 ## Subtask Status
 
 - [x] MEGB-03A — Inventory EvalPlus evidence and validate partition feasibility
+- [ ] MEGB-03A.1 — Resolve evidence-limited task eligibility
 - [ ] MEGB-03B — Build and freeze the development/reference partition
 - [ ] MEGB-03C — Construct the privileged oracle artifact
 - [ ] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
@@ -298,6 +299,260 @@ Produce the standard checkpoint report and stop. MEGB-03B requires explicit auth
 
 ---
 
+## MEGB-03A.1 — Resolve Evidence-Limited Task Eligibility
+
+### Status
+
+**Status:** Specified (drafted with real analysis against the pinned corpus; pending your explicit acceptance before it is treated as Accepted)
+
+### Objective
+
+Resolve, before any partition is frozen, which of the 164 tasks are eligible
+for the primary factorial experiment versus retained only in the 164-task
+reference-evaluator validation set — and finalize the uniform
+development/reference policy those eligible tasks will use. This subtask
+is a decision and specification amendment: it settles per-task
+eligibility, finalizes policy constants, classifies every evidence-limited
+task, and specifies (without executing) a supplementary-evidence procedure
+and the cross-ticket amendments needed so validation and experimental
+scores can never be confused. It does not assign partition membership,
+generate supplementary evidence, modify evaluator code, or begin MEGB-03B.
+
+This subtask exists because MEGB-03A's decision-analysis addendum's
+recommendation to assign zero development cases to evidence-limited tasks
+was rejected: a task with zero development-visible evidence has no
+optimization-visible measurement and therefore no defined gaming event,
+which is incompatible with MEGB-04/06's experimental design (every task in
+the primary factorial experiment must be measurable by *both* an
+optimization-visible system and the reference evaluator).
+
+### Dependencies
+
+- MEGB-03A complete and accepted.
+- The MEGB-03A partition-policy decision-analysis addendum accepted.
+
+### Approved Design Principles
+
+1. The MEGB-03 reference-evaluator validation set retains all 164 tasks —
+   `Q_ref` and the reference-evaluator validation described in MEGB-03C–H
+   are never reduced below 164 tasks.
+2. The primary factorial experiment (MEGB-04/05/06) includes only tasks
+   that can support all four visible evidence budgets MEGB-04 defines
+   (\(O_1{=}1, O_2{=}3, O_3{=}10, O_4{=}30\), nested subsets of one
+   development pool per task) and a nonempty, scientifically defensible
+   reference-only pool.
+3. `HumanEval/39` is **provisionally excluded a priori** from the primary
+   factorial experiment: its complete legitimate domain (contract `1 <= n
+   <= 12`, integer) has exactly 12 inputs, and all 12 are already present
+   in the pinned evidence (verified in the MEGB-03A addendum, §1 and §6).
+   It remains in the 164-task reference-evaluator validation set.
+4. `HumanEval/55` is **provisionally designated for systematic,
+   task-contract-derived augmentation** before partitioning, rather than
+   exclusion — its domain (`n >= 0`, integer) is unbounded.
+5. `development_target = 40` and `minimum_reference_only = 30` are adopted
+   as the leading uniform policy for evaluation in this subtask. Replicates
+   may overlap but must be distinct (no two of a task's five O4 replicates
+   may be literally identical). This is a stricter reference floor than
+   MEGB-03A's original recommendation (20) and a lower development target
+   (40, not 150) — see Requirement 1 for why.
+6. Every task with fewer than 70 unique legitimate cases (i.e., failing
+   `development_target=40 + minimum_reference_only=30`) must be
+   individually classified as finite/exhausted or augmentable, with an
+   exclusion or augmentation recommendation.
+7. `HumanEval/55` requires a specified (not executed) deterministic
+   supplementary-input procedure, including provenance, versioning,
+   independent review, resource calibration, and checksum requirements.
+8. Two explicit manifests must be defined:
+   `reference_validation_task_manifest` (164 tasks) and
+   `primary_experiment_task_manifest` (expected 163 tasks, subject to the
+   remaining eligibility review in Requirement 2 below).
+9. Amendments required to MEGB-03 through MEGB-06 so benchmark-validation
+   scores (164-task `Q_ref`) and primary-experiment scores (163-task,
+   pending final review) can never be confused must be specified.
+
+### Requirements
+
+1. **Evaluate and record the `development_target=40,
+   minimum_reference_only=30` policy.** This combination was already
+   computed in the MEGB-03A addendum (§3, §4): 160/164 tasks satisfy it
+   (4 fail — see Requirement 2), and at `development_target=40` zero tasks
+   produce literally duplicate O4 replicate sets (mean pairwise Jaccard
+   0.603 — overlapping but distinct, satisfying Design Principle 5's hard
+   constraint). Record this evaluation as the finalized policy pending
+   authorization of MEGB-03B, superseding MEGB-03A's original
+   `dev=150/ref=20` recommendation.
+
+2. **Identify and classify every task with fewer than 70 unique cases.**
+   Exactly four tasks fail `development_target=40 + minimum_reference_only=30
+   = 70` under the pinned corpus:
+
+   | Task | Unique cases | Entry point | Domain | Classification | Recommendation |
+   |---|---:|---|---|---|---|
+   | `HumanEval/39` | 12 | `prime_fib` | `1 <= n <= 12` (12 integers) | **Finite, exhausted** (12/12 covered) | Exclude from primary experiment (Design Principle 3); retain in validation |
+   | `HumanEval/55` | 45 | `fib` | `n >= 0` (unbounded) | Augmentable | Augment before partitioning (Design Principle 4); needs +25 cases to reach 70 |
+   | `HumanEval/6` | 69 | `parse_nested_parens` | balanced-paren strings over `"(", ")", " "` (unbounded) | Augmentable | Augment; needs +1 case to reach 70 |
+   | `HumanEval/63` | 65 | `fibfib` | `n >= 0`, integer (unbounded) | Augmentable | Augment; needs +5 cases to reach 70 |
+
+   Only `HumanEval/39` has a domain that is structurally incapable of
+   supplying more legitimate evidence; the other three have unbounded
+   domains and are classified augmentable, at modest estimated cost (1–25
+   cases). This inventory must be re-verified against whatever dataset
+   version is pinned at MEGB-03B execution time — these counts are tied to
+   human-eval==1.0.3 / evalplus==0.3.1.
+
+3. **Specify (do not execute) a deterministic supplementary-input
+   procedure for `HumanEval/55`** (and, if approved, `HumanEval/6` and
+   `HumanEval/63`), covering at minimum:
+   - **Domain-derived generation rule:** sample additional non-negative
+     integers not already covered by the existing 45 cases (e.g. filling
+     domain gaps such as 9 and 19–26, or extending beyond the current
+     maximum of 86), respecting the documented contract exactly — no
+     signature-based generic fuzzing.
+   - **Provenance:** every generated case must carry an explicit
+     `evidence_source` tag (e.g. `megb-contract-augmentation-v1`)
+     distinguishing it from originally-sourced EvalPlus evidence in every
+     downstream artifact (inventory, partition manifest, oracle records).
+   - **Versioning:** a dedicated augmentation-algorithm version, recorded
+     alongside the existing `case_id_algorithm_version` /
+     `inventory_algorithm_version` scheme from MEGB-03A.
+   - **Independent review:** augmented cases must be reviewed against the
+     pinned EvalPlus canonical solution and contract before acceptance —
+     specify who/what performs this review (e.g. a fixed validation script
+     comparing contract satisfaction and canonical-solution executability)
+     and what "review passed" means operationally.
+   - **Resource calibration:** augmented cases must go through the same
+     MEGB-02 execution-limit calibration as existing evidence (no
+     special-cased execution profile).
+   - **Checksum requirements:** the augmented-case set must have its own
+     checksum, and any oracle artifact incorporating it (MEGB-03C) must
+     record both the original and augmented case-set checksums separately.
+
+4. **Define two explicit manifests** (schemas and field lists only — no
+   instances constructed yet):
+   - `reference_validation_task_manifest`: exactly 164 task IDs, used
+     exclusively by MEGB-03's own reference-evaluator construction and
+     validation (MEGB-03C through 03H). Never described as the primary
+     experiment's task set.
+   - `primary_experiment_task_manifest`: expected 163 task IDs (164 minus
+     `HumanEval/39`), subject to final confirmation once Requirement 3's
+     augmentation decisions for `HumanEval/6`/`HumanEval/55`/`HumanEval/63`
+     are resolved. Used exclusively by MEGB-04/05/06. Must record which
+     tasks were augmented and under which augmentation version.
+   - Both manifests must carry independent checksums, and any artifact
+     referencing "the 164 tasks" versus "the primary experiment tasks"
+     must cite the specific manifest and its checksum, never a bare count.
+
+5. **Specify required cross-ticket amendments** so benchmark-validation
+   and experimental scores cannot be confused:
+
+   - **MEGB-03** (this epic): `Q_ref` (MEGB-03E/G) is computed over
+     `reference_validation_task_manifest` (164 tasks) — already the
+     design; no change needed beyond citing the manifest explicitly by
+     name once it exists (MEGB-03E/G should reference
+     `reference_validation_task_manifest`'s checksum, not a bare "164").
+
+   - **MEGB-04** currently assumes a single, undifferentiated 164-task
+     population (`expected_task_count: 164` in its configuration;
+     `Q_meas^(k) = (1/164) * sum_{i=1}^{164} ...` in Requirement 8). It
+     must be amended to:
+     (a) construct \(S_1 \ldots S_4\) and their five O4 replicates only
+     over `primary_experiment_task_manifest` (163 tasks, pending final
+     count);
+     (b) change its benchmark-aggregation denominator from the literal
+     164 to `len(primary_experiment_task_manifest)`, citing that
+     manifest's checksum in every aggregate result; and
+     (c) explicitly document that `HumanEval/39` (and any task ultimately
+     excluded rather than augmented) has no \(S_1 \ldots S_4\)
+     measurement and is therefore absent from every MEGB-04 aggregate,
+     while still appearing in MEGB-03's reference-evaluator validation.
+
+   - **MEGB-05** does not hardcode a task count and requires no amendment
+     beyond consuming `primary_experiment_task_manifest` wherever it
+     currently assumes "every task."
+
+   - **MEGB-06** currently hardcodes "all 164 HumanEval tasks" as its fixed
+     task set (Experimental Design), requires "exactly 164 public tasks"
+     in its Preflight Validation Gate, sums primary/secondary outcomes
+     over \(i=1\) to 164, and requires the factorial matrix to "cover all
+     164 tasks." Every one of these must be amended to reference
+     `primary_experiment_task_manifest` and its resolved count (expected
+     163, not 164) instead of a literal 164. This is a material amendment,
+     not cosmetic: MEGB-06 §17 (Failure and Exclusion Policy) already
+     forbids excluding any task, stream, replicate, or condition *after
+     unblinding* — which confirms task-eligibility decisions like this one
+     belong here, before preregistration, and must be finalized (not
+     revisited) once MEGB-06's preregistration is filed.
+
+### Acceptance Criteria
+
+- `development_target=40, minimum_reference_only=30` is evaluated against
+  the full 164-task inventory and its outcome (satisfying/failing task
+  counts, duplicate-O4-set incidence, mean pairwise Jaccard) is recorded.
+- Every task with fewer than 70 unique cases is individually identified,
+  classified finite/exhausted or augmentable, and given an explicit
+  exclusion or augmentation recommendation.
+- `HumanEval/39` is documented as provisionally excluded from the primary
+  experiment and retained in the reference-evaluator validation set.
+- `HumanEval/55` is documented as designated for augmentation, with a
+  fully specified (not executed) procedure covering generation rule,
+  provenance, versioning, independent review, resource calibration, and
+  checksums.
+- Both manifests (`reference_validation_task_manifest`,
+  `primary_experiment_task_manifest`) have documented schemas, expected
+  counts, and checksum requirements, without any instance yet constructed.
+- Required amendments to MEGB-04 and MEGB-06 (and confirmation that
+  MEGB-03/05 need none beyond manifest citation) are specified concretely
+  enough to be applied as ticket edits without further analysis.
+- No partition membership is assigned, no supplementary evidence is
+  generated, no evaluator code is modified, and MEGB-03B is not begun.
+
+### Required Tests
+
+None — this subtask produces specification and decision documents only,
+consistent with its non-goals. (Contrast with MEGB-03A, which produced
+executable inventory code with tests; this subtask's "evaluation" of the
+`dev=40/ref=30` policy reuses MEGB-03A's already-tested inventory code and
+existing test suite rather than adding new production code.)
+
+### Non-Goals
+
+- Assigning any case to `development` or `reference_only`.
+- Generating any supplementary evidence for `HumanEval/6`, `HumanEval/55`,
+  or `HumanEval/63`.
+- Constructing either manifest as a real, checksummed artifact.
+- Modifying MEGB-04, MEGB-05, or MEGB-06 ticket text directly (this
+  subtask specifies the required amendments; applying them to those
+  ticket files is out of scope here).
+- Beginning MEGB-03B.
+
+### Handoff Artifacts
+
+- This ticket section (MEGB-03A.1) itself, as the specification record.
+- The task-eligibility classification table (Requirement 2).
+- The supplementary-input procedure specification for `HumanEval/55`
+  (Requirement 3).
+- The two manifest schema definitions (Requirement 4).
+- The cross-ticket amendment specification (Requirement 5).
+
+### Checkpoint and Stop Condition
+
+Produce the standard checkpoint report and stop. MEGB-03B requires
+explicit authorization, and its own authorization now additionally
+requires the `HumanEval/6`/`HumanEval/55`/`HumanEval/63` augmentation
+decisions from this subtask to be resolved (approved, executed, or
+explicitly deferred) — not merely specified.
+
+### Completion Record
+
+- Status: Not started
+- Commit: —
+- Completed: —
+- Tests: —
+- Deviations: —
+- Handoff: —
+
+---
+
 ## MEGB-03B — Build and Freeze the Development/Reference Partition
 
 ### Status
@@ -311,6 +566,7 @@ Create, validate, and freeze the deterministic manifest assigning every eligible
 ### Dependencies
 
 - MEGB-03A complete and accepted.
+- MEGB-03A.1 complete and accepted (task eligibility resolved, policy finalized, manifests specified).
 - Partition configuration explicitly approved.
 
 ### Requirements
