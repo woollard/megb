@@ -1080,6 +1080,21 @@ Produce the standard checkpoint report and stop. MEGB-03F requires explicit auth
   5. The benchmark-level "candidate/run identity" check was generalized from a fixed subset of fields to full `ReferenceEvaluationContext` equality against every task result — simpler and stronger than checking a hand-picked field list, and it also catches evaluator/dataset/partition/execution-profile version drift within one benchmark run, which the ticket's "configuration/version validation" required test explicitly calls for.
 - Handoff: `src/reference/result_schema.py` (typed models: `ReferenceEvaluationContext`, `MeasurementStatus`, `ReferenceOutcome`, `FullSuiteDiagnostic`, `ReferenceTaskResult`, `ReferenceBenchmarkResult`, `InvalidReferenceResultError`) and `src/reference/result_redaction.py` (privileged `*_to_dict`/`*_from_dict` serialization and development-facing `redact_task_result`/`redact_benchmark_result` projections) are ready for MEGB-03F to populate by executing candidates through MEGB-02 and MEGB-03C/03D's oracle/comparison layer. No candidate execution, persistent caching/audit storage, or benchmark-gaming delta calculation is implemented here, per this ticket's Non-Goals — those remain MEGB-03F's and MEGB-06's responsibility respectively.
 
+#### Post-Acceptance Addendum: Reconciling the "263"/"283" Figures with MEGB-03D's "226/226"
+
+The "Full offline regression suite ... 283 passed, 0 failed (up from 263 before this subtask)" line above is preserved as originally written, but its "263" comparison point does not use the same marker selection as MEGB-03D's own accepted completion record above ("Full offline suite 226/226 passed"), and is corrected here rather than edited into the original text:
+
+- MEGB-03D's `226/226` was obtained with `pytest -m "not docker"` (excludes only Docker-marked tests; includes non-Docker `integration`-marked tests requiring network access). Verified directly by checking out commit `dd81002` (MEGB-03D's own commit-hash-recorded state) and rerunning that exact command: **226 passed, 24 deselected.**
+- MEGB-03E's "263" (an intermediate, never-reported-to-the-user figure from mid-subtask) and "283" both used the narrower `pytest -m "not integration and not docker"` (excludes both integration and Docker tests). At the same `dd81002` commit, that narrower command yields **199 passed, 51 deselected** — not 226 — because it additionally excludes the non-Docker integration tests.
+- Rerunning both marker selections at this subtask's final state (`951c309`) gives a consistent, marker-independent reconciliation:
+
+  | Marker selection | MEGB-03D (`dd81002`) | MEGB-03E (`951c309`) | Delta |
+  |---|---|---|---|
+  | `-m "not docker"` (MEGB-03D's own command) | 226 passed, 24 deselected | 310 passed, 24 deselected | **+84** |
+  | `-m "not integration and not docker"` (this subtask's command) | 199 passed, 51 deselected | 283 passed, 51 deselected | **+84** |
+
+  Both marker selections agree: MEGB-03E added exactly 84 tests, none of them `integration`- or `docker`-marked. The "up from 263" phrasing above understated the true pre-subtask baseline by comparing against a stale intermediate count rather than either of the two committed reference points (`226` under MEGB-03D's own command, or `199` under this subtask's narrower one).
+
 ---
 
 ## MEGB-03F — Implement the Task-Level Reference Evaluator
