@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 specified and not yet authorized; MEGB-03B not yet authorized)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 executed, supplementary-evidence review acceptance pending; MEGB-03B not yet authorized)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -33,6 +33,16 @@ The resulting policies are:
 3. **Compatibility measurement:** conventional full-suite HumanEval+ performance may be computed for upstream parity and diagnostic compatibility, but it must have a distinct evaluator/profile identifier and must not be described as held out.
 4. **Freeze timing:** the partition must be versioned, checksummed, and frozen before any experimental candidate is generated.
 5. **No silent fallback:** if the pinned corpus cannot support the planned development and reference pools for all 164 tasks, implementation stops and the experimental design is amended explicitly.
+6. **164-task validation vs. 163-task experimental aggregation (MEGB-03A.1):**
+   `Q_ref` as defined by this epic (MEGB-03E/G) is computed over
+   `reference_validation_task_manifest` — all 164 tasks — and this does not
+   change. It must never be confused with the *primary factorial
+   experiment's* own aggregation (MEGB-04's `Q_meas`/benchmark score and
+   MEGB-06's `G(k,N)`/`Q_meas(k,N)`/`Q_ref(k,N)`), which is computed over
+   the disjoint `primary_experiment_task_manifest` (expected 163 tasks,
+   excluding `HumanEval/39` — see MEGB-03A.1). Any artifact reporting "the
+   164 tasks" versus "the primary experiment tasks" must cite the specific
+   manifest and its checksum, never a bare count.
 
 ## Measurement Claim
 
@@ -303,7 +313,7 @@ Produce the standard checkpoint report and stop. MEGB-03B requires explicit auth
 
 ### Status
 
-**Status:** Specified (drafted with real analysis against the pinned corpus; pending your explicit acceptance before it is treated as Accepted)
+**Status:** Executed. Policy finalized, task eligibility resolved, supplementary evidence generated and reviewed (per-task review artifacts produced), and cross-ticket amendments applied. Per Decision 8, the generated supplementary evidence itself still requires separate, explicit review acceptance before it is eligible for MEGB-03B partitioning — that acceptance has not yet been granted.
 
 ### Objective
 
@@ -544,12 +554,12 @@ explicitly deferred) — not merely specified.
 
 ### Completion Record
 
-- Status: Not started
-- Commit: —
-- Completed: —
-- Tests: —
-- Deviations: —
-- Handoff: —
+- Status: Executed (see Status field above — supplementary-evidence review acceptance still pending)
+- Commit: (recorded in a follow-up commit; see repository log for "MEGB-03A.1: execute...")
+- Completed: 2026-08-01
+- Tests: `pytest tests/test_reference_augmentation.py -v` — 13/13 passed; full offline suite 119/119 passed; mypy clean (37 files); pylint 10.00/10.
+- Deviations: None from the authorized decisions. The `development_target=40`/`minimum_reference_only=30` policy evaluation and the `<70`-case classification both reused MEGB-03A's already-computed grid data rather than recomputing, since nothing about the underlying corpus changed.
+- Handoff: `src/reference/augmentation.py` (generators, contract validation, feasibility checks, checksums); `artifacts/reference/augmentation/generation_procedures_v1.{md,json}` (frozen procedure, checksum `31705af14ef914a8b495d980c3a9a962b4039b1f6aa574cdad85c706e7289c00`); `artifacts/reference/augmentation/{humaneval_55,humaneval_63,humaneval_6}_review.md` (per-task review artifacts — Decision 7); `artifacts/reference/augmentation/augmentation_results.json` (machine-readable summary). Combined unique-case counts achieved: HumanEval/55 = 202 (45 original + 157 accepted), HumanEval/63 = 202 (65 original + 137 accepted), HumanEval/6 = 287 (69 original + 218 accepted) — all comfortably exceed the >=100 target. Zero candidates were contract-rejected or infeasible across all three tasks. **All generated evidence requires your explicit review acceptance (Decision 8) before MEGB-03B may use it.**
 
 ---
 

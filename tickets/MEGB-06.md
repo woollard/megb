@@ -26,6 +26,42 @@ Depends on:
 
 All upstream artifacts, configurations, validation suites, and manifests must be frozen before this experiment begins.
 
+## Approved Pre-Experimental Amendment (MEGB-03A.1)
+
+**Status:** Approved, pre-experimental (adopted before any candidate generation, model exposure, or reference-evaluator invocation for this ticket).
+
+MEGB-03A.1 resolved that `HumanEval/39`'s complete legitimate domain has
+exactly 12 inputs, all already present in the pinned evidence — it is
+therefore structurally ineligible for the primary factorial experiment
+(not merely difficult) and is excluded *a priori*, for a documented
+structural reason, never for observed performance. It remains part of
+MEGB-03's separate 164-task reference-evaluator validation set.
+
+**This amendment does not change this ticket's original formulas or
+counts by silent substitution.** Every place below that reads "164" is
+preserved verbatim and followed by an inline note pointing back to this
+section. The frozen `primary_experiment_task_manifest` (MEGB-03A.1)
+defines the actual experimental task set and count (expected 163,
+pending final confirmation of the `HumanEval/6`/`HumanEval/55`/`HumanEval/63`
+augmentation review) and supersedes the literal `164` at every noted
+location:
+
+- the fixed task set (Experimental Design);
+- the Primary Outcome (`G(k,N)`) and Secondary Outcomes (`Q_meas(k,N)`,
+  `Q_ref(k,N)` *as computed within this experiment's own aggregation* —
+  distinct from MEGB-03's separate 164-task reference-evaluator
+  validation `Q_ref`, which is unaffected);
+- the Preflight Validation Gate's task-count check;
+- Candidate Generation's task coverage;
+- the Optimization-Visible Evaluation matrix-completeness check; and
+- the Acceptance Criteria's factorial-matrix coverage statement.
+
+The Preflight Validation Gate (Requirement 1) must additionally verify
+**both** counts separately: exactly 164 tasks in
+`reference_validation_task_manifest` (unchanged) **and** exactly the
+frozen count in `primary_experiment_task_manifest` (expected 163) — never
+collapse these into a single check.
+
 ## Experimental Design
 
 The complete experimental matrix is:
@@ -42,7 +78,10 @@ The complete experimental matrix is:
 \text{Optimization pressure}.
 \]
 
-The fixed task set contains all 164 HumanEval tasks.
+The fixed task set contains all 164 HumanEval tasks. *(Amended by
+MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above. The
+experimental task set is `primary_experiment_task_manifest`, expected 163
+tasks.)*
 
 Measurement robustness is operationalized by evidence budget:
 
@@ -86,6 +125,12 @@ G(k,N)
 \sum_{i=1}^{164} G_{i,k,N}.
 \]
 
+*(Amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above.
+The original formula is preserved above; the frozen aggregation replaces
+164 with `len(primary_experiment_task_manifest)` and the sum with one over
+that manifest's tasks, since `HumanEval/39` has no `q_meas` and therefore
+no defined gaming event.)*
+
 Aggregation across stream and observation-set replicates must follow the preregistered analysis plan and preserve clustering.
 
 ## Secondary Outcomes
@@ -100,6 +145,10 @@ Q_{\mathrm{meas}}(k,N)
 q_{\mathrm{meas},i}^{(k,N)}.
 \]
 
+*(Amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above.
+164 becomes `len(primary_experiment_task_manifest)`; `HumanEval/39` has no
+`q_meas` and is excluded from this sum, not scored as zero.)*
+
 ### Reference Performance
 
 \[
@@ -109,6 +158,12 @@ Q_{\mathrm{ref}}(k,N)
 \sum_{i=1}^{164}
 q_{\mathrm{ref},i}^{(k,N)}.
 \]
+
+*(Amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above.
+This is the within-experiment reference score for the frozen candidates at
+budget N, aggregated over the same `primary_experiment_task_manifest` as
+`Q_meas(k,N)` for consistency — distinct from MEGB-03's own separate
+164-task reference-evaluator validation score, which is unaffected.)*
 
 ### Signed Gaming Gap
 
@@ -202,7 +257,7 @@ The preregistration must define a minimum practically meaningful effect size \(D
 
 Before preregistration and experimental generation, verify:
 
-- exactly 164 public tasks are available;
+- exactly 164 public tasks are available in `reference_validation_task_manifest`, **and** exactly the frozen count (expected 163) is available in `primary_experiment_task_manifest` *(amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above; verify both counts separately, never collapse them into one check)*;
 - the development and reference-only evidence pools are disjoint;
 - all dataset and oracle checksums match frozen manifests;
 - all 20 optimization-visible system replicates are frozen and valid;
@@ -308,7 +363,7 @@ Generate all candidate streams through MEGB-05.
 
 Generation must:
 
-- cover all 164 tasks;
+- cover all 164 tasks *(amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above; generation covers `primary_experiment_task_manifest`, expected 163 tasks — `HumanEval/39` is not included)*;
 - use the preregistered number of stream replicates;
 - contain exactly 32 candidate positions per complete stream;
 - preserve duplicates and malformed outputs;
@@ -334,6 +389,10 @@ Verify matrix completeness before selection:
 × 4 robustness levels
 × 5 observation-set replicates
 ```
+
+*(Amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above.
+The frozen matrix uses `len(primary_experiment_task_manifest)` in place of
+164, expected 163.)*
 
 Every required measurement must be valid before selection proceeds.
 
@@ -805,7 +864,7 @@ Verify identical:
 
 - The experiment is preregistered before candidate generation begins.
 - Power, cost, replicate count, minimum effect size, analysis, and exclusions are frozen before reference unblinding.
-- The complete factorial matrix covers all 164 tasks and every preregistered stream, observation, robustness, and budget condition.
+- The complete factorial matrix covers all 164 tasks *(amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above; the factorial matrix covers `primary_experiment_task_manifest`, expected 163 tasks, while `reference_validation_task_manifest` separately covers all 164)* and every preregistered stream, observation, robustness, and budget condition.
 - The same candidate streams are shared across measurement-system conditions.
 - All selection decisions are complete, deterministic, and frozen before \(S^*\) is enabled.
 - Every unique frozen candidate is evaluated by \(S^*\) no more than once per task and evaluator version.

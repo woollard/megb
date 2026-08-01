@@ -1,0 +1,38 @@
+{
+  "algorithm_version": "supplementary-generation-v1",
+  "case_id_algorithm_version": "case-id-v1",
+  "procedure_document": "generation_procedures_v1.md",
+  "procedure_document_sha256": "31705af14ef914a8b495d980c3a9a962b4039b1f6aa574cdad85c706e7289c00",
+  "provenance_tags": {
+    "original": "evalplus-original-v1",
+    "supplementary": "megb-contract-augmentation-v1"
+  },
+  "tasks": {
+    "HumanEval/55": {
+      "domain": "n: int, n >= 0, unbounded",
+      "rule": "exhaustive_integer_range",
+      "range_start": 0,
+      "range_end": 200,
+      "ordering": "ascending",
+      "target_combined_minimum": 100
+    },
+    "HumanEval/63": {
+      "domain": "n: int, n >= 0, unbounded",
+      "rule": "exhaustive_integer_range",
+      "range_start": 0,
+      "range_end": 200,
+      "ordering": "ascending",
+      "target_combined_minimum": 100
+    },
+    "HumanEval/6": {
+      "domain": "paren_string: str, space-separated Dyck words (declared assumption; see procedure doc)",
+      "rule": "dyck_word_enumeration",
+      "dyck_word_lengths": [2, 4, 6, 8, 10, 12],
+      "single_group_candidates": 196,
+      "multi_group_pair_count": 40,
+      "multi_group_words_consumed": 80,
+      "ordering": "length_ascending_then_lexicographic_then_consecutive_pairing",
+      "target_combined_minimum": 100
+    }
+  }
+}

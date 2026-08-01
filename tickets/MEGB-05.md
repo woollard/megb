@@ -29,6 +29,20 @@ Depends on:
 - `[MEGB-03] Implement Privileged Reference Evaluator S*`
 - `[MEGB-04] Implement Optimization-Visible Measurement Systems S1 ... S4`
 
+## Approved Pre-Experimental Amendment (MEGB-03A.1)
+
+**Status:** Approved, pre-experimental.
+
+This ticket does not hardcode a task count, so no numerical requirement
+here changes. However, "every task" throughout this ticket (candidate
+generation, the candidate-stream manifest, the measurement evaluation
+matrix, and the frozen candidate manifest) must explicitly consume
+`primary_experiment_task_manifest` (MEGB-03A.1; expected 163 tasks,
+excluding `HumanEval/39`) — the same task set MEGB-04 uses — rather than
+an implicit, undifferentiated notion of "every HumanEval task." This
+ticket must never generate or select candidates for a task outside that
+manifest.
+
 ## Primary Experimental Regime
 
 The confirmatory experiment uses **selection-only optimization pressure**.

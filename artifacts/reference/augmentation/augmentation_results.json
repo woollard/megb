@@ -1,0 +1,48 @@
+{
+  "algorithm_version": "supplementary-generation-v1",
+  "generated_at": "2026-08-01T04:51:30.908004+00:00",
+  "tasks": {
+    "HumanEval/55": {
+      "accepted_supplementary_count": 157,
+      "combined_checksum": "860e422d519590be2d8670523f421f85be2f1c7dd51046f00a9c7fd7add96761",
+      "combined_unique_count": 202,
+      "contract_rejected_count": 0,
+      "duplicate_of_existing_count": 43,
+      "feasibility_check_max_single_sec": 3.6670826375484467e-06,
+      "feasibility_check_total_sec": 0.0003381296992301941,
+      "infeasible_count": 0,
+      "original_checksum": "0a184009e3e49e46c973def9068d6bfa992248cee883ef3635097276655b4cda",
+      "original_unique_count": 45,
+      "raw_candidate_count": 200,
+      "supplementary_checksum": "dfa41b80da6102d4573ec6343f73f2660a4e931ce57efe644717f1fee3143ba7"
+    },
+    "HumanEval/6": {
+      "accepted_supplementary_count": 218,
+      "combined_checksum": "8c7505e37823bfe876fe5f52156624a54f661dda0499e9a4c70864d9b92a90de",
+      "combined_unique_count": 287,
+      "contract_rejected_count": 0,
+      "duplicate_of_existing_count": 18,
+      "feasibility_check_max_single_sec": 2.9583461582660675e-06,
+      "feasibility_check_total_sec": 0.0002497914247214794,
+      "infeasible_count": 0,
+      "original_checksum": "2f9e922948ff76559cccd6e2d0b01d676c2b672384b9fc943db414daf43e3dd3",
+      "original_unique_count": 69,
+      "raw_candidate_count": 236,
+      "supplementary_checksum": "b8037a4444f16cf84a7be6bec2b6fc8b642ca1b9acb815b321cd3dde25f0f755"
+    },
+    "HumanEval/63": {
+      "accepted_supplementary_count": 137,
+      "combined_checksum": "bce7ff18a1e6d6ccbca5e945e65925a38840fbd7c523500dfbbc60f49efa6bbd",
+      "combined_unique_count": 202,
+      "contract_rejected_count": 0,
+      "duplicate_of_existing_count": 63,
+      "feasibility_check_max_single_sec": 1.5208031982183456e-05,
+      "feasibility_check_total_sec": 0.0005825469270348549,
+      "infeasible_count": 0,
+      "original_checksum": "52b4118e408786dc690f92647ee367f6728f5f58be699eb3eee09cbaca0a026a",
+      "original_unique_count": 65,
+      "raw_candidate_count": 200,
+      "supplementary_checksum": "d5ba0f64cf3dc70f4c35661e8b87bc0ef26698943d9de16d8580514a77659bb7"
+    }
+  }
+}

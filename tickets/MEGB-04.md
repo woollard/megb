@@ -31,6 +31,26 @@ MEGB-03 may additionally report conventional full-suite HumanEval+ performance f
 
 The partition must be frozen, versioned, checksummed, and completed before any experimental candidate is generated.
 
+## Approved Pre-Experimental Amendment (MEGB-03A.1)
+
+**Status:** Approved, pre-experimental.
+
+This ticket's original text assumes a single, undifferentiated 164-task
+population throughout. MEGB-03A.1 resolved that `HumanEval/39` is
+structurally ineligible for the primary factorial experiment (its
+complete legitimate domain has exactly 12 inputs, all already present) and
+excluded it *a priori* — it remains in MEGB-03's separate 164-task
+reference-evaluator validation set, but has no `S1...S4` measurement here.
+
+**This ticket's original formulas and counts are preserved verbatim below,
+each followed by an inline note.** \(S_1 \dots S_4\), their five O4
+replicates, and the benchmark aggregation in this ticket must be
+constructed only over `primary_experiment_task_manifest` (MEGB-03A.1;
+expected 163 tasks, pending final confirmation of the
+`HumanEval/6`/`HumanEval/55`/`HumanEval/63` augmentation review) — not the
+full 164-task corpus. Every aggregate this ticket produces must cite that
+manifest's checksum, not a bare task count.
+
 ## Experimental Design
 
 For each task, construct four nested observation sets:
@@ -317,11 +337,16 @@ Q_{\mathrm{meas}}^{(k)} =
 \sum_{i=1}^{164} q_{\mathrm{meas},i}^{(k)}
 \]
 
+*(Amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above.
+164 becomes `len(primary_experiment_task_manifest)`, expected 163;
+`HumanEval/39` has no `q_meas` and is excluded from this sum, not scored
+as zero.)*
+
 Do not weight tasks by their number of cases.
 
 Do not silently change the denominator when measurements are missing or invalid.
 
-A final system-level score may be reported only when all 164 task measurements are valid. Otherwise, mark the result `INCOMPLETE` or `INVALID`.
+A final system-level score may be reported only when all 164 task measurements are valid. Otherwise, mark the result `INCOMPLETE` or `INVALID`. *(Amended by MEGB-03A.1: "164" becomes the frozen `primary_experiment_task_manifest` count.)*
 
 ### 9. Isolation From \(S^*\)
 
@@ -357,7 +382,7 @@ execution_profile: optimization-visible-v1
 feedback_profile: scalar-binary-v1
 task_scoring: all_cases_pass
 benchmark_aggregation: unweighted_task_mean
-expected_task_count: 164
+expected_task_count: 164  # amended by MEGB-03A.1: use len(primary_experiment_task_manifest), expected 163 — see "Approved Pre-Experimental Amendment" above
 robustness_levels:
   S1: 1
   S2: 3
@@ -497,6 +522,10 @@ Required outcome:
 Q_meas = 1.0 for every system replicate
 ```
 
+*(Amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above.
+Required outcome becomes `len(primary_experiment_task_manifest) /
+len(primary_experiment_task_manifest)`, expected 163/163.)*
+
 Any canonical false rejection blocks system release.
 
 ### Monotonicity Tests
@@ -547,7 +576,7 @@ Verify that the optimization-visible package and runtime cannot:
 
 Inject oracle, execution, protocol, and infrastructure failures.
 
-Verify that they produce invalid measurements rather than candidate failures and prevent final 164-task aggregation.
+Verify that they produce invalid measurements rather than candidate failures and prevent final 164-task aggregation. *(Amended by MEGB-03A.1: "164-task" becomes `len(primary_experiment_task_manifest)`, expected 163.)*
 
 ## Acceptance Criteria
 
@@ -563,7 +592,7 @@ Verify that they produce invalid measurements rather than candidate failures and
 - Every system uses the same versioned optimizer-feedback projection.
 - Optimizer-visible outputs contain no selected cases, expected outputs, failure vectors, or reference evidence.
 - Optimization-visible code and runtime cannot access or invoke \(S^*\).
-- System-level scores use an unweighted mean across exactly 164 valid task measurements.
+- System-level scores use an unweighted mean across exactly 164 valid task measurements. *(Amended by MEGB-03A.1 — see "Approved Pre-Experimental Amendment" above; "164" becomes `len(primary_experiment_task_manifest)`, expected 163.)*
 - Missing or invalid task measurements never silently alter the denominator.
 - All manifests, configurations, validation results, and code revisions are frozen before experimental optimization begins.
 - The complete system family and validation analysis can be reproduced from recorded commands and checksums.
