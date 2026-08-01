@@ -34,6 +34,7 @@ upstream's own precedent — not candidate code, which this subtask never
 executes).
 """
 
+import contextlib
 import copy
 import dataclasses
 import hashlib
@@ -41,7 +42,7 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 import numpy as np
 from evalplus.eval import is_floats
@@ -62,15 +63,32 @@ ORACLE_ALGORITHM_VERSION = "oracle-v1"
 COMPARISON_PROFILE_VERSION = "comparison-profile-v1"
 ORACLE_CASE_TIME_LIMIT_SECONDS = 10.0
 
-# Some canonical solutions produce legitimate, very large integers on their
-# largest plus_input cases (e.g. HumanEval/83 on n=1_000_000 returns a
-# ~1,000,002-digit int; HumanEval/139 similarly for its larger inputs).
-# Python 3.11+ refuses to str()/json-serialize an int past 4300 digits by
-# default (CPython's integer-string-conversion-length DoS hardening) —
-# since these are genuine pinned-benchmark values, not attacker-supplied
-# input, disable that limit for this process rather than truncating or
-# rejecting correct oracle output.
-sys.set_int_max_str_digits(0)
+@contextlib.contextmanager
+def unbounded_int_str_digits() -> Iterator[None]:
+    """Temporarily disable CPython's integer-string-conversion-length guard.
+
+    Some canonical solutions produce legitimate, very large integers on
+    their largest ``plus_input`` cases (e.g. HumanEval/83 on n=1_000_000
+    returns a ~1,000,002-digit int; HumanEval/139 similarly for its larger
+    inputs). Python 3.11+ refuses to ``str()``/JSON-serialize *or* parse an
+    int past 4300 digits by default (a DoS hardening measure) — since these
+    are genuine pinned-benchmark values, not attacker-supplied input, this
+    disables that limit for the duration of the wrapped call only.
+
+    Confined to trusted oracle serialization/deserialization: callers wrap
+    only the specific operation that may touch a huge int (building/writing/
+    verifying an oracle artifact), never left enabled process-wide, so it
+    never weakens the guard for unrelated code sharing this process (e.g.
+    untrusted candidate execution elsewhere). The prior value is restored on
+    exit even if the wrapped code raises.
+    """
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(0)
+    try:
+        yield
+    finally:
+        sys.set_int_max_str_digits(previous)
+
 
 COMPARISON_KIND_DEFAULT = "default_exact_or_tolerance"
 COMPARISON_KIND_FIND_ZERO = "special_oracle_find_zero"
@@ -320,6 +338,55 @@ class OracleBuildResult:
     composite_manifest: ReferenceValidationCompositeManifest
 
 
+class UnresolvedGenerationFailureError(ValueError):
+    """A build has one or more unresolved oracle-generation failures.
+
+    Raised by the release step (``oracle_lock.write_privileged_oracle_artifacts``
+    / ``oracle_lock.verify_oracle_against_lock``), never by
+    :func:`build_oracle_artifacts` itself: constructing the in-memory/
+    diagnostic ``OracleBuildResult`` may complete even with an
+    original-provenance generation failure recorded explicitly (see
+    ``build_oracle_artifacts``'s docstring), but that result must never be
+    frozen into a privileged release or treated as verified — this is the
+    gate that enforces it.
+    """
+
+
+def find_generation_failures(build_result: OracleBuildResult) -> tuple[OracleRecord, ...]:
+    """Every record across all three artifacts whose oracle generation failed.
+
+    Empty means the build is release-ready. Supplementary-provenance
+    failures can never appear here in practice — they already abort
+    :func:`build_oracle_artifacts` before it returns — but every record is
+    still checked regardless of provenance, so this stays correct even if
+    that upstream invariant ever changed.
+    """
+    all_records = (
+        build_result.development_oracle.records
+        + build_result.reference_only_oracle.records
+        + build_result.reference_validation_only_oracle.records
+    )
+    return tuple(r for r in all_records if r.status != ORACLE_STATUS_SUCCESS)
+
+
+def require_release_ready(build_result: OracleBuildResult) -> None:
+    """Raise ``UnresolvedGenerationFailureError`` if any record failed generation.
+
+    Reports only identity fields (task_id, case_id, pool, failure_reason) —
+    there is no expected-output content to leak for a failed record in the
+    first place, but this is still explicit about never doing so.
+    """
+    failures = find_generation_failures(build_result)
+    if failures:
+        details = ", ".join(
+            f"{r.task_id}/{r.case_id} ({r.pool}): {r.failure_reason}" for r in failures
+        )
+        raise UnresolvedGenerationFailureError(
+            f"{len(failures)} case(s) have an unresolved oracle-generation "
+            f"failure; refusing to release or verify as valid: {details}"
+        )
+
+
 def _stable_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Strip volatile fields before hashing (mirrors partition.py's own fix
     for the same class of cross-process determinism bug: a checksum field
@@ -488,34 +555,38 @@ def build_oracle_artifacts(  # pylint: disable=too-many-arguments,too-many-posit
 
     generated_at = datetime.now(timezone.utc).isoformat()
 
-    development_oracle = _finalize_artifact(
-        DEVELOPMENT_ORACLE_ARTIFACT_ID,
-        dataset_provenance,
-        experiment_manifest.manifest_checksum,
-        tuple(development_records),
-        generated_at,
-    )
-    reference_only_oracle = _finalize_artifact(
-        REFERENCE_ONLY_ORACLE_ARTIFACT_ID,
-        dataset_provenance,
-        experiment_manifest.manifest_checksum,
-        tuple(reference_only_records),
-        generated_at,
-    )
-    reference_validation_only_oracle = _finalize_artifact(
-        REFERENCE_VALIDATION_ONLY_ORACLE_ARTIFACT_ID,
-        dataset_provenance,
-        validation_manifest.manifest_checksum,
-        tuple(validation_only_records),
-        generated_at,
-    )
-    composite_manifest = _finalize_composite(
-        dataset_provenance,
-        experiment_manifest.manifest_checksum,
-        validation_manifest.manifest_checksum,
-        tuple(sorted(composite_tasks, key=lambda t: t.task_id)),
-        generated_at,
-    )
+    # Checksumming below serializes each artifact's records to JSON, which
+    # may include a huge int (see unbounded_int_str_digits's docstring) —
+    # scoped tightly to just this checksum computation, restored on exit.
+    with unbounded_int_str_digits():
+        development_oracle = _finalize_artifact(
+            DEVELOPMENT_ORACLE_ARTIFACT_ID,
+            dataset_provenance,
+            experiment_manifest.manifest_checksum,
+            tuple(development_records),
+            generated_at,
+        )
+        reference_only_oracle = _finalize_artifact(
+            REFERENCE_ONLY_ORACLE_ARTIFACT_ID,
+            dataset_provenance,
+            experiment_manifest.manifest_checksum,
+            tuple(reference_only_records),
+            generated_at,
+        )
+        reference_validation_only_oracle = _finalize_artifact(
+            REFERENCE_VALIDATION_ONLY_ORACLE_ARTIFACT_ID,
+            dataset_provenance,
+            validation_manifest.manifest_checksum,
+            tuple(validation_only_records),
+            generated_at,
+        )
+        composite_manifest = _finalize_composite(
+            dataset_provenance,
+            experiment_manifest.manifest_checksum,
+            validation_manifest.manifest_checksum,
+            tuple(sorted(composite_tasks, key=lambda t: t.task_id)),
+            generated_at,
+        )
 
     return OracleBuildResult(
         development_oracle=development_oracle,

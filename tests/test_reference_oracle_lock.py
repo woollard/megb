@@ -20,9 +20,12 @@ from src.dataset import DatasetProvenance, PrivilegedTaskView, load_provenance
 from src.reference.augmentation import PROVENANCE_ORIGINAL, TaskAugmentationResult
 from src.reference.oracle import (
     DEVELOPMENT_ORACLE_ARTIFACT_ID,
+    ORACLE_STATUS_GENERATION_FAILED,
     REFERENCE_ONLY_ORACLE_ARTIFACT_ID,
     REFERENCE_VALIDATION_ONLY_ORACLE_ARTIFACT_ID,
     OracleBuildResult,
+    OracleRecord,
+    UnresolvedGenerationFailureError,
     build_oracle_artifacts,
 )
 from src.reference.oracle_lock import (
@@ -326,3 +329,70 @@ def test_write_privileged_oracle_artifacts_authorized_consumers_are_disjoint(
     for i, set_a in enumerate(all_sets):
         for set_b in all_sets[i + 1 :]:
             assert not set_a & set_b
+
+
+def _inject_generation_failure(build_result: OracleBuildResult) -> OracleBuildResult:
+    """Flip the status of one development-oracle record to a generation
+    failure, without touching anything else — simulates a build that
+    completed diagnostic construction but has an unresolved failure."""
+    records = list(build_result.development_oracle.records)
+    failed_record = dataclasses.replace(
+        records[0],
+        status=ORACLE_STATUS_GENERATION_FAILED,
+        expected_output=None,
+        failure_reason="simulated: canonical solution raised",
+    )
+    records[0] = failed_record
+    broken_development_oracle = dataclasses.replace(
+        build_result.development_oracle, records=tuple(records)
+    )
+    return dataclasses.replace(build_result, development_oracle=broken_development_oracle)
+
+
+def test_write_privileged_oracle_artifacts_refuses_release_with_unresolved_failure(
+    tmp_path: Path,
+) -> None:
+    """A build with any unresolved generation failure — diagnostic
+    construction may have completed — must never receive a valid
+    frozen/released state: writing must refuse entirely, and nothing should
+    land in the privileged directory."""
+    build_result, augmentation_results, privileged_by_id, _ = _build_result_and_inputs()
+    broken_build_result = _inject_generation_failure(build_result)
+
+    with pytest.raises(UnresolvedGenerationFailureError):
+        write_privileged_oracle_artifacts(
+            broken_build_result, augmentation_results, privileged_by_id, privileged_dir=tmp_path
+        )
+
+    assert not list(tmp_path.iterdir())
+
+
+def test_verify_oracle_against_lock_refuses_when_build_result_has_unresolved_failure(
+    tmp_path: Path,
+) -> None:
+    """Even against an otherwise-valid, already-written lock, verification
+    must refuse to pass a freshly regenerated build that has an unresolved
+    generation failure — a lock that merely looks internally consistent is
+    not sufficient to certify a build that couldn't establish ground truth
+    for every case."""
+    build_result, augmentation_results, privileged_by_id, _ = _build_result_and_inputs()
+    lock = write_privileged_oracle_artifacts(
+        build_result, augmentation_results, privileged_by_id, privileged_dir=tmp_path
+    )
+
+    broken_build_result = _inject_generation_failure(build_result)
+    with pytest.raises(UnresolvedGenerationFailureError):
+        verify_oracle_against_lock(
+            lock, broken_build_result, augmentation_results, privileged_by_id
+        )
+
+
+def test_inject_generation_failure_helper_produces_a_real_failure_record() -> None:
+    """Sanity-check the test helper itself: the injected record really is a
+    failure, distinguishable from OracleRecord's normal success shape."""
+    build_result, _, _, _ = _build_result_and_inputs()
+    broken_build_result = _inject_generation_failure(build_result)
+    failed_record = broken_build_result.development_oracle.records[0]
+    assert isinstance(failed_record, OracleRecord)
+    assert failed_record.status == ORACLE_STATUS_GENERATION_FAILED
+    assert failed_record.expected_output is None

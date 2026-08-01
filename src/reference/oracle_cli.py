@@ -38,7 +38,11 @@ from src.dataset import (
     load_public_view,
 )
 from src.reference.augmentation import TaskAugmentationResult
-from src.reference.oracle import build_oracle_artifacts
+from src.reference.oracle import (
+    UnresolvedGenerationFailureError,
+    build_oracle_artifacts,
+    require_release_ready,
+)
 from src.reference.oracle_lock import (
     COMMITTED_OUTPUT_DIR,
     LOCK_PATH,
@@ -139,6 +143,17 @@ def _run_build(force: bool) -> None:
         print(f"BUILD FAILED: oracle construction aborted: {exc}", file=sys.stderr)
         sys.exit(1)
 
+    # Diagnostic construction may have completed even with an unresolved
+    # original-provenance generation failure recorded explicitly; release
+    # (the committed composite manifest, the privileged files, the lock)
+    # must refuse to happen at all in that case — checked before writing
+    # anything, not only inside write_privileged_oracle_artifacts.
+    try:
+        require_release_ready(build_result)
+    except UnresolvedGenerationFailureError as exc:
+        print(f"BUILD FAILED: not release-ready: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     COMMITTED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (COMMITTED_OUTPUT_DIR / "reference_validation_composite_manifest.json").write_text(
         json.dumps(
@@ -199,7 +214,7 @@ def _run_verify() -> None:
     lock = load_oracle_lock_file()
     try:
         results = verify_oracle_against_lock(lock, build_result, augmentation_results, priv)
-    except ManifestKindMismatchError as exc:
+    except (ManifestKindMismatchError, UnresolvedGenerationFailureError) as exc:
         print(f"VERIFY FAILED: {exc}", file=sys.stderr)
         sys.exit(1)
 

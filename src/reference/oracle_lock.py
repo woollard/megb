@@ -42,6 +42,8 @@ from src.reference.oracle import (
     REFERENCE_VALIDATION_ONLY_ORACLE_ARTIFACT_ID,
     OracleArtifact,
     OracleBuildResult,
+    require_release_ready,
+    unbounded_int_str_digits,
 )
 
 LOCK_SCHEMA_VERSION = "oracle-lock-v1"
@@ -233,7 +235,15 @@ def write_privileged_oracle_artifacts(
 
     Refuses to silently overwrite an existing, differing privileged file
     unless force=True — matching ``partition_lock.write_privileged_artifacts``.
+
+    Refuses to write anything at all — no privileged bytes, no lock — if
+    ``build_result`` has any unresolved oracle-generation failure
+    (``UnresolvedGenerationFailureError``). A build that couldn't establish
+    ground truth for every case must never receive a valid frozen/released
+    state or be handed to a downstream consumer.
     """
+    require_release_ready(build_result)
+
     privileged_dir.mkdir(parents=True, exist_ok=True)
     code_sha, code_dirty = _git_head_sha()
 
@@ -243,29 +253,30 @@ def write_privileged_oracle_artifacts(
         build_result.reference_validation_only_oracle,
     )
     entries = []
-    for artifact in artifacts:
-        path = privileged_dir / _ARTIFACT_FILENAMES[artifact.artifact_kind]
-        artifact_bytes = _serialize_artifact(_stabilized_artifact_payload(artifact))
+    with unbounded_int_str_digits():
+        for artifact in artifacts:
+            path = privileged_dir / _ARTIFACT_FILENAMES[artifact.artifact_kind]
+            artifact_bytes = _serialize_artifact(_stabilized_artifact_payload(artifact))
 
-        if path.exists() and not force:
-            existing_bytes = path.read_bytes()
-            if existing_bytes != artifact_bytes:
-                raise FrozenArtifactConflictError(
-                    f"{path} already exists and differs from the freshly built "
-                    "artifact; refusing to overwrite silently. Pass force=True "
-                    "to replace it deliberately (this destroys the previous "
-                    "frozen evidence; requires an explicit new artifact version "
-                    "or approved amendment per the privileged-artifact policy)."
+            if path.exists() and not force:
+                existing_bytes = path.read_bytes()
+                if existing_bytes != artifact_bytes:
+                    raise FrozenArtifactConflictError(
+                        f"{path} already exists and differs from the freshly built "
+                        "artifact; refusing to overwrite silently. Pass force=True "
+                        "to replace it deliberately (this destroys the previous "
+                        "frozen evidence; requires an explicit new artifact version "
+                        "or approved amendment per the privileged-artifact policy)."
+                    )
+            else:
+                path.write_bytes(artifact_bytes)
+
+            entries.append(
+                _build_lock_entry(
+                    artifact, path, artifact_bytes, augmentation_results, privileged_by_id,
+                    code_sha, code_dirty,
                 )
-        else:
-            path.write_bytes(artifact_bytes)
-
-        entries.append(
-            _build_lock_entry(
-                artifact, path, artifact_bytes, augmentation_results, privileged_by_id,
-                code_sha, code_dirty,
             )
-        )
 
     return OracleLockFile(
         lock_schema_version=LOCK_SCHEMA_VERSION,
@@ -306,7 +317,14 @@ def verify_oracle_against_lock(
     contents, only checksums, sizes, and pass/fail booleans. Raises
     ManifestKindMismatchError if an on-disk file's artifact_kind doesn't
     match what's expected at that path.
+
+    Raises ``UnresolvedGenerationFailureError`` if the freshly rebuilt
+    ``build_result`` has any unresolved oracle-generation failure — even a
+    lock file that looks internally consistent must never verify as valid
+    against a build that couldn't establish ground truth for every case.
     """
+    require_release_ready(build_result)
+
     fresh_by_id: dict[str, OracleArtifact] = {
         DEVELOPMENT_ORACLE_ARTIFACT_ID: build_result.development_oracle,
         REFERENCE_ONLY_ORACLE_ARTIFACT_ID: build_result.reference_only_oracle,
@@ -314,68 +332,71 @@ def verify_oracle_against_lock(
     }
 
     results = []
-    for entry in lock.entries:
-        fresh_artifact = fresh_by_id[entry.artifact_id]
-        fresh_bytes = _serialize_artifact(_stabilized_artifact_payload(fresh_artifact))
-        task_ids = {record.task_id for record in fresh_artifact.records}
+    with unbounded_int_str_digits():
+        for entry in lock.entries:
+            fresh_artifact = fresh_by_id[entry.artifact_id]
+            fresh_bytes = _serialize_artifact(_stabilized_artifact_payload(fresh_artifact))
+            task_ids = {record.task_id for record in fresh_artifact.records}
 
-        logical_match = fresh_artifact.artifact_checksum == entry.logical_sha256
-        size_match = len(fresh_bytes) == entry.size_bytes
-        dataset_match = (
-            fresh_artifact.dataset_provenance.evalplus_dataset_hash == entry.dataset_checksum
-        )
-        fresh_augmentation_checksums = {
-            task_id: result.combined_checksum
-            for task_id, result in augmentation_results.items()
-            if task_id in task_ids
-        }
-        augmentation_match = fresh_augmentation_checksums == dict(entry.augmentation_checksums)
-        canonical_hashes_match = _canonical_solution_hashes(
-            task_ids, privileged_by_id
-        ) == dict(entry.canonical_solution_hashes)
-
-        privileged_path = Path(entry.privileged_path)
-        on_disk_present = privileged_path.exists()
-        on_disk_checksum_match: bool | None = None
-        on_disk_bytes_match_rebuild: bool | None = None
-        if on_disk_present:
-            on_disk_payload = json.loads(privileged_path.read_text(encoding="utf-8"))
-            actual_kind = on_disk_payload.get("artifact_kind")
-            if actual_kind != entry.artifact_id:
-                raise ManifestKindMismatchError(
-                    f"{privileged_path}: artifact_kind={actual_kind!r} does not "
-                    f"match expected artifact_id={entry.artifact_id!r} — refusing "
-                    "to verify (a differently-scoped oracle file must never be "
-                    "treated as this artifact)"
-                )
-            stripped = dict(on_disk_payload)
-            stripped["artifact_checksum"] = ""
-            on_disk_checksum_match = _logical_checksum_matches(stripped, entry.logical_sha256)
-            on_disk_bytes_match_rebuild = privileged_path.read_bytes() == fresh_bytes
-
-        passed = (
-            logical_match
-            and size_match
-            and dataset_match
-            and augmentation_match
-            and canonical_hashes_match
-            and on_disk_checksum_match is not False
-            and on_disk_bytes_match_rebuild is not False
-        )
-        results.append(
-            OracleArtifactVerificationResult(
-                artifact_id=entry.artifact_id,
-                logical_checksum_match=logical_match,
-                size_match=size_match,
-                on_disk_present=on_disk_present,
-                on_disk_checksum_match=on_disk_checksum_match,
-                on_disk_bytes_match_rebuild=on_disk_bytes_match_rebuild,
-                dataset_checksum_match=dataset_match,
-                augmentation_checksum_match=augmentation_match,
-                canonical_solution_hashes_match=canonical_hashes_match,
-                passed=passed,
+            logical_match = fresh_artifact.artifact_checksum == entry.logical_sha256
+            size_match = len(fresh_bytes) == entry.size_bytes
+            dataset_match = (
+                fresh_artifact.dataset_provenance.evalplus_dataset_hash == entry.dataset_checksum
             )
-        )
+            fresh_augmentation_checksums = {
+                task_id: result.combined_checksum
+                for task_id, result in augmentation_results.items()
+                if task_id in task_ids
+            }
+            augmentation_match = fresh_augmentation_checksums == dict(
+                entry.augmentation_checksums
+            )
+            canonical_hashes_match = _canonical_solution_hashes(
+                task_ids, privileged_by_id
+            ) == dict(entry.canonical_solution_hashes)
+
+            privileged_path = Path(entry.privileged_path)
+            on_disk_present = privileged_path.exists()
+            on_disk_checksum_match: bool | None = None
+            on_disk_bytes_match_rebuild: bool | None = None
+            if on_disk_present:
+                on_disk_payload = json.loads(privileged_path.read_text(encoding="utf-8"))
+                actual_kind = on_disk_payload.get("artifact_kind")
+                if actual_kind != entry.artifact_id:
+                    raise ManifestKindMismatchError(
+                        f"{privileged_path}: artifact_kind={actual_kind!r} does not "
+                        f"match expected artifact_id={entry.artifact_id!r} — refusing "
+                        "to verify (a differently-scoped oracle file must never be "
+                        "treated as this artifact)"
+                    )
+                stripped = dict(on_disk_payload)
+                stripped["artifact_checksum"] = ""
+                on_disk_checksum_match = _logical_checksum_matches(stripped, entry.logical_sha256)
+                on_disk_bytes_match_rebuild = privileged_path.read_bytes() == fresh_bytes
+
+            passed = (
+                logical_match
+                and size_match
+                and dataset_match
+                and augmentation_match
+                and canonical_hashes_match
+                and on_disk_checksum_match is not False
+                and on_disk_bytes_match_rebuild is not False
+            )
+            results.append(
+                OracleArtifactVerificationResult(
+                    artifact_id=entry.artifact_id,
+                    logical_checksum_match=logical_match,
+                    size_match=size_match,
+                    on_disk_present=on_disk_present,
+                    on_disk_checksum_match=on_disk_checksum_match,
+                    on_disk_bytes_match_rebuild=on_disk_bytes_match_rebuild,
+                    dataset_checksum_match=dataset_match,
+                    augmentation_checksum_match=augmentation_match,
+                    canonical_solution_hashes_match=canonical_hashes_match,
+                    passed=passed,
+                )
+            )
     return tuple(results)
 
 

@@ -3,6 +3,7 @@ execution, and the three physically separated oracle artifacts)."""
 
 import dataclasses
 import json
+import sys
 from typing import Any
 
 import pytest
@@ -30,6 +31,7 @@ from src.reference.oracle import (
     comparison_profile_for_task,
     compare_outputs,
     generate_oracle_record,
+    unbounded_int_str_digits,
 )
 from src.reference.partition import (
     EXCLUDED_TASK_ID,
@@ -485,3 +487,79 @@ def test_build_oracle_artifacts_real_corpus_two_tasks_smoke() -> None:
         r.status == ORACLE_STATUS_SUCCESS
         for r in result.reference_validation_only_oracle.records
     )
+
+
+# --- unbounded_int_str_digits: confined scope, restored afterward -----------
+
+
+def test_unbounded_int_str_digits_disables_limit_only_inside_the_with_block() -> None:
+    """The guard is lifted only for the duration of the with-block, and the
+    exact prior process value is restored on normal exit."""
+    before = sys.get_int_max_str_digits()
+    with unbounded_int_str_digits():
+        assert sys.get_int_max_str_digits() == 0
+        str(10**5000)  # would raise ValueError outside the with-block
+    after = sys.get_int_max_str_digits()
+    assert after == before
+
+
+def test_unbounded_int_str_digits_restores_limit_even_if_the_block_raises() -> None:
+    """A confined override is only real if it survives an exception inside
+    the with-block — otherwise a failure mid-oracle-build would leak an
+    unbounded limit into whatever code runs next in this process."""
+    before = sys.get_int_max_str_digits()
+    with pytest.raises(RuntimeError):
+        with unbounded_int_str_digits():
+            assert sys.get_int_max_str_digits() == 0
+            raise RuntimeError("simulated failure mid-serialization")
+    assert sys.get_int_max_str_digits() == before
+
+
+def test_str_conversion_of_a_huge_int_fails_outside_the_context_manager() -> None:
+    """Sanity check that the default guard is actually active in this test
+    environment — otherwise the two tests above would trivially pass."""
+    assert sys.get_int_max_str_digits() != 0
+    with pytest.raises(ValueError):
+        str(10**5000)
+
+
+def test_build_oracle_artifacts_handles_huge_integer_output_and_restores_limit() -> None:
+    """End-to-end: a canonical solution returning an integer far past the
+    default digit guard still produces a valid oracle, and the process-wide
+    limit is unchanged before vs. after the build."""
+    before = sys.get_int_max_str_digits()
+
+    task_id = "T/HUGE"
+    privileged_by_id, public_by_id, cases_by_task, args_by_task = _build_synthetic_corpus(
+        [task_id, "T/B"]
+    )
+    huge_int_task = _task(
+        task_id,
+        entry_point="t_huge",
+        canonical_solution="    return 10 ** 5000\n",
+        base_input=tuple((n,) for n in range(100)),
+    )
+    privileged_by_id[task_id] = huge_int_task
+    public_by_id[task_id] = "def t_huge(n):\n"
+
+    provenance = load_provenance()
+    experiment_manifest = build_primary_experiment_manifest(cases_by_task, provenance)
+    validation_manifest = build_reference_validation_manifest(cases_by_task, provenance)
+    result = build_oracle_artifacts(
+        experiment_manifest,
+        validation_manifest,
+        cases_by_task,
+        args_by_task,
+        privileged_by_id,
+        public_by_id,
+        provenance,
+    )
+
+    huge_task_records = [r for r in result.development_oracle.records if r.task_id == task_id]
+    assert huge_task_records
+    assert all(r.status == ORACLE_STATUS_SUCCESS for r in huge_task_records)
+    assert huge_task_records[0].expected_output is not None
+    assert huge_task_records[0].expected_output["value"] == 10**5000
+
+    after = sys.get_int_max_str_digits()
+    assert after == before
