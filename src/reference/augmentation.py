@@ -330,7 +330,9 @@ MEGB-03B partitioning (Decision 8) — not yet granted.**
 """
 
 
-def _task_configs() -> dict[str, dict[str, Any]]:
+def task_configs() -> dict[str, dict[str, Any]]:
+    """The frozen, versioned per-task generation configuration (public: reused by MEGB-03B
+    to regenerate the identical accepted case sets for partitioning)."""
     return {
         "HumanEval/55": {
             "param_name": "n",
@@ -388,7 +390,7 @@ def main() -> None:
     priv = {t.task_id: t for t in load_privileged_view()}
     output_dir = Path("artifacts/reference/augmentation")
 
-    configs = _task_configs()
+    configs = task_configs()
     all_results: dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "algorithm_version": ALGORITHM_VERSION,

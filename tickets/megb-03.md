@@ -574,7 +574,7 @@ explicitly deferred) — not merely specified.
 
 ### Status
 
-**Status:** Not started
+**Status:** Executed, per the MEGB-03A.1-authorized execution rules (163-task `primary_experiment_task_manifest`, 40/≥30 split, `HumanEval/39` excluded; 164-task `reference_validation_task_manifest`, unsplit). See the "Requirements" text above for the original specification and the completion record below for what was actually executed and any deviations.
 
 ### Objective
 
@@ -655,12 +655,12 @@ Produce the standard checkpoint report and stop. MEGB-03C requires explicit auth
 
 ### Completion Record
 
-- Status: Not started
-- Commit: —
-- Completed: —
-- Tests: —
-- Deviations: —
-- Handoff: —
+- Status: Executed (per MEGB-03A.1's authorized execution rules — see "Standard Checkpoint Report" for full detail; pending your acceptance)
+- Commit: (recorded in a follow-up commit; see repository log for "MEGB-03B: execute...")
+- Completed: 2026-08-01
+- Tests: `pytest tests/test_reference_partition.py -v` — 18/18 passed (including a regression test for a real determinism bug found and fixed during this subtask — see Deviations). Full offline suite 137/137 passed. mypy clean (39 files). pylint 10.00/10.
+- Deviations: **Found and fixed a real cross-process determinism bug during verification**: `DatasetProvenance.loaded_at` (a fresh wall-clock timestamp on every `load_provenance()` call) was embedded, unstripped, in both manifests' checksummed payload, making every manifest checksum spuriously non-reproducible across separate process runs even though nothing about the corpus or code had changed. The in-process "rebuild is byte-stable" test had passed only because it reused one cached provenance object rather than reloading it, masking the bug. Fixed by stripping `dataset_provenance.loaded_at` before hashing (mirroring MEGB-03A's own earlier `generated_at`-stripping fix); added a dedicated regression test constructing two provenance objects differing only in `loaded_at` and asserting equal checksums; verified by actually running the driver as two separate OS processes and confirming identical checksums.
+- Handoff: `src/reference/partition.py` (ranking, partition/manifest construction, validation, redaction); `artifacts/reference/partition/{reference_validation_task_manifest.json,primary_experiment_task_manifest.json,primary_experiment_task_manifest_redacted.json,partition_validation_report.md}`. Experiment manifest checksum `c85ec9d3cd073821e06b875ccb54e9a7d2b958eeb093dd30afda37f2d5ac1b71`, validation manifest checksum `832620da24471ffe85946fc1ccac7e7ff8a375ab16a452b0b2d60a1b9d8a59b9`. **Note for your awareness**: the two full (non-redacted) manifest JSON files are ~9.5MB each (~19MB combined) — legitimate given full per-task case-ID lists (median ~977 cases/task), but a real jump from MEGB-03A's ~200KB artifacts and worth a decision before MEGB-03C, which will likely produce comparably large or larger oracle artifacts: commit as-is, or gitignore the large full manifests (keeping only the much smaller redacted view and validation report) since both are fully and deterministically reproducible from `python -m src.reference.partition`.
 
 ---
 
