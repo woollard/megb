@@ -29,6 +29,7 @@ from src.execution.protocol import (
     ExecutionStatus,
 )
 from src.reference.oracle import (
+    COMPARISON_PROFILE_VERSION,
     ORACLE_ALGORITHM_VERSION,
     ORACLE_STATUS_GENERATION_FAILED,
     POOL_REFERENCE_ONLY,
@@ -160,6 +161,7 @@ def _run_context(**overrides: object) -> ReferenceRunContext:
         "dataset_version": HUMANEVAL_PLUS_VERSION,
         "partition_version": PARTITION_ALGORITHM_VERSION,
         "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
+        "comparison_profile_version": COMPARISON_PROFILE_VERSION,
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)  # type: ignore[arg-type]
@@ -603,6 +605,19 @@ def test_evaluator_version_mismatch_on_context_rejected() -> None:
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
     run_context = _run_context(evaluator_version="wrong-evaluator")
+    backend = FakeExecutionBackend([])
+
+    with pytest.raises(ReferenceEvaluatorVersionMismatchError):
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
+    assert not backend.requests
+
+
+def test_comparison_profile_version_mismatch_on_context_rejected() -> None:
+    """run_context.comparison_profile_version must match the evidence's
+    actual comparison profile before any candidate code executes."""
+    cases = [_case("c0", 3)]
+    evidence = _evidence(cases)
+    run_context = _run_context(comparison_profile_version="stale-comparison-profile")
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):

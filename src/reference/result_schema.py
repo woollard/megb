@@ -44,6 +44,32 @@ rejected explicitly (see ``src.reference.result_redaction``) rather than
 silently misparsed under v2 field names. No v1 artifact has ever been
 persisted (no code wired v1 into any lock/build/CLI pipeline), so no
 migration path is required or provided.
+
+**Approved Correction (v3, post-MEGB-03G.1 schema-completeness review):**
+surfaced while implementing MEGB-03G.1's ``aggregate_reference_results``:
+``ComparisonProfile.profile_version``/``COMPARISON_PROFILE_VERSION`` was
+verified once by ``evaluate_reference`` at evaluation time but was never
+itself a field on :class:`ReferenceRunContext` or :class:`ReferenceTaskResult`
+-- there was no way for a benchmark-level aggregator (or any later
+consumer reloading persisted results) to independently re-verify
+comparison-profile consistency across already-constructed results from
+data alone. v3 adds ``comparison_profile_version`` directly to
+:class:`ReferenceRunContext`, so it is included in the run context's
+equality check (and therefore in every place that already enforces
+run-context equality: :class:`ReferenceBenchmarkResult`'s per-task
+validation and ``aggregate_reference_results``), serialized/deserialized
+like every other run-context field, and validated by ``evaluate_reference``
+against the evidence's actual comparison profile before any candidate code
+executes. This is a breaking schema change -- ``RESULT_SCHEMA_VERSION`` is
+incremented accordingly, and both v1 and v2 payloads are rejected
+explicitly. No v2 (or v1) artifact has ever been persisted (no code wires
+either into any lock/build/CLI pipeline), so no migration path is required
+or provided here either. This correction does not change
+``reference-validation-candidate-set-manifest-v1``,
+``partition-v1``/``PARTITION_ALGORITHM_VERSION``,
+``oracle-v1``/``ORACLE_ALGORITHM_VERSION``, or
+``COMPARISON_PROFILE_VERSION``'s own value -- only ``RESULT_SCHEMA_VERSION``
+moves, from ``reference-result-schema-v2`` to ``reference-result-schema-v3``.
 """
 
 import hashlib
@@ -54,7 +80,7 @@ from typing import Any, Mapping
 
 from src.evaluators.schema import FailureCategory
 
-RESULT_SCHEMA_VERSION = "reference-result-schema-v2"
+RESULT_SCHEMA_VERSION = "reference-result-schema-v3"
 REQUIRED_TASK_COUNT = 164
 
 REFERENCE_VALIDATION_CANDIDATE_SET_MANIFEST_SCHEMA_VERSION = (
@@ -111,7 +137,11 @@ class ReferenceRunContext:
     run, per the Global Architectural Constraint "No adaptive reference
     evaluation" — required to record run/config/selection-rule identifiers
     letting a later audit reconstruct exactly why and when this portfolio
-    was evaluated.
+    was evaluated. ``comparison_profile_version`` (v3) records the
+    comparison-profile identity every task result was compared under —
+    added so run-context equality (already enforced everywhere a benchmark
+    or aggregate is constructed) also catches a comparison-profile
+    inconsistency, not just dataset/partition/execution/evaluator drift.
     """
 
     experiment_run_id: str
@@ -123,6 +153,7 @@ class ReferenceRunContext:
     dataset_version: str
     partition_version: str
     execution_profile_id: str
+    comparison_profile_version: str
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self, "experiment_run_id")
@@ -134,6 +165,7 @@ class ReferenceRunContext:
         _require_nonempty_str(self, "dataset_version")
         _require_nonempty_str(self, "partition_version")
         _require_nonempty_str(self, "execution_profile_id")
+        _require_nonempty_str(self, "comparison_profile_version")
 
 
 class MeasurementStatus(str, Enum):

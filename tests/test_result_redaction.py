@@ -73,6 +73,7 @@ def _run_context() -> ReferenceRunContext:
         dataset_version="humaneval-plus-v0.1.10",
         partition_version="partition-v1",
         execution_profile_id="docker-megb02-v1",
+        comparison_profile_version="comparison-profile-v1",
     )
 
 
@@ -234,11 +235,15 @@ def test_task_result_to_dict_stamps_schema_version() -> None:
     assert payload["schema_version"] == RESULT_SCHEMA_VERSION
 
 
-def test_task_result_from_dict_rejects_wrong_schema_version() -> None:
-    """A payload stamped with a different schema_version is rejected explicitly,
-    never silently parsed under the current field names."""
+@pytest.mark.parametrize(
+    "stale_version", ["reference-result-schema-v1", "reference-result-schema-v2"]
+)
+def test_task_result_from_dict_rejects_stale_schema_version(stale_version: str) -> None:
+    """A payload stamped with a different (older) schema_version is rejected
+    explicitly, never silently parsed under the current field names --
+    covers both the pre-v2 and pre-v3 (comparison-profile-incomplete) shapes."""
     payload = task_result_to_dict(_minimal_pass_task_result())
-    payload["schema_version"] = "reference-result-schema-v1"
+    payload["schema_version"] = stale_version
     with pytest.raises(UnsupportedResultSchemaVersionError):
         task_result_from_dict(payload)
 
@@ -261,8 +266,13 @@ def test_benchmark_result_round_trip_preserves_task_results_and_manifest() -> No
     assert restored == benchmark
 
 
-def test_benchmark_result_from_dict_rejects_wrong_schema_version() -> None:
-    """A benchmark payload stamped with a different schema_version is rejected explicitly."""
+@pytest.mark.parametrize(
+    "stale_version", ["reference-result-schema-v1", "reference-result-schema-v2"]
+)
+def test_benchmark_result_from_dict_rejects_stale_schema_version(stale_version: str) -> None:
+    """A benchmark payload stamped with a different (older) schema_version is
+    rejected explicitly -- covers both the pre-v2 and pre-v3
+    (comparison-profile-incomplete) shapes."""
     result = _task_result_with_diagnostics()
     manifest = _candidate_set_manifest_for(result)
     benchmark = ReferenceBenchmarkResult(
@@ -275,7 +285,7 @@ def test_benchmark_result_from_dict_rejects_wrong_schema_version() -> None:
         duration_seconds=1.5,
     )
     payload = benchmark_result_to_dict(benchmark)
-    payload["schema_version"] = "reference-result-schema-v1"
+    payload["schema_version"] = stale_version
     with pytest.raises(UnsupportedResultSchemaVersionError):
         benchmark_result_from_dict(payload)
 
@@ -383,6 +393,25 @@ def test_redact_benchmark_result_never_leaks_privileged_data_via_repr() -> None:
     assert "this must never be redacted-exposed" not in redacted_text
     assert "def prime_fib" not in redacted_text
     assert _CANDIDATE_SHA256 not in redacted_text
+
+
+def test_redact_benchmark_result_exposes_comparison_profile_version() -> None:
+    """comparison_profile_version is a safe version identifier (like
+    evaluator_version/oracle_version), not case content -- it is exposed at
+    the benchmark level, matching how those fields are already treated."""
+    result = _task_result_with_diagnostics()
+    manifest = _candidate_set_manifest_for(result)
+    benchmark = ReferenceBenchmarkResult(
+        run_context=_run_context(),
+        candidate_set_manifest=manifest,
+        task_results=(result,),
+        task_manifest_checksum=_SHA_MANIFEST,
+        oracle_version=_ORACLE_VERSION,
+        evaluated_at="2026-07-01T00:00:02Z",
+        duration_seconds=1.5,
+    )
+    redacted = redact_benchmark_result(benchmark)
+    assert redacted["comparison_profile_version"] == "comparison-profile-v1"
 
 
 def test_redact_benchmark_result_status_counts_are_json_safe_string_keys() -> None:

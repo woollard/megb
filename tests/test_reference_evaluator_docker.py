@@ -31,6 +31,7 @@ from src.dataset import PrivilegedTaskView, load_privileged_view, load_public_vi
 from src.evaluators.schema import FailureCategory
 from src.execution.docker_backend import DockerPerInvocationBackend
 from src.reference.oracle import (
+    COMPARISON_PROFILE_VERSION,
     ORACLE_ALGORITHM_VERSION,
     POOL_REFERENCE_ONLY,
     comparison_profile_for_task,
@@ -109,6 +110,7 @@ def _run_context() -> ReferenceRunContext:
         dataset_version=HUMANEVAL_PLUS_VERSION,
         partition_version=PARTITION_ALGORITHM_VERSION,
         execution_profile_id=EXECUTION_PROFILE_ID_FULL,
+        comparison_profile_version=COMPARISON_PROFILE_VERSION,
     )
 
 

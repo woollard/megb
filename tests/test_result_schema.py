@@ -63,6 +63,7 @@ def _run_context(**overrides: str) -> ReferenceRunContext:
         "dataset_version": "humaneval-plus-v0.1.10",
         "partition_version": "partition-v1",
         "execution_profile_id": "docker-megb02-v1",
+        "comparison_profile_version": "comparison-profile-v1",
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)
@@ -180,6 +181,7 @@ def test_valid_run_context_constructs() -> None:
         "dataset_version",
         "partition_version",
         "execution_profile_id",
+        "comparison_profile_version",
     ],
 )
 def test_run_context_empty_string_field_rejected(field_name: str) -> None:

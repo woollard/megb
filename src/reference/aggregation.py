@@ -24,19 +24,16 @@ manifest, task-manifest-checksum consistency) is left to
 this module adds only the checks that constructor does not perform: exact
 count, canonical ordering, and profile identity.
 
-**Known schema gap (not fixed here — see MEGB-03G.1's checkpoint report):**
-comparison-profile identity (``COMPARISON_PROFILE_VERSION``) is verified
-once by ``evaluate_reference`` at evaluation time but is not itself a field
-on ``ReferenceTaskResult`` or ``ReferenceRunContext`` — there is currently no
-way for this aggregator to independently re-verify comparison-profile
-consistency across already-constructed task results from data alone. In the
-current codebase this is not an exploitable gap (there is exactly one
-module-level ``COMPARISON_PROFILE_VERSION`` constant, and every
-``ReferenceTaskResult`` that exists was already checked against it before
-construction), but it is a real absence of defense-in-depth that would
-require a ``result_schema.py`` change (a new field) to close — per the
-ticket's instruction, that change is not made here without separate
-authorization.
+**Schema-completeness note (resolved by the v3 correction):** an earlier
+version of this module could not independently re-verify comparison-profile
+consistency across task results, because ``COMPARISON_PROFILE_VERSION`` was
+not itself a field on ``ReferenceRunContext``. ``ReferenceRunContext`` now
+carries ``comparison_profile_version`` (schema v3), so
+``_require_shared_run_context``'s existing run-context-equality check
+already catches a comparison-profile inconsistency across task results —
+no separate, dedicated check is needed here, since (unlike
+``execution_profile_id``/``evaluator_version``) comparison-profile identity
+does not itself vary between the full and reduced-development profiles.
 """
 
 from typing import Sequence

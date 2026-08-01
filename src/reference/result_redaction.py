@@ -83,6 +83,7 @@ def run_context_to_dict(context: ReferenceRunContext) -> dict[str, str]:
         "dataset_version": context.dataset_version,
         "partition_version": context.partition_version,
         "execution_profile_id": context.execution_profile_id,
+        "comparison_profile_version": context.comparison_profile_version,
     }
 
 
@@ -98,6 +99,7 @@ def run_context_from_dict(data: Mapping[str, Any]) -> ReferenceRunContext:
         dataset_version=data["dataset_version"],
         partition_version=data["partition_version"],
         execution_profile_id=data["execution_profile_id"],
+        comparison_profile_version=data["comparison_profile_version"],
     )
 
 
@@ -322,6 +324,7 @@ def redact_benchmark_result(
         "experiment_run_id": benchmark.run_context.experiment_run_id,
         "optimization_run_id": benchmark.run_context.optimization_run_id,
         "evaluator_version": benchmark.run_context.evaluator_version,
+        "comparison_profile_version": benchmark.run_context.comparison_profile_version,
         "oracle_version": benchmark.oracle_version,
         "task_manifest_checksum": benchmark.task_manifest_checksum,
         "candidate_set_manifest_checksum": benchmark.candidate_set_manifest.manifest_checksum,

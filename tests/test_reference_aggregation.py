@@ -14,12 +14,24 @@ an attached full-suite compatibility diagnostic never contributes to
 Uses synthetic fixtures only -- no privileged artifacts, no Docker.
 """
 
+# This file intentionally constructs the accepted result-schema objects
+# (ReferenceRunContext, ReferenceValidationCandidateSetManifest,
+# ReferenceTaskResult) independently, from its own local fixtures, rather
+# than importing tests/test_result_schema.py's private helpers. The two
+# test layers validate different boundaries -- schema-level field
+# invariants there, the public aggregation boundary here -- and sharing
+# fixtures would couple them: a change to one test module's helpers could
+# silently weaken the other's coverage. The resulting boilerplate overlap
+# is expected and accepted, not a defect.
+# pylint: disable=duplicate-code
+
 import hashlib
 
 import pytest
 
 from src.evaluators.schema import FailureCategory
 from src.reference.aggregation import ReferenceAggregationError, aggregate_reference_results
+from src.reference.oracle import COMPARISON_PROFILE_VERSION
 from src.reference.reference_evaluator import (
     EVALUATOR_VERSION_FULL,
     EVALUATOR_VERSION_REDUCED_DEV,
@@ -67,6 +79,7 @@ def _full_run_context(**overrides: str) -> ReferenceRunContext:
         "dataset_version": "humaneval-plus-v0.1.10",
         "partition_version": "partition-v1",
         "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
+        "comparison_profile_version": COMPARISON_PROFILE_VERSION,
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)
@@ -361,6 +374,17 @@ def test_rejects_evaluator_version_mismatch_with_full_profile_id() -> None:
         ReferenceAggregationError, match="full reference-only evaluator version"
     ):
         aggregate_reference_results(results, manifest)
+
+
+def test_rejects_mismatched_comparison_profile_version_across_results() -> None:
+    """A single task result evaluated under a different comparison_profile_version
+    is rejected via the general run-context-equality check (schema v3)."""
+    context_a = _full_run_context()
+    context_b = _full_run_context(comparison_profile_version="stale-comparison-profile")
+    manifest, results = _manifest_and_results(context_a)
+    tampered = _replace_result(results, "HumanEval/163", context_b)
+    with pytest.raises(ReferenceAggregationError, match="different run_context"):
+        aggregate_reference_results(tampered, manifest)
 
 
 # --- Type defense ----------------------------------------------------------

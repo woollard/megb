@@ -298,6 +298,11 @@ def _verify_versions(
         ("oracle_version", evidence.oracle_version, ORACLE_ALGORITHM_VERSION),
         (
             "comparison_profile_version",
+            run_context.comparison_profile_version,
+            evidence.comparison_profile.profile_version,
+        ),
+        (
+            "comparison_profile_version",
             evidence.comparison_profile.profile_version,
             COMPARISON_PROFILE_VERSION,
         ),
