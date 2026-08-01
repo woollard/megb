@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted (original scope, commits `728c601`/`951c309`), Approved Correction v2 pending acceptance (commit `99b921d`); MEGB-03F complete including Approved Correction v2, pending acceptance (commits `410388d`, `99b921d`))  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E accepted (original scope, commits `728c601`/`951c309`), Approved Correction v2 pending acceptance (commits `99b921d`/`55435da`); MEGB-03F complete including Approved Correction v2, pending acceptance (commits `410388d`, `99b921d`, `55435da`))  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -930,7 +930,7 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 
 ### Status
 
-**Status:** ACCEPTED (original scope), commits `728c601`/`951c309`. Executed per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics. **Approved Correction v2 applied, pending acceptance** (see below): commit `99b921d`, fixing a schema defect surfaced during MEGB-03F trust-boundary review.
+**Status:** ACCEPTED (original scope), commits `728c601`/`951c309`. Executed per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics. **Approved Correction v2 applied, pending acceptance** (see below): commits `99b921d`, `55435da`, fixing a schema defect surfaced during MEGB-03F trust-boundary review.
 
 ### Objective
 
@@ -1112,7 +1112,7 @@ Surfaced during MEGB-03F trust-boundary review, after MEGB-03E's original accept
 
 **Tests:** 61 new/updated regression tests across `tests/test_result_schema.py` (87 total), `tests/test_result_redaction.py` (21 total), `tests/test_reference_evaluator.py` (43 total, offline), and `tests/test_reference_evaluator_docker.py` (3, real Docker) — covering: different candidate ids/hashes across tasks now accepted (the core fix); mismatched shared run context rejected; missing/duplicate/reordered/tampered candidate-set entries rejected; candidate-set checksum mismatch rejected; the 164-task denominator still enforced; reduced/full evaluator profiles still cannot be mixed (via `run_context` equality); task-specific candidate identity remains redacted in both `redact_task_result`/`redact_benchmark_result`; and schema-version mismatch on deserialize rejected explicitly. Full offline regression suite (`pytest -m "not integration and not docker"`): 350 passed (up from 283 before this correction). Real Docker vertical slice: 3/3 passed. Full Docker-marked suite: 26/26 passed for tests actually affected by or exercising this correction (one unrelated, pre-existing MEGB-02 test failure — `test_no_containers_remain_after_adversarial_exit_paths` — was traced to a stale, 5-hour-old leftover container from an earlier, unrelated session predating this correction; removed and reconfirmed passing in isolation, not a regression from this change). `mypy --strict` over `src/`: clean, 40 files. `pylint` over `src/`+`tests/`: 10.00/10 (one pre-existing, already-accepted `duplicate-code` finding, unrelated).
 
-**Commit:** `99b921d`.
+**Commits:** `99b921d` (initial v2 correction), `55435da` (rename `CandidateSetManifest` → `ReferenceValidationCandidateSetManifest` per follow-up review; confirms no code change was needed for candidate_sha256 uniqueness, which was already correctly unconstrained).
 
 ---
 
@@ -1120,7 +1120,7 @@ Surfaced during MEGB-03F trust-boundary review, after MEGB-03E's original accept
 
 ### Status
 
-**Status:** Complete, pending acceptance. Executed per the original "Requirements" below — no execution amendment was needed. The literal 3-argument illustrative signature (`evaluate_reference(task_id, candidate_code, context)`) was extended with explicit `evidence`, `backend`, and `profile` parameters — documented as a deviation below — since a pure 3-argument function cannot discover privileged oracle evidence or a backend/profile on its own; the ticket itself invites "an interface similar to" this signature. Commit `410388d`. **Approved Correction v2 applied, pending acceptance together with MEGB-03E's**: commit `99b921d` — `evaluate_reference` now takes explicit task-specific `candidate_id`/`candidate_sha256` parameters alongside the renamed `run_context` (see MEGB-03E's "Approved Correction (v2)" section above for the full defect analysis and fix).
+**Status:** Complete, pending acceptance. Executed per the original "Requirements" below — no execution amendment was needed. The literal 3-argument illustrative signature (`evaluate_reference(task_id, candidate_code, context)`) was extended with explicit `evidence`, `backend`, and `profile` parameters — documented as a deviation below — since a pure 3-argument function cannot discover privileged oracle evidence or a backend/profile on its own; the ticket itself invites "an interface similar to" this signature. Commit `410388d`. **Approved Correction v2 applied, pending acceptance together with MEGB-03E's**: commits `99b921d`, `55435da` — `evaluate_reference` now takes explicit task-specific `candidate_id`/`candidate_sha256` parameters alongside the renamed `run_context` (see MEGB-03E's "Approved Correction (v2)" section above for the full defect analysis and fix).
 
 ### Objective
 
