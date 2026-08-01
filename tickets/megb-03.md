@@ -1424,6 +1424,93 @@ Tracks the internal execution-plan checkpoints from the accepted MEGB-03G pre-im
 | MEGB-03G.4 — Equivalence, Security, and Throughput Validation | Not started | — | — | — |
 | MEGB-03G.5 — Documentation, CI, and Final Acceptance | Not started | — | — | — |
 
+### Approved MEGB-03G.2–G.5 Scope Amendment
+
+Authorized following a read-only scope and compatibility review of MEGB-03G.2 through MEGB-03G.5 against MEGB-03H, MEGB-03I, and the relevant MEGB-06 reference-evaluation requirements (conducted after MEGB-03G.1's acceptance). This amendment is additive to the "Approved MEGB-03G Compatibility Amendment" above: it does not reopen or alter MEGB-03G.1's already-accepted scope, and it supersedes conflicting text only where explicitly noted below, per this ticket's amendment-precedence rule. All prior amendment text is preserved verbatim as historical context.
+
+#### 1. Manifest-independent orchestration
+
+The MEGB-03G.2 cache and the MEGB-03G.3 orchestration primitive operate on individual task-candidate-evaluator work items independently of any benchmark manifest. They must:
+
+- support the 164-task reference-validation workflow (feeding MEGB-03G.1's `aggregate_reference_results`); and
+- be reusable, unmodified, by MEGB-06H for its own 163-task experimental workflow against `primary_experiment_task_manifest`.
+
+Only `aggregate_reference_results` remains restricted to the 164-entry `ReferenceValidationCandidateSetManifest`. MEGB-03G must not construct a 163-task \(Q_{\mathrm{ref}}\) aggregate, \(Q_{\mathrm{meas}}\), gaming delta, or any other MEGB-06 scientific result — that remains exclusively MEGB-06I's responsibility, per the original amendment's section 2.
+
+#### 2. Protected cache and diagnostic storage
+
+- The persistent reference-result cache is a **privileged artifact** and must live under `artifacts/privileged/`, following the policy already established in `docs/measurement/privileged-artifact-policy.md` for MEGB-03B/03C/03D — regardless of whether `ReferenceTaskResult.diagnostics` is currently empty in practice. Cache contents must never be committed to git.
+- Cache serialization must use a typed, versioned, integrity-checked schema (mirroring the existing lock-file pattern: schema/algorithm version, checksums, refusal of silent overwrite).
+- `PrivilegedCaseDiagnostic` records are not part of the append-only safe audit log described in the original requirement 9 — that schema is intentionally limited to identity/version/timestamp/status fields and contains no case-level content.
+- If `PrivilegedCaseDiagnostic` records are persisted at all (e.g. for debugging), they must use a separate privileged location and retention policy from both the cache and the audit log, never commingled with either.
+- Committed audit records must use an explicit field allowlist and must never contain case inputs, case identifiers, expected outputs, canonical solutions, candidate code, exception payloads, or free-form diagnostics.
+
+#### 3. MEGB-03G.4 versus MEGB-03H
+
+MEGB-03G.4 owns **orchestration qualification**:
+
+- sequential/concurrent semantic equivalence;
+- isolation preservation;
+- cache correctness;
+- deterministic output ordering;
+- bounded concurrency and backpressure;
+- interruption/resumption correctness;
+- infrastructure-level throughput measurement.
+
+MEGB-03H owns **scientific execution qualification**:
+
+- real-corpus resource calibration;
+- the frozen high-assurance execution profile;
+- repeated-run and environmental determinism;
+- definitive runtime and compute projections used by MEGB-06A.
+
+**Supersedes the original amendment's section 5 readiness-declaration language:** MEGB-03G.4's checkpoint report must name its readiness state as one of:
+
+- `ORCHESTRATION_READY_FOR_MEGB_03H`; or
+- `ORCHESTRATION_BLOCKED`.
+
+MEGB-03G.4 must not claim final readiness for MEGB-06A — that determination remains MEGB-03H's and MEGB-06A's, made after the real-corpus execution profile is frozen. MEGB-03H must reconcile its own runtime/resource measurements against MEGB-03G.4's infrastructure-level throughput projections and report any material divergence, rather than independently producing an unrelated estimate (see MEGB-03H's own "Approved Compatibility Note" below).
+
+#### 4. Corrected MEGB-03G.4 benchmark plan
+
+The previously proposed 15–20 tasks × 3 candidates scale is rejected: at the measured ≈3 minutes per task-candidate pair, its sequential leg alone would take approximately 135–180 minutes, which cannot satisfy a 60-minute total ceiling.
+
+MEGB-03G.4 must instead use **synthetic, non-privileged `ReferenceTaskEvidence` workloads** with case counts selected to represent low, median, and high workload sizes. No real reference-only inputs, expected outputs, canonical solutions, or privileged manifests are required or permitted for this orchestration benchmark.
+
+Before any material Docker execution, MEGB-03G.4 must produce a benchmark plan that is itself frozen and separately accepted, specifying:
+
+- the exact synthetic workload definitions and their checksums;
+- the number of task-candidate work items;
+- concurrency levels — provisionally 1, 2, and 4, unless MEGB-02's own demonstrated concurrent-execution evidence safely supports a higher level;
+- cold-cache, warm-cache, and interrupted/resumed runs;
+- a total wall-clock ceiling of 60 minutes;
+- an abort condition if that ceiling, or a declared host-resource ceiling, is exceeded.
+
+**Minimum `ORCHESTRATION_READY_FOR_MEGB_03H` criteria:**
+
+- 100% typed-result equivalence between sequential and concurrent execution;
+- zero isolation violations;
+- zero missing or duplicate accepted work items;
+- deterministic final ordering;
+- exact expected cache-hit behavior, with no backend execution for valid hits;
+- successful interruption and resumption without repeating already-accepted work;
+- at least one bounded-concurrency configuration achieving ≥1.5× throughput over sequential execution on the same host and workload;
+- no unresolved infrastructure error or resource leak.
+
+Failure of any correctness, isolation, or resumption criterion is `ORCHESTRATION_BLOCKED`. Failure to reach the throughput threshold must also be reported as `ORCHESTRATION_BLOCKED` unless explicitly accepted through a later amendment. These are infrastructure-readiness criteria only — MEGB-03H remains responsible for determining whether the frozen real-corpus execution profile is feasible for MEGB-06.
+
+#### 5. MEGB-03G.5 versus MEGB-03I
+
+MEGB-03G.5 owns only MEGB-03G's own acceptance matrix, documentation, CI coverage, and handoff to MEGB-03H. It must not claim final MEGB-03 epic acceptance — that remains MEGB-03I's "Final Acceptance Criteria" and epic-wide acceptance matrix.
+
+MEGB-03G.5 may provide internal build/verify commands for its own cache, audit, or benchmark artifacts, following the existing `*_cli.py` pattern already established by `partition_cli.py`/`oracle_cli.py`/`parity_cli.py`. It must not implement the user-facing `evaluate-reference` CLI, which remains owned exclusively by MEGB-03I.
+
+Expensive throughput checks (MEGB-03G.4's benchmark) must use a designated manual or scheduled workflow and must not run on every push, consistent with the pattern MEGB-03I requirement 9 already establishes for full-suite validation.
+
+#### 6. Compatibility diagnostics
+
+Confirmation only, no new requirement: the already-proven invariant that `FullSuiteDiagnostic` may be attached to a task result but can never affect `q_ref_task` or benchmark `q_ref` remains in force, per MEGB-03G.1's accepted regression test (`test_full_suite_diagnostic_never_affects_q_ref`). No additional implementation is required for this unless later work is found to violate it.
+
 ### Objective
 
 Implement benchmark-level aggregation, content-addressed result reuse, public-result redaction, and append-only auditing without creating an adaptive reference oracle.
@@ -1523,7 +1610,13 @@ Produce the standard checkpoint report and stop. MEGB-03H requires explicit auth
 
 ### Status
 
-**Status:** Not started
+**Status:** Not started. **Approved Compatibility Note (MEGB-03G.4 Reconciliation)** applies (see below); the original "Objective" through "Completion Record" text beneath it is preserved verbatim as historical context and is superseded only where it conflicts with the note.
+
+### Approved Compatibility Note (MEGB-03G.4 Reconciliation)
+
+Authorized alongside the "Approved MEGB-03G.2–G.5 Scope Amendment" in MEGB-03G's own section (see that ticket section's item 3 for the full boundary analysis between MEGB-03G.4's orchestration qualification and this subtask's scientific execution qualification).
+
+This note narrows original requirement 12 ("estimate full-suite runtime and compute requirements for CI and experimental planning"): MEGB-03H must **reconcile** its own runtime/resource measurements against MEGB-03G.4's `ORCHESTRATION_READY_FOR_MEGB_03H` infrastructure-level throughput projections, and report any material divergence, rather than independently producing an unrelated runtime estimate from scratch. MEGB-03G.4's projections are necessarily provisional — measured under whatever execution limits existed before this subtask freezes the high-assurance execution profile (requirements 4–5 below) — so a limit change here that materially changes per-task timing must be reflected in a revised joint estimate, not silently left to diverge from MEGB-03G.4's earlier figures. MEGB-03H remains the sole owner of the frozen real-corpus execution profile and the definitive runtime/compute projection MEGB-06A ultimately consumes; MEGB-03G.4 explicitly does not claim that authority (see MEGB-03G's own amendment).
 
 ### Objective
 
