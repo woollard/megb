@@ -1391,6 +1391,18 @@ MEGB-03G must not assume that MEGB-06H will independently solve any missing exec
 
 This amendment is specification-only. It does not amend MEGB-04 through MEGB-09; none of their text is affected. It does not authorize exposing privileged evidence beyond the boundary already accepted in MEGB-03B/03C/03D. It does not authorize beginning MEGB-03G implementation — that remains a separate, explicitly authorized step.
 
+#### Internal Checkpoint Log (MEGB-03G.1–G.5)
+
+Tracks the internal execution-plan checkpoints from the accepted MEGB-03G pre-implementation plan. Each checkpoint requires its own explicit authorization; this log is updated only for checkpoints actually authorized and executed, and only this table — no other part of this ticket — is touched to record that progress.
+
+| Checkpoint | Status | Commit(s) | Tests | Deviations |
+| --- | --- | --- | --- | --- |
+| MEGB-03G.1 — Aggregation and Profile Enforcement | Complete, pending acceptance | `8a3974b` | 19 focused (`tests/test_reference_aggregation.py`) + full offline suite 396 passed, 27 deselected, 0 failed; `mypy src tests` clean; `pylint src tests` 9.99/10, exit code 8 (not suppressed — see checkpoint report) | (1) Comparison-profile identity (`COMPARISON_PROFILE_VERSION`) has no persisted field on `ReferenceTaskResult`/`ReferenceRunContext`, so the aggregator cannot independently re-verify it; `result_schema.py` was not modified, per this checkpoint's "stop and report" instruction. (2) pylint reports 3 `R0801` duplicate-code findings between the new test file's local fixtures and `tests/test_result_schema.py`'s; no suppression was added without separate authorization, matching the narrow-authorization precedent set for the earlier `test_reference_partition_lock.py` CI fix. |
+| MEGB-03G.2 — Content Cache, Audit, and Artifact Persistence | Not started | — | — | — |
+| MEGB-03G.3 — Production Orchestration and Resumption | Not started | — | — | — |
+| MEGB-03G.4 — Equivalence, Security, and Throughput Validation | Not started | — | — | — |
+| MEGB-03G.5 — Documentation, CI, and Final Acceptance | Not started | — | — | — |
+
 ### Objective
 
 Implement benchmark-level aggregation, content-addressed result reuse, public-result redaction, and append-only auditing without creating an adaptive reference oracle.
