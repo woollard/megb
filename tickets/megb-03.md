@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C executed, pending your acceptance)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -208,7 +208,7 @@ After producing the report, stop. Do not begin the next subtask.
 - [x] MEGB-03A — Inventory EvalPlus evidence and validate partition feasibility
 - [x] MEGB-03A.1 — Resolve evidence-limited task eligibility
 - [x] MEGB-03B — Build and freeze the development/reference partition
-- [ ] MEGB-03C — Construct the privileged oracle artifact
+- [x] MEGB-03C — Construct the privileged oracle artifact
 - [ ] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
 - [ ] MEGB-03E — Implement typed result models and scoring semantics
 - [ ] MEGB-03F — Implement the task-level reference evaluator
@@ -679,7 +679,7 @@ Produce the standard checkpoint report and stop. MEGB-03C requires explicit auth
 
 ### Status
 
-**Status:** Executed, pending your acceptance. See the "Approved Execution Amendment (MEGB-03C)" below for the authorized construction rules; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule.
+**Status:** ACCEPTED. Executed per the "Approved Execution Amendment (MEGB-03C)" below; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule. Commits `cf25124` and `cbd4fad`.
 
 ### Approved Execution Amendment (MEGB-03C)
 
@@ -779,8 +779,8 @@ Produce the standard checkpoint report and stop. MEGB-03D requires explicit auth
 
 ### Completion Record
 
-- Status: Executed per the "Approved Execution Amendment (MEGB-03C)" above (pending your acceptance)
-- Commit: cf25124
+- Status: ACCEPTED (per the "Approved Execution Amendment (MEGB-03C)" above)
+- Commits: cf25124, cbd4fad
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_reference_oracle.py tests/test_reference_oracle_lock.py -v` — 30/30 passed (21 oracle-construction tests including 1 integration smoke test against the real corpus; 9 oracle-lock tests). Full offline suite 175/175 passed. Full integration-marked (non-Docker) suite 9/9 passed. mypy clean (47 files across `src/` + `tests/`). pylint 10.00/10 for `src/` + `tests/` (one pre-existing, out-of-scope duplicate-code finding between `src/reference/partition_cli.py` and `tests/test_reference_partition_lock.py` — both already-accepted MEGB-03B code, predating this subtask; flagged as a background task rather than fixed here).
 - Deviations:
