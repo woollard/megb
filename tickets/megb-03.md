@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B authorized and in progress)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B executed and artifact-finalized, pending your acceptance)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -574,7 +574,7 @@ explicitly deferred) — not merely specified.
 
 ### Status
 
-**Status:** Executed, per the MEGB-03A.1-authorized execution rules (163-task `primary_experiment_task_manifest`, 40/≥30 split, `HumanEval/39` excluded; 164-task `reference_validation_task_manifest`, unsplit). See the "Requirements" text above for the original specification and the completion record below for what was actually executed and any deviations.
+**Status:** Executed and artifact-finalized, per the MEGB-03A.1-authorized execution rules (163-task `primary_experiment_task_manifest`, 40/≥30 split, `HumanEval/39` excluded; 164-task `reference_validation_task_manifest`, unsplit) and the subsequent privileged-artifact-policy authorization (see `docs/measurement/privileged-artifact-policy.md`). See the "Requirements" text above for the original specification and the completion record below for what was actually executed and any deviations.
 
 ### Objective
 
@@ -655,12 +655,23 @@ Produce the standard checkpoint report and stop. MEGB-03C requires explicit auth
 
 ### Completion Record
 
-- Status: Executed (per MEGB-03A.1's authorized execution rules — see "Standard Checkpoint Report" for full detail; pending your acceptance)
-- Commit: aabee566b7b0cc5eaf19b5c5405365b98e8aae0a (excludes the two large full manifests — see Handoff note below)
+- Status: Executed and artifact-finalized (per MEGB-03A.1's authorized execution rules and the subsequent privileged-artifact-policy authorization — see both "Standard Checkpoint Report"s for full detail; pending your acceptance)
+- Commits: aabee566b7b0cc5eaf19b5c5405365b98e8aae0a (initial partition execution, excludes the two large full manifests); 471a4b0 (artifact-finalization: lock file, build/verify CLI, tests, docs; this commit record)
 - Completed: 2026-08-01
-- Tests: `pytest tests/test_reference_partition.py -v` — 18/18 passed (including a regression test for a real determinism bug found and fixed during this subtask — see Deviations). Full offline suite 137/137 passed. mypy clean (39 files). pylint 10.00/10.
-- Deviations: **Found and fixed a real cross-process determinism bug during verification**: `DatasetProvenance.loaded_at` (a fresh wall-clock timestamp on every `load_provenance()` call) was embedded, unstripped, in both manifests' checksummed payload, making every manifest checksum spuriously non-reproducible across separate process runs even though nothing about the corpus or code had changed. The in-process "rebuild is byte-stable" test had passed only because it reused one cached provenance object rather than reloading it, masking the bug. Fixed by stripping `dataset_provenance.loaded_at` before hashing (mirroring MEGB-03A's own earlier `generated_at`-stripping fix); added a dedicated regression test constructing two provenance objects differing only in `loaded_at` and asserting equal checksums; verified by actually running the driver as two separate OS processes and confirming identical checksums.
-- Handoff: `src/reference/partition.py` (ranking, partition/manifest construction, validation, redaction); `artifacts/reference/partition/{reference_validation_task_manifest.json,primary_experiment_task_manifest.json,primary_experiment_task_manifest_redacted.json,partition_validation_report.md}`. Experiment manifest checksum `c85ec9d3cd073821e06b875ccb54e9a7d2b958eeb093dd30afda37f2d5ac1b71`, validation manifest checksum `832620da24471ffe85946fc1ccac7e7ff8a375ab16a452b0b2d60a1b9d8a59b9`. **Note for your awareness**: the two full (non-redacted) manifest JSON files are ~9.5MB each (~19MB combined) — legitimate given full per-task case-ID lists (median ~977 cases/task), but a real jump from MEGB-03A's ~200KB artifacts and worth a decision before MEGB-03C, which will likely produce comparably large or larger oracle artifacts: commit as-is, or gitignore the large full manifests (keeping only the much smaller redacted view and validation report) since both are fully and deterministically reproducible from `python -m src.reference.partition`.
+- Tests: `pytest tests/test_reference_partition.py tests/test_reference_partition_lock.py -v` — 26/26 passed (18 partition tests + 8 new lock tests, including regression tests for two real determinism bugs found and fixed — see Deviations). Full offline suite 145/145 passed. mypy clean (32 files in `src/`). pylint 10.00/10.
+- Deviations:
+  1. **Cross-process determinism bug (initial execution)**: `DatasetProvenance.loaded_at` (a fresh wall-clock timestamp on every `load_provenance()` call) was embedded, unstripped, in both manifests' checksummed payload, making every manifest checksum spuriously non-reproducible across separate process runs even though nothing about the corpus or code had changed. The in-process "rebuild is byte-stable" test had passed only because it reused one cached provenance object rather than reloading it, masking the bug. Fixed by stripping `dataset_provenance.loaded_at` before hashing (mirroring MEGB-03A's own earlier `generated_at`-stripping fix); added a dedicated regression test constructing two provenance objects differing only in `loaded_at` and asserting equal checksums; verified by running the driver as two separate OS processes and confirming identical checksums.
+  2. **Second, related determinism bug (artifact-finalization)**: while implementing the privileged-artifact lock, discovered that the same two volatile fields (`generated_at`, `dataset_provenance.loaded_at`) were still embedded unstripped in the manifest *dataclass instances themselves* (only the temporary hashing payload had them stripped) — so writing the full manifest to disk and rebuilding it in a fresh process produced different file bytes on every run, even though `manifest_checksum` itself was stable. This would have broken `verify`'s "regenerate and compare bytes" requirement. Fixed by adding `_stabilized_manifest_payload()` (strips both fields before serializing to bytes) and using it for every privileged-artifact write and verification comparison; confirmed by running `build` twice in separate processes and `verify` afterward, all producing byte-identical output.
+  3. **Module split for a real pylint failure, not preference**: the lock/verification code was first written inline in `partition.py`, which then failed pylint's module line-count ceiling (1012/1000). Rather than disable the check, split the privileged-artifact lock logic into a new `src/reference/partition_lock.py`, and the CLI (`build`/`verify` argparse entry point, which needs symbols from both) into a new `src/reference/partition_cli.py` — this also resolved a genuine circular-import risk (`partition_lock` depends on `partition`; putting the CLI in `partition.py` would have made `partition` depend back on `partition_lock`). The build/verify entry point is now `python -m src.reference.partition_cli {build|verify}`.
+- Handoff:
+  - Library: `src/reference/partition.py` (ranking, partition/manifest construction, validation, redaction, `load_real_corpus_inputs`); `src/reference/partition_lock.py` (`LockEntry`/`LockFile`, `write_privileged_artifacts`, `verify_against_lock`, `FrozenArtifactConflictError`, `ManifestKindMismatchError`); `src/reference/partition_cli.py` (`build`/`verify` CLI).
+  - Committed artifacts: `artifacts/reference/partition/{primary_experiment_task_manifest_redacted.json,partition_validation_report.md,partition.lock.json}`.
+  - Privileged (gitignored, not in git) artifacts: `artifacts/privileged/reference/partition/{primary_experiment_task_manifest.json,reference_validation_task_manifest.json}` — present on disk, verified via `python -m src.reference.partition_cli verify` (PASS on both).
+  - Final lock checksums (from `partition.lock.json`, `lock_schema_version: partition-lock-v1`):
+    - `primary_experiment_task_manifest`: `logical_sha256=c85ec9d3cd073821e06b875ccb54e9a7d2b958eeb093dd30afda37f2d5ac1b71`, `size_bytes=9517190`, `expected_task_count=163`.
+    - `reference_validation_task_manifest`: `logical_sha256=832620da24471ffe85946fc1ccac7e7ff8a375ab16a452b0b2d60a1b9d8a59b9`, `size_bytes=9486515`, `expected_task_count=164`.
+  - These `logical_sha256` values are unchanged from the initial execution's manifest checksums — the artifact-finalization work relocated and anchored the artifacts without altering partition content.
+  - Artifact policy: see `docs/measurement/privileged-artifact-policy.md` for the full policy (what's committed vs. privileged, lock-file schema, build/verify CLI, determinism note, backup requirement, and the default-policy statement for MEGB-03C oracle artifacts).
 
 ---
 
