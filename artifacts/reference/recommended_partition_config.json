@@ -1,0 +1,1000 @@
+{
+  "artifact_checksum": "4086bfb647ccf6bc1d2e15b8f15ed9d9f158f4afa93633ea32d14c9367f2dada",
+  "case_id_algorithm_version": "case-id-v1",
+  "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+  "dataset_version": "v0.1.10",
+  "inventory_algorithm_version": "megb-03a-inventory-v1",
+  "per_task_recommendation": [
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/0"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 67,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/1"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 634,
+      "task_id": "HumanEval/10"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 92,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/100"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/101"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 800,
+      "task_id": "HumanEval/102"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 800,
+      "task_id": "HumanEval/103"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 853,
+      "task_id": "HumanEval/104"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 853,
+      "task_id": "HumanEval/105"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 84,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/106"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 22,
+      "task_id": "HumanEval/107"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 858,
+      "task_id": "HumanEval/108"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 807,
+      "task_id": "HumanEval/109"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 257,
+      "task_id": "HumanEval/11"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 857,
+      "task_id": "HumanEval/110"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 510,
+      "task_id": "HumanEval/111"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/112"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 836,
+      "task_id": "HumanEval/113"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 862,
+      "task_id": "HumanEval/114"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 656,
+      "task_id": "HumanEval/115"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 578,
+      "task_id": "HumanEval/116"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 857,
+      "task_id": "HumanEval/117"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 863,
+      "task_id": "HumanEval/118"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 510,
+      "task_id": "HumanEval/119"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 785,
+      "task_id": "HumanEval/12"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 861,
+      "task_id": "HumanEval/120"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/121"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/122"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 119,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/123"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 850,
+      "task_id": "HumanEval/124"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 661,
+      "task_id": "HumanEval/125"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 861,
+      "task_id": "HumanEval/126"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 437,
+      "task_id": "HumanEval/127"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 852,
+      "task_id": "HumanEval/128"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 47,
+      "task_id": "HumanEval/129"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 840,
+      "task_id": "HumanEval/13"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 95,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/130"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 85,
+      "task_id": "HumanEval/131"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 860,
+      "task_id": "HumanEval/132"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 860,
+      "task_id": "HumanEval/133"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 849,
+      "task_id": "HumanEval/134"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 824,
+      "task_id": "HumanEval/135"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 859,
+      "task_id": "HumanEval/136"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/137"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 93,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/138"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 107,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/139"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 755,
+      "task_id": "HumanEval/14"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 854,
+      "task_id": "HumanEval/140"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 876,
+      "task_id": "HumanEval/141"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 858,
+      "task_id": "HumanEval/142"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 857,
+      "task_id": "HumanEval/143"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 860,
+      "task_id": "HumanEval/144"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/145"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 843,
+      "task_id": "HumanEval/146"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 95,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/147"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 825,
+      "task_id": "HumanEval/148"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 836,
+      "task_id": "HumanEval/149"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 115,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/15"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 858,
+      "task_id": "HumanEval/150"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/151"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 853,
+      "task_id": "HumanEval/152"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 53,
+      "task_id": "HumanEval/153"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/154"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 105,
+      "task_id": "HumanEval/155"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 62,
+      "task_id": "HumanEval/156"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 859,
+      "task_id": "HumanEval/157"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 757,
+      "task_id": "HumanEval/158"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 832,
+      "task_id": "HumanEval/159"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 854,
+      "task_id": "HumanEval/16"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 302,
+      "task_id": "HumanEval/160"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 840,
+      "task_id": "HumanEval/161"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 853,
+      "task_id": "HumanEval/162"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 836,
+      "task_id": "HumanEval/163"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 68,
+      "task_id": "HumanEval/17"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 854,
+      "task_id": "HumanEval/18"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 111,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/19"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 824,
+      "task_id": "HumanEval/2"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 850,
+      "task_id": "HumanEval/20"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 854,
+      "task_id": "HumanEval/21"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 806,
+      "task_id": "HumanEval/22"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 816,
+      "task_id": "HumanEval/23"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 149,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/24"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 125,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/25"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 715,
+      "task_id": "HumanEval/26"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 825,
+      "task_id": "HumanEval/27"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 713,
+      "task_id": "HumanEval/28"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 848,
+      "task_id": "HumanEval/29"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 753,
+      "task_id": "HumanEval/3"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 852,
+      "task_id": "HumanEval/30"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 139,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/31"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 736,
+      "task_id": "HumanEval/32"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 812,
+      "task_id": "HumanEval/33"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 754,
+      "task_id": "HumanEval/34"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 790,
+      "task_id": "HumanEval/35"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 132,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/36"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 827,
+      "task_id": "HumanEval/37"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 949,
+      "task_id": "HumanEval/38"
+    },
+    {
+      "feasibility": "BLOCKED",
+      "recommended_development_cases": 0,
+      "recommended_reference_only_cases": 0,
+      "task_id": "HumanEval/39"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 638,
+      "task_id": "HumanEval/4"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 838,
+      "task_id": "HumanEval/40"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 59,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/41"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 851,
+      "task_id": "HumanEval/42"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 833,
+      "task_id": "HumanEval/43"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 317,
+      "task_id": "HumanEval/44"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 852,
+      "task_id": "HumanEval/45"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 112,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/46"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 850,
+      "task_id": "HumanEval/47"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 845,
+      "task_id": "HumanEval/48"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 839,
+      "task_id": "HumanEval/49"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 136,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/5"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 950,
+      "task_id": "HumanEval/50"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 853,
+      "task_id": "HumanEval/51"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 275,
+      "task_id": "HumanEval/52"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 819,
+      "task_id": "HumanEval/53"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/54"
+    },
+    {
+      "feasibility": "BLOCKED",
+      "recommended_development_cases": 0,
+      "recommended_reference_only_cases": 0,
+      "task_id": "HumanEval/55"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 860,
+      "task_id": "HumanEval/56"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 829,
+      "task_id": "HumanEval/57"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 839,
+      "task_id": "HumanEval/58"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 26,
+      "task_id": "HumanEval/59"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 49,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/6"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 140,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/60"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 858,
+      "task_id": "HumanEval/61"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 803,
+      "task_id": "HumanEval/62"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 45,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/63"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 849,
+      "task_id": "HumanEval/64"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 837,
+      "task_id": "HumanEval/65"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 857,
+      "task_id": "HumanEval/66"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 197,
+      "task_id": "HumanEval/67"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 857,
+      "task_id": "HumanEval/68"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 875,
+      "task_id": "HumanEval/69"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 32,
+      "task_id": "HumanEval/7"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 833,
+      "task_id": "HumanEval/70"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/71"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 547,
+      "task_id": "HumanEval/72"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 820,
+      "task_id": "HumanEval/73"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 835,
+      "task_id": "HumanEval/74"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 75,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/75"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 754,
+      "task_id": "HumanEval/76"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 144,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/77"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 857,
+      "task_id": "HumanEval/78"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 50,
+      "task_id": "HumanEval/79"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/8"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 799,
+      "task_id": "HumanEval/80"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/81"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 827,
+      "task_id": "HumanEval/82"
+    },
+    {
+      "feasibility": "LIMITED",
+      "recommended_development_cases": 89,
+      "recommended_reference_only_cases": 20,
+      "task_id": "HumanEval/83"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 66,
+      "task_id": "HumanEval/84"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 848,
+      "task_id": "HumanEval/85"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/86"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 62,
+      "task_id": "HumanEval/87"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/88"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 853,
+      "task_id": "HumanEval/89"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 812,
+      "task_id": "HumanEval/9"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 677,
+      "task_id": "HumanEval/90"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/91"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 860,
+      "task_id": "HumanEval/92"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 855,
+      "task_id": "HumanEval/93"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 859,
+      "task_id": "HumanEval/94"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 366,
+      "task_id": "HumanEval/95"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 30,
+      "task_id": "HumanEval/96"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 826,
+      "task_id": "HumanEval/97"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 856,
+      "task_id": "HumanEval/98"
+    },
+    {
+      "feasibility": "OK",
+      "recommended_development_cases": 150,
+      "recommended_reference_only_cases": 564,
+      "task_id": "HumanEval/99"
+    }
+  ],
+  "policy": {
+    "min_development_cases": 30,
+    "min_reference_only_cases": 20,
+    "num_o4_replicates": 5,
+    "o4_replicate_size": 30,
+    "target_development_cases": 150
+  }
+}

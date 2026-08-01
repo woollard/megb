@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** Not started  
+**Status:** In progress (MEGB-03A accepted; MEGB-03B not yet authorized)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -188,7 +188,7 @@ After producing the report, stop. Do not begin the next subtask.
 
 ## Subtask Status
 
-- [ ] MEGB-03A — Inventory EvalPlus evidence and validate partition feasibility
+- [x] MEGB-03A — Inventory EvalPlus evidence and validate partition feasibility
 - [ ] MEGB-03B — Build and freeze the development/reference partition
 - [ ] MEGB-03C — Construct the privileged oracle artifact
 - [ ] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
@@ -204,7 +204,7 @@ After producing the report, stop. Do not begin the next subtask.
 
 ### Status
 
-**Status:** Not started
+**Status:** Accepted
 
 ### Objective
 
@@ -289,12 +289,12 @@ Produce the standard checkpoint report and stop. MEGB-03B requires explicit auth
 
 ### Completion Record
 
-- Status: Not started
-- Commit: —
-- Completed: —
-- Tests: —
-- Deviations: —
-- Handoff: —
+- Status: Accepted (pending explicit authorization to begin MEGB-03B)
+- Commit: (recorded in a follow-up commit immediately after; see repository log for "MEGB-03A: ...")
+- Completed: 2026-08-01
+- Tests: `pytest tests/test_reference_case_serialization.py tests/test_reference_inventory.py -v` — 24/24 passed (6 serialization + 18 inventory, including 3 real-corpus integration tests); full offline suite 106/106 passed; mypy clean (35 files); pylint 10.00/10.
+- Deviations: Recommended-policy numeric constants (30 dev / 20 reference-only / 150 target) are MEGB-03A's own justified recommendation, not literal ticket text (the ticket asks for "a" allocation rule with justification, not a specific number). `mutation_sensitive_info` is reported as explicitly unavailable rather than fabricated, since EvalPlus's integrated fields carry no per-case generation-strategy tag.
+- Handoff: `artifacts/reference/evidence_inventory.json` (full per-task data, checksum `4086bfb647ccf6bc1d2e15b8f15ed9d9f158f4afa93633ea32d14c9367f2dada`), `artifacts/reference/feasibility_report.md` (human-readable), `artifacts/reference/recommended_partition_config.json` (recommended per-task dev/reference counts). **Two tasks are BLOCKED under the current policy: `HumanEval/39` (12 unique cases) and `HumanEval/55` (45 unique cases after dedup) — MEGB-03B cannot freeze a partition including these two tasks without an explicit, approved design amendment.** 23 tasks are LIMITED (feasible, but only with overlapping O4 replicates); 139 are OK.
 
 ---
 
