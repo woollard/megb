@@ -656,7 +656,7 @@ Produce the standard checkpoint report and stop. MEGB-03C requires explicit auth
 ### Completion Record
 
 - Status: Executed (per MEGB-03A.1's authorized execution rules — see "Standard Checkpoint Report" for full detail; pending your acceptance)
-- Commit: (recorded in a follow-up commit; see repository log for "MEGB-03B: execute...")
+- Commit: aabee566b7b0cc5eaf19b5c5405365b98e8aae0a (excludes the two large full manifests — see Handoff note below)
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_reference_partition.py -v` — 18/18 passed (including a regression test for a real determinism bug found and fixed during this subtask — see Deviations). Full offline suite 137/137 passed. mypy clean (39 files). pylint 10.00/10.
 - Deviations: **Found and fixed a real cross-process determinism bug during verification**: `DatasetProvenance.loaded_at` (a fresh wall-clock timestamp on every `load_provenance()` call) was embedded, unstripped, in both manifests' checksummed payload, making every manifest checksum spuriously non-reproducible across separate process runs even though nothing about the corpus or code had changed. The in-process "rebuild is byte-stable" test had passed only because it reused one cached provenance object rather than reloading it, masking the bug. Fixed by stripping `dataset_provenance.loaded_at` before hashing (mirroring MEGB-03A's own earlier `generated_at`-stripping fix); added a dedicated regression test constructing two provenance objects differing only in `loaded_at` and asserting equal checksums; verified by actually running the driver as two separate OS processes and confirming identical checksums.
