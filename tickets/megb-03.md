@@ -900,7 +900,7 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 ### Completion Record
 
 - Status: Executed per the "Approved Execution Amendment (MEGB-03D)" above (pending your acceptance)
-- Commit: recorded in the follow-up entry immediately below this one (commit-hash record pattern, matching prior MEGB-03 subtasks)
+- Commit: 5d29992
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_parity_corpus.py tests/test_parity.py tests/test_parity_lock.py tests/test_supplementary_oracle_validation.py -v` — 46/46 passed offline/integration (17 corpus-structure + 10 offline classification + 9 lock/verify + 8 supplementary-validation + 2 HumanEval/39 non-Docker); 3 Docker-marked tests (full 11-candidate corpus agreement, HumanEval/39 MEGB-side agreement) run and passed against the real corpus via `megb-runner:local`. Full offline suite 226/226 passed. mypy clean (56 files across `src/`+`tests/`). pylint 10.00/10 for `src/`+`tests/` (the one pre-existing, out-of-scope duplicate-code finding between two already-accepted MEGB-03B files remains unchanged, per earlier subtasks' notes).
 - Deviations:
