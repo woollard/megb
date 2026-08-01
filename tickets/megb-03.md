@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B executed and artifact-finalized, pending your acceptance)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C authorized and in progress)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -207,7 +207,7 @@ After producing the report, stop. Do not begin the next subtask.
 
 - [x] MEGB-03A — Inventory EvalPlus evidence and validate partition feasibility
 - [x] MEGB-03A.1 — Resolve evidence-limited task eligibility
-- [ ] MEGB-03B — Build and freeze the development/reference partition
+- [x] MEGB-03B — Build and freeze the development/reference partition
 - [ ] MEGB-03C — Construct the privileged oracle artifact
 - [ ] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
 - [ ] MEGB-03E — Implement typed result models and scoring semantics
@@ -574,7 +574,7 @@ explicitly deferred) — not merely specified.
 
 ### Status
 
-**Status:** Executed and artifact-finalized, per the MEGB-03A.1-authorized execution rules (163-task `primary_experiment_task_manifest`, 40/≥30 split, `HumanEval/39` excluded; 164-task `reference_validation_task_manifest`, unsplit) and the subsequent privileged-artifact-policy authorization (see `docs/measurement/privileged-artifact-policy.md`). See the "Requirements" text above for the original specification and the completion record below for what was actually executed and any deviations.
+**Status:** ACCEPTED. Executed per the MEGB-03A.1-authorized execution rules (163-task `primary_experiment_task_manifest`, 40/≥30 split, `HumanEval/39` excluded; 164-task `reference_validation_task_manifest`, unsplit) and artifact-finalized per the subsequent privileged-artifact-policy authorization (see `docs/measurement/privileged-artifact-policy.md`). Commits `471a4b0` and `1748685`. See the "Requirements" text above for the original specification and the completion record below for what was actually executed and any deviations.
 
 ### Objective
 
@@ -655,7 +655,7 @@ Produce the standard checkpoint report and stop. MEGB-03C requires explicit auth
 
 ### Completion Record
 
-- Status: Executed and artifact-finalized (per MEGB-03A.1's authorized execution rules and the subsequent privileged-artifact-policy authorization — see both "Standard Checkpoint Report"s for full detail; pending your acceptance)
+- Status: ACCEPTED (per MEGB-03A.1's authorized execution rules and the subsequent privileged-artifact-policy authorization — see both "Standard Checkpoint Report"s for full detail)
 - Commits: aabee566b7b0cc5eaf19b5c5405365b98e8aae0a (initial partition execution, excludes the two large full manifests); 471a4b0 (artifact-finalization: lock file, build/verify CLI, tests, docs; this commit record)
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_reference_partition.py tests/test_reference_partition_lock.py -v` — 26/26 passed (18 partition tests + 8 new lock tests, including regression tests for two real determinism bugs found and fixed — see Deviations). Full offline suite 145/145 passed. mypy clean (32 files in `src/`). pylint 10.00/10.
@@ -679,7 +679,29 @@ Produce the standard checkpoint report and stop. MEGB-03C requires explicit auth
 
 ### Status
 
-**Status:** Not started
+**Status:** Authorized and in progress. See the "Approved Execution Amendment (MEGB-03C)" below for the authorized construction rules; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule.
+
+### Approved Execution Amendment (MEGB-03C)
+
+Authorized execution rules (supersede conflicting original "Requirements" text below per this ticket's amendment-precedence rule):
+
+1. Before oracle construction, run the MEGB-03B lock verification (`python -m src.reference.partition_cli verify`) and refuse to continue unless both frozen manifests reproduce exactly.
+2. Construct physically separated expected-output artifacts:
+   - development oracle: the 40 development cases for each of the 163 experimental tasks; intended only for the trusted side of MEGB-04;
+   - reference-only oracle: every reference-only case for the 163 experimental tasks; intended only for S\*;
+   - reference-validation-only oracle: `HumanEval/39`'s complete 12-case domain.
+3. Create a composite 164-task reference-validation manifest that references those physically separated artifacts without duplicating expected-output bytes.
+4. Preserve strict access boundaries: MEGB-04 may later mount only the development oracle; S\* may mount the reference-only oracle; the 164-task validation workflow may resolve the composite; candidate code and candidate-generation/selection runtimes may mount none of them.
+5. Use the corrected, pinned EvalPlus canonical solutions and comparison semantics, preserving task-specific tolerances, normalization behavior, input-mutation semantics, stable case identifiers, evidence provenance, partition membership, canonical-solution hashes, and dataset/augmentation/partition/implementation versions.
+6. Never replace EvalPlus comparison behavior with universal Python equality.
+7. For supplementary HumanEval/6, /55, and /63 inputs: generate expected outputs only now; bind them to the accepted supplementary-input checksums; record their provenance separately; fail oracle construction if the corrected canonical solution or comparison procedure cannot produce an unambiguous valid oracle; never drop a difficult supplementary case silently.
+8. Distinguish oracle-generation failure from candidate failure. No candidate code is executed in this subtask.
+9. Apply the established privileged-artifact policy (`docs/measurement/privileged-artifact-policy.md`): full oracle bytes remain under `artifacts/privileged/` and outside git; committed machine-readable lock records anchor their identities; committed artifacts may include schemas, counts, provenance, checksums, generation commands, and redacted reports — but no expected outputs; regeneration and verification must be deterministic and byte-stable; frozen mismatch must fail rather than overwrite; `--force` requires an explicit new artifact version or approved amendment.
+10. The oracle lock must record: artifact and profile identity; authorized consumer; task and case counts; dataset, augmentation, and partition checksums; canonical-solution hashes; comparison-profile versions; generator/code revision; logical and byte-level checksums; byte sizes; generation command; and freeze state.
+11. Required tests (at least): complete case coverage with no missing/duplicate oracle records; separation of development, reference-only, and `HumanEval/39` validation artifacts; floating-point tolerance behavior; normalization behavior; mutation-sensitive cases; supplementary-evidence handling; corrupt/missing partition and source artifacts; canonical-generation failure classification; deterministic cross-process regeneration; lock mismatch and silent-overwrite refusal; public/redacted artifact leakage; and authorized-consumer boundaries.
+12. Document the access model and backup requirement; no external upload is performed in this subtask.
+
+Non-goals unchanged from below: no upstream parity validation (MEGB-03D), no candidate-level evaluation.
 
 ### Objective
 
