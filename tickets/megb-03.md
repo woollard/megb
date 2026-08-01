@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E authorized and in progress)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E complete, pending acceptance)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -210,7 +210,7 @@ After producing the report, stop. Do not begin the next subtask.
 - [x] MEGB-03B — Build and freeze the development/reference partition
 - [x] MEGB-03C — Construct the privileged oracle artifact
 - [x] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
-- [ ] MEGB-03E — Implement typed result models and scoring semantics
+- [x] MEGB-03E — Implement typed result models and scoring semantics
 - [ ] MEGB-03F — Implement the task-level reference evaluator
 - [ ] MEGB-03G — Implement aggregation, caching, redaction, and audit
 - [ ] MEGB-03H — Calibrate resources and verify deterministic measurement
@@ -930,7 +930,7 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 
 ### Status
 
-**Status:** Authorized and in progress, per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics.
+**Status:** Complete, pending acceptance. Executed per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics. Commit `728c601`.
 
 ### Objective
 
@@ -1056,12 +1056,29 @@ Produce the standard checkpoint report and stop. MEGB-03F requires explicit auth
 
 ### Completion Record
 
-- Status: Not started
-- Commit: —
-- Completed: —
-- Tests: —
-- Deviations: —
-- Handoff: —
+- Status: Complete, pending acceptance.
+- Commit: `728c601`.
+- Completed: 2026-08-01.
+- Tests: `src/reference/result_schema.py` + `src/reference/result_redaction.py`, 84 new tests across `tests/test_result_schema.py` (60) and `tests/test_result_redaction.py` (24), all offline/synthetic (no Docker, no network). Organized to map onto the ticket's "Required Tests" list:
+  - Task-result construction and schema validation: context field validation (empty strings, malformed sha256), task-result field validation (empty/malformed strings, negative counts/duration, `reference_case_pass_count > reference_case_total`, unknown/negative `execution_failure_counts` keys/values), frozen/immutability checks.
+  - All-pass scoring: `q_ref_task=1.0` requires `reference_case_pass_count == reference_case_total`; rejected otherwise; full-164-task benchmark computes `q_ref=1.0`.
+  - Pass-base/fail-plus diagnostic scoring: `FullSuiteDiagnostic` construction/consistency checks for all four `ReferenceOutcome` values (including `FAIL_BASE_PASS_PLUS` as a representable, never-suppressed anomaly, and `INVALID_MEASUREMENT`'s relaxed zero-count case); benchmark-level `full_suite_outcome_counts` aggregation.
+  - Candidate execution-failure scoring: `q_ref_task=0.0` requires a candidate-attributable `first_failure_category` and `reference_case_pass_count < reference_case_total`; fractional/bool `q_ref_task` rejected; case-level pass fraction (e.g. 4/5) never substituted for the binary score; mixed pass/fail benchmark computes the correct fraction.
+  - Invalid-measurement propagation: every non-VALID `MeasurementStatus` forces `q_ref_task=None` and `full_suite_diagnostic=None`; `INCOMPLETE` requires `first_failure_category=NONE`; other invalid statuses require a measurement-apparatus category; `aggregate_status` reflects the worst status present (or `INCOMPLETE` when any task is missing outright).
+  - Denominator preservation: `expected_task_count` must be exactly 164; missing tasks or any non-VALID/INCOMPLETE task among an otherwise-full set forces `q_ref=None`; duplicate `task_id` and over-count rejected.
+  - Serialization round trips: `context`/`FullSuiteDiagnostic`/`ReferenceTaskResult`/`ReferenceBenchmarkResult` all round-trip exactly through `*_to_dict`/`*_from_dict`, including `diagnostics` content and `None`-valued optional fields.
+  - Configuration/version validation: every task result must share the benchmark's exact `context` and `oracle_version`; mismatches (candidate identity, `evaluator_version`, `oracle_version`) are rejected; `task_manifest_checksum` must be a valid sha256 hex digest.
+  - Public-result redaction and feedback-leakage tests: `redact_task_result`/`redact_benchmark_result` never include `diagnostics`, the full `context`, or `candidate_sha256`; `reference_case_total`/`reference_case_pass_count` (the "unapproved reference-test counts" of requirement 13) are excluded unless `include_reference_case_counts=True` is explicitly passed, and that flag propagates correctly to every nested task redaction.
+  - Full offline regression suite (`pytest -m "not integration and not docker"`): 283 passed, 0 failed (up from 263 before this subtask).
+  - `mypy --strict` (via the pinned `pyproject.toml` config) over `src/`: clean, 39 source files.
+  - `pylint` over `src/` and `tests/`: 10.00/10 (one pre-existing, already-accepted `duplicate-code` note in `tests/test_parity_lock.py` unrelated to this subtask).
+- Deviations: The literal ticket text ("Requirements" above) specifies a richer schema than a first draft implemented — the first draft was caught and fully reworked before finalizing, rather than left partially conformant:
+  1. `ReferenceTaskResult` carries typed `reference_case_total`/`reference_case_pass_count` fields (not a free-form diagnostics entry), with construction-time consistency checks tying them to `q_ref_task` (requirements 4/5/7).
+  2. `FullSuiteDiagnostic` is a separate, validated nested type (not just a bare `ReferenceOutcome` label) carrying `base_total`/`base_pass_count`/`plus_total`/`plus_pass_count`, with the outcome checked for consistency against the counts.
+  3. `ReferenceTaskResult` additionally carries `execution_failure_counts` (a category→count mapping, validated against `FailureCategory`), `oracle_version`, `reference_case_checksum` (sha256 of the specific reference-only case set consumed), and `duration_seconds`.
+  4. `ReferenceBenchmarkResult` additionally carries `task_manifest_checksum` (pinning exactly which 164-task reference-validation manifest the run was evaluated against — so the denominator's *identity*, not just its size, cannot silently drift) and `oracle_version` (checked against every task result), and exposes `invalid_task_count`, `incomplete_task_count`, `primary_pass_count`, `full_suite_outcome_counts`, and `aggregate_status` as properties rather than stored/duplicated fields, to avoid any possibility of a stored aggregate drifting out of sync with the underlying `task_results`.
+  5. The benchmark-level "candidate/run identity" check was generalized from a fixed subset of fields to full `ReferenceEvaluationContext` equality against every task result — simpler and stronger than checking a hand-picked field list, and it also catches evaluator/dataset/partition/execution-profile version drift within one benchmark run, which the ticket's "configuration/version validation" required test explicitly calls for.
+- Handoff: `src/reference/result_schema.py` (typed models: `ReferenceEvaluationContext`, `MeasurementStatus`, `ReferenceOutcome`, `FullSuiteDiagnostic`, `ReferenceTaskResult`, `ReferenceBenchmarkResult`, `InvalidReferenceResultError`) and `src/reference/result_redaction.py` (privileged `*_to_dict`/`*_from_dict` serialization and development-facing `redact_task_result`/`redact_benchmark_result` projections) are ready for MEGB-03F to populate by executing candidates through MEGB-02 and MEGB-03C/03D's oracle/comparison layer. No candidate execution, persistent caching/audit storage, or benchmark-gaming delta calculation is implemented here, per this ticket's Non-Goals — those remain MEGB-03F's and MEGB-06's responsibility respectively.
 
 ---
 
