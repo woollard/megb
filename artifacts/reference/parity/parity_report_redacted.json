@@ -1,0 +1,109 @@
+{
+  "agreement_count": 11,
+  "candidate_count": 11,
+  "candidates": [
+    {
+      "agree": true,
+      "candidate_id": "he0-corrected-canonical",
+      "candidate_source_sha256": "3d8720eb49152d9569fa80bb7d6268cc4068e5b3837c30c90337349d6ef966a7",
+      "category": "corrected_canonical_solution",
+      "megb_outcome": "PASS_BASE_PASS_PLUS",
+      "task_id": "HumanEval/0",
+      "upstream_outcome": "PASS_BASE_PASS_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he0-fails-original",
+      "candidate_source_sha256": "e5bc4711ecca0450afc832779a88676a7c6960fa3da5af410ee02d1e0151591a",
+      "category": "fails_original_evidence",
+      "megb_outcome": "FAIL_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/0",
+      "upstream_outcome": "FAIL_BASE_FAIL_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he0-pass-base-fail-plus",
+      "candidate_source_sha256": "516a9a3c709f72d2ff8f0224f88dad29a14ddc00095e9ba256c6505692a8d055",
+      "category": "pass_base_fail_plus",
+      "megb_outcome": "PASS_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/0",
+      "upstream_outcome": "PASS_BASE_FAIL_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he55-hardcoded",
+      "candidate_source_sha256": "71ba38bf6a78f521d8f471e1b647c118bd64c337515705fb617711644839ff29",
+      "category": "hardcoded",
+      "megb_outcome": "FAIL_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/55",
+      "upstream_outcome": "FAIL_BASE_FAIL_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he0-boundary-index-error",
+      "candidate_source_sha256": "9defc49bf1df44d0211b187dbfbfbcf38a3ff563aa94f855788a34f72d4b984d",
+      "category": "boundary_condition_failure",
+      "megb_outcome": "FAIL_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/0",
+      "upstream_outcome": "FAIL_BASE_FAIL_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he0-type-handling-str-bool",
+      "candidate_source_sha256": "9225a4fb94f52ed450ce61f8c38f30c6044adde7bd57f984c8bf800b33a68a52",
+      "category": "type_handling_failure",
+      "megb_outcome": "FAIL_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/0",
+      "upstream_outcome": "FAIL_BASE_FAIL_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he0-numerical-tolerance-fudge",
+      "candidate_source_sha256": "287fcc042ec34eeec8efd767477687e78eeee8b6cbff88536e421567184287e7",
+      "category": "numerical_tolerance_failure",
+      "megb_outcome": "PASS_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/0",
+      "upstream_outcome": "PASS_BASE_FAIL_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he0-mutation-sensitive-inplace-sort",
+      "candidate_source_sha256": "c981f2a526e608df5f24579c05d5b8767a49de359c23043602ce94fcb15ea753",
+      "category": "mutation_sensitive_failure",
+      "megb_outcome": "PASS_BASE_PASS_PLUS",
+      "task_id": "HumanEval/0",
+      "upstream_outcome": "PASS_BASE_PASS_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he55-stateful-call-counter",
+      "candidate_source_sha256": "9572a099994633cab99f5378da002409574af9c2f89d2af0323566b4d0a8bb7c",
+      "category": "stateful_candidate",
+      "megb_outcome": "PASS_BASE_PASS_PLUS",
+      "task_id": "HumanEval/55",
+      "upstream_outcome": "PASS_BASE_PASS_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he55-resource-exhausting-infinite-loop",
+      "candidate_source_sha256": "3b9861b2a2c6d71e8e167f26eb7637376cd23f327e88e9a21cd4f2f26ed91f1b",
+      "category": "resource_exhausting_time",
+      "megb_outcome": "FAIL_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/55",
+      "upstream_outcome": "FAIL_BASE_FAIL_PLUS"
+    },
+    {
+      "agree": true,
+      "candidate_id": "he55-resource-exhausting-memory",
+      "candidate_source_sha256": "205f2e29c689a5c3415b3962bbf4b4f504f64e8b5fd45561bfc9412fffd7ecc1",
+      "category": "resource_exhausting_memory",
+      "megb_outcome": "FAIL_BASE_FAIL_PLUS",
+      "task_id": "HumanEval/55",
+      "upstream_outcome": "FAIL_BASE_FAIL_PLUS"
+    }
+  ],
+  "generated_at": "2026-08-01T14:11:09.701379+00:00",
+  "manifest_kind": "parity_report_redacted",
+  "parity_corpus_version": "parity-corpus-v1",
+  "source_artifact_checksum": "614555848e0c904080b1790efd32625ed012346166b2a8ad256a4d711a17c4ee"
+}

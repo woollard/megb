@@ -3,9 +3,9 @@
 ## Status
 
 Adopted (MEGB-03B artifact-finalization) and applied (MEGB-03C oracle
-construction). Default policy for all subsequent MEGB-03 subtasks that
-produce privileged/oracle artifacts, not only MEGB-03B/03C, per explicit
-authorization.
+construction, MEGB-03D parity/supplementary validation). Default policy for
+all subsequent MEGB-03 subtasks that produce privileged/oracle artifacts,
+not only MEGB-03B/03C/03D, per explicit authorization.
 
 ## Rule
 
@@ -178,10 +178,69 @@ artifacts must be copied to separate, access-controlled backup storage
 before MEGB-03D+ begins consuming them. No external upload is performed in
 MEGB-03C; the backup mechanism itself remains out of scope.
 
+## MEGB-03D: the parity artifact
+
+MEGB-03D applies the same policy to its upstream-vs-MEGB classification
+comparison on the frozen parity corpus.
+
+| Artifact | Committed / Privileged | Content |
+|---|---|---|
+| `artifacts/reference/parity/parity_report_redacted.json` | Committed — redacted | Per candidate: `candidate_id`, `task_id`, `category`, `candidate_source_sha256`, `upstream_outcome`, `megb_outcome`, `agree` (bool), plus `candidate_count`/`agreement_count` aggregates. No free-text mismatch detail, no per-side pass/fail counts. |
+| `artifacts/reference/parity/parity.lock.json` | Committed — this policy's anchor | Identity/checksum/provenance only, mirroring `oracle.lock.json`'s shape. |
+| `artifacts/privileged/reference/parity/parity_results.json` | Privileged | The full `ParityResult` list (per-side detail strings, e.g. "6/999 mismatched") plus the `EnvironmentRecord` (pinned versions/APIs). |
+
+Unlike MEGB-03B/03C, the actual candidate *source code* here is not a
+byte-payload concern — it's OUR OWN hand-authored test corpus, already
+fully visible as committed Python source in `src/reference/parity_corpus.py`,
+not model/optimizer output or S\* evidence. What the privileged/redacted
+split protects instead is the more granular per-side mismatch detail (which
+could hint at exact input/output behavior beyond a bare pass/fail label) —
+kept privileged per requirement 5's "avoid exposing hidden expected outputs
+in public reports."
+
+`EnvironmentRecord` (requirement 11) records the pinned `evalplus`/
+`human-eval`/Python/NumPy versions, the specific EvalPlus internal APIs this
+module depends on (`evalplus.eval.untrusted_check`, `evalplus.eval.is_floats`,
+`evalplus.eval._special_oracle._poly`, `evalplus.gen.util.trusted_exec`,
+...), the MEGB-02 backend ID, and the runner image digest actually used —
+and, being nested inside the hashed artifact, any drift in these values
+changes the artifact checksum, so `parity_cli.py verify` already refuses a
+stale environment via the ordinary checksum-mismatch path (no separate
+mechanism needed).
+
+Build/verify:
+
+```
+python -m src.reference.parity_cli build [--force]
+python -m src.reference.parity_cli verify
+```
+
+`build` refuses to freeze anything (writes neither the redacted report nor
+the privileged artifact nor the lock) if any candidate shows an unresolved
+upstream/MEGB classification disagreement — printing only candidate
+id/task/category/outcome-label detail, never expected-output content.
+
+**Environment note:** at least one validation host used for this subtask
+has `evalplus.eval.reliability_guard`'s memory-limit call
+(`resource.setrlimit(RLIMIT_AS, ...)`) fail unconditionally (a macOS +
+CPython 3.14 incompatibility, confirmed independent of the requested
+limit). `src.reference.parity` works around this the same documented way
+EvalPlus itself supports (`EVALPLUS_MAX_MEMORY_BYTES=-1`), scoped to the
+call and restored afterward — see that module's docstring. The one
+memory-exhausting parity candidate is deliberately sized (~2 GB) to be safe
+to run unprotected on an 8 GB+ host rather than relying on this guard being
+functional.
+
+## Backup requirement (MEGB-03D)
+
+Same requirement, same scope note: the one privileged parity artifact must
+be copied to separate, access-controlled backup storage before MEGB-03E+
+begins consuming it. No external upload performed here.
+
 ## Default policy going forward
 
 This is the default handling for **all** MEGB-03 subtasks that produce
-privileged or oracle artifacts, not a one-off for MEGB-03B or MEGB-03C.
+privileged or oracle artifacts, not a one-off for MEGB-03B, 03C, or 03D.
 Any later subtask producing its own privileged artifacts should follow the
 same pattern: bytes live under `artifacts/privileged/...` and stay out of
 git; a committed `*.lock.json` anchors their identity; a `build`/`verify`

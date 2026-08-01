@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted; MEGB-03D authorized and in progress)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted; MEGB-03D executed, pending your acceptance)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -812,7 +812,7 @@ Produce the standard checkpoint report and stop. MEGB-03D requires explicit auth
 
 ### Status
 
-**Status:** Authorized and in progress. See the "Approved Execution Amendment (MEGB-03D)" below for the authorized construction rules; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule.
+**Status:** Executed, pending your acceptance. See the "Approved Execution Amendment (MEGB-03D)" below for the authorized construction rules; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule.
 
 ### Approved Execution Amendment (MEGB-03D)
 
@@ -899,12 +899,30 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 
 ### Completion Record
 
-- Status: Not started
-- Commit: —
-- Completed: —
-- Tests: —
-- Deviations: —
-- Handoff: —
+- Status: Executed per the "Approved Execution Amendment (MEGB-03D)" above (pending your acceptance)
+- Commit: recorded in the follow-up entry immediately below this one (commit-hash record pattern, matching prior MEGB-03 subtasks)
+- Completed: 2026-08-01
+- Tests: `pytest tests/test_parity_corpus.py tests/test_parity.py tests/test_parity_lock.py tests/test_supplementary_oracle_validation.py -v` — 46/46 passed offline/integration (17 corpus-structure + 10 offline classification + 9 lock/verify + 8 supplementary-validation + 2 HumanEval/39 non-Docker); 3 Docker-marked tests (full 11-candidate corpus agreement, HumanEval/39 MEGB-side agreement) run and passed against the real corpus via `megb-runner:local`. Full offline suite 226/226 passed. mypy clean (56 files across `src/`+`tests/`). pylint 10.00/10 for `src/`+`tests/` (the one pre-existing, out-of-scope duplicate-code finding between two already-accepted MEGB-03B files remains unchanged, per earlier subtasks' notes).
+- Deviations:
+  1. **A genuine macOS/Python-3.14 EvalPlus incompatibility, found and safely worked around**: `evalplus.eval.reliability_guard`'s memory-limit call (`resource.setrlimit(RLIMIT_AS, ...)`) fails unconditionally on this validation host (confirmed independent of the requested limit — even setting a trivially small value fails identically), which without a fix would have crashed every single upstream classification. Worked around via EvalPlus's own documented escape hatch (`EVALPLUS_MAX_MEMORY_BYTES=-1`), scoped to exactly the upstream-classification call via a context manager that restores the prior environment afterward (`src.reference.parity._disabled_upstream_memory_guard`) — never left set process-wide. Because this removes upstream's own memory guard on this host, the corpus's one memory-exhausting candidate was deliberately sized (~2 GB, confirmed safe via direct experimentation) to be safe to run unprotected on an 8 GB+ host rather than depend on that guard being functional; it still reliably exceeds MEGB-02's real 256 MB container memory limit.
+  2. **Local Docker tag-index drift, not a code issue**: this host's Docker Desktop intermittently drops the `megb-runner:local` name→ID tag reference (`docker inspect` reports "no such object" even though `docker images`/`docker image ls` still list it) after periods of inactivity. Recovered each time via `docker tag <id> megb-runner:local` (same image, same name — a daemon-local refresh, not a rebuild or any change to MEGB-02's pinned image). Noted here since it may recur for future MEGB-03 subtasks reusing the same Docker backend.
+  3. **Empirical sample-index discovery, not an assumption**: the `PASS_BASE_FAIL_PLUS` and `numerical-tolerance` candidates' actual divergent `plus_input` cases were located by direct execution against the real corpus (indices 11/45/100/105/200/357 and 823 respectively) rather than guessed, and recorded on the corpus entries via `focus_plus_indices` so a fixed-size default sample can never silently miss an already-observed real edge case.
+  4. **Resource-exhausting candidates get a smaller plus-sample size** (3 instead of the default 30) purely for runtime — each invocation either exhausts its full wall-clock timeout or gets OOM-killed, so a larger sample would multiply runtime for the same coverage. This does not weaken what those two candidates test (timeout/OOM classification, not per-case output diversity).
+- Handoff:
+  - Library: `src/reference/parity_corpus.py` (frozen 11-candidate `PARITY_CORPUS` + 2-candidate `HUMANEVAL_39_VALIDATION_CORPUS`, `check_corpus_covers_required_categories`); `src/reference/parity.py` (`classify_upstream`/`classify_megb`/`compare_classifications`/`run_parity_corpus`, the `_disabled_upstream_memory_guard` environment workaround); `src/reference/parity_lock.py` (`ParityArtifact`/`EnvironmentRecord`, `write_privileged_parity_artifact`, `verify_parity_against_lock`, `redact_parity_artifact`); `src/reference/parity_cli.py` (`build`/`verify` CLI, refuses to freeze on any classification disagreement); `src/reference/supplementary_oracle_validation.py` (independent HumanEval/6/55/63 validation: stack-based `parse_nested_parens`, memoized-recursive `fib`/`fibfib`, plus metamorphic/recurrence checks).
+  - Committed artifacts: `artifacts/reference/parity/{parity_report_redacted.json,parity.lock.json}`.
+  - Privileged (gitignored, not in git) artifact: `artifacts/privileged/reference/parity/parity_results.json` — present on disk, verified via `python -m src.reference.parity_cli verify` (PASS).
+  - **Acceptance evidence (all satisfied):**
+    - Frozen parity-corpus checksum: `logical_sha256=614555848e0c904080b1790efd32625ed012346166b2a8ad256a4d711a17c4ee` (`parity-corpus-v1`), reproduced identically by `verify`.
+    - Zero unexplained upstream/MEGB classification mismatches: 11/11 candidates agree (`agreement_count=11`, `candidate_count=11`).
+    - At least one validated `PASS_BASE_FAIL_PLUS` example: **two** — `he0-pass-base-fail-plus` (task `HumanEval/0`, off-by-one `<=` vs `<`, source `sha256:516a9a3c...`) and `he0-numerical-tolerance-fudge` (same task, `threshold*0.999` fudge, source `sha256:287fcc04...`) — both agree between upstream and MEGB.
+    - Complete supplementary-oracle validation for tasks 6, 55, and 63: HumanEval/6 — 218/218 independent-implementation matches, 20/20 metamorphic checks; HumanEval/55 — 157/157 matches, 157/157 recurrence checks; HumanEval/63 — 137/137 matches, 137/137 recurrence checks. All three `all_valid=True`.
+    - Exhaustive HumanEval/39 validation: both `HUMANEVAL_39_VALIDATION_CORPUS` candidates (corrected canonical, deliberately-wrong hardcoded) run against the full 12-case domain (10 base + 2 plus, never subsampled) via both upstream and MEGB-02, agreeing on both (`PASS_BASE_PASS_PLUS` / `FAIL_BASE_FAIL_PLUS`).
+    - No privileged leakage: `parity_report_redacted.json` confirmed to contain no `mismatch_detail`, no per-side `detail` strings, no candidate source code, no expected/actual output values — classifications, agreement booleans, source hashes, and aggregate counts only.
+    - Deterministic rerun: `python -m src.reference.parity_cli verify` regenerated the full corpus fresh and matched the committed lock exactly (`logical_checksum`, `size`, `on_disk_checksum`, `on_disk_bytes_match_rebuild`, `dataset_checksum` all `True`).
+    - Full regression/mypy/pylint: see Tests above.
+  - Three concepts kept distinct per requirement 6: upstream full-suite HumanEval+ compatibility (this subtask's parity corpus, `base`/`plus` outcomes) is never conflated with MEGB-03B's primary 163-task reference-only experimental partition, nor with the 164-task reference-validation corpus (HumanEval/39's separate exhaustive-domain section here) — none of MEGB-03D's classifications feed into or are labeled as "held out" experimental performance.
+  - Policy: `docs/measurement/privileged-artifact-policy.md` extended with the concrete MEGB-03D parity section (committed/privileged split rationale, environment-record contents, build/verify CLI, the macOS/Python-3.14 `reliability_guard` environment note, backup requirement).
 
 ---
 

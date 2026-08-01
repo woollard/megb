@@ -1,0 +1,24 @@
+{
+  "entries": [
+    {
+      "agreement_count": 11,
+      "artifact_id": "parity_results",
+      "candidate_count": 11,
+      "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+      "generating_code_dirty": true,
+      "generating_code_revision": "2396100ed2d6420f84673b9ca55cddc4fc20c65a",
+      "generation_command": "python -m src.reference.parity_cli build",
+      "logical_sha256": "614555848e0c904080b1790efd32625ed012346166b2a8ad256a4d711a17c4ee",
+      "parity_corpus_version": "parity-corpus-v1",
+      "privileged_path": "artifacts/privileged/reference/parity/parity_results.json",
+      "schema_version": "parity-lock-v1",
+      "size_bytes": 11301,
+      "trusted_consumers": [
+        "MEGB-03E",
+        "MEGB-03F"
+      ]
+    }
+  ],
+  "generated_at": "2026-08-01T14:11:09.811556+00:00",
+  "lock_schema_version": "parity-lock-v1"
+}
