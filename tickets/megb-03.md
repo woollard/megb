@@ -930,7 +930,7 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 
 ### Status
 
-**Status:** Not started
+**Status:** Authorized and in progress, per the original "Requirements" below — no execution amendment was needed; the text is self-contained and does not conflict with any accepted MEGB-03B/03C/03D semantics.
 
 ### Objective
 
