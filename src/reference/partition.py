@@ -26,7 +26,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from src.dataset import (
     DatasetProvenance,
@@ -189,17 +189,25 @@ class AugmentationReproducibilityError(ValueError):
     """Raised when regenerated evidence doesn't match MEGB-03A.1's frozen checksums."""
 
 
+def _original_eligible_case_args(task: PrivilegedTaskView) -> dict[str, tuple[Any, ...]]:
+    """Deduplicated, EvalPlus-sourced case_id -> args map for a task with no augmentation."""
+    seen: dict[str, tuple[Any, ...]] = {}
+    for args in list(task.base_input) + list(task.plus_input):
+        seen.setdefault(stable_case_id(task.task_id, args), args)
+    return seen
+
+
 def _original_eligible_cases(task: PrivilegedTaskView) -> list[CaseWithProvenance]:
     """Deduplicated, EvalPlus-sourced cases for a task with no augmentation."""
-    seen: dict[str, None] = {}
-    for args in list(task.base_input) + list(task.plus_input):
-        seen[stable_case_id(task.task_id, args)] = None
-    return [CaseWithProvenance(case_id=cid, provenance=PROVENANCE_ORIGINAL) for cid in seen]
+    return [
+        CaseWithProvenance(case_id=cid, provenance=PROVENANCE_ORIGINAL)
+        for cid in _original_eligible_case_args(task)
+    ]
 
 
-def _augmented_eligible_cases(
+def _augmented_eligible_cases_and_args(
     task_id: str, privileged: PrivilegedTaskView, prompt: str
-) -> tuple[list[CaseWithProvenance], TaskAugmentationResult]:
+) -> tuple[list[CaseWithProvenance], TaskAugmentationResult, dict[str, tuple[Any, ...]]]:
     """Regenerate an augmented task's combined case set, deterministically.
 
     Reruns MEGB-03A.1's exact frozen procedure (task_configs()) rather than
@@ -222,6 +230,17 @@ def _augmented_eligible_cases(
         CaseWithProvenance(case_id=cid, provenance=PROVENANCE_ORIGINAL)
         for cid in result.original_case_ids
     ] + [CaseWithProvenance(case_id=c.case_id, provenance=c.provenance) for c in result.accepted]
+
+    args_by_id = dict(_original_eligible_case_args(privileged))
+    for generated in result.accepted:
+        args_by_id[generated.case_id] = generated.args
+    return cases, result, args_by_id
+
+
+def _augmented_eligible_cases(
+    task_id: str, privileged: PrivilegedTaskView, prompt: str
+) -> tuple[list[CaseWithProvenance], TaskAugmentationResult]:
+    cases, result, _args_by_id = _augmented_eligible_cases_and_args(task_id, privileged, prompt)
     return cases, result
 
 
@@ -246,6 +265,45 @@ def verify_augmentation_reproducibility(
                 )
 
 
+def gather_eligible_cases_and_args(
+    privileged_by_id: Mapping[str, PrivilegedTaskView], public_by_id: Mapping[str, str]
+) -> tuple[
+    dict[str, list[CaseWithProvenance]],
+    dict[str, TaskAugmentationResult],
+    dict[str, dict[str, tuple[Any, ...]]],
+]:
+    """Gather every task's eligible case set (all 164 tasks), including each case's args.
+
+    Returns (cases_by_task, augmentation_results_for_the_three_augmented_tasks,
+    args_by_task). ``args_by_task[task_id][case_id]`` is the actual argument
+    tuple behind a case — needed by MEGB-03C to execute the canonical
+    solution and construct oracle records; partition assignment itself
+    (this module) only ever needs the case_id.
+    """
+    augmented_task_ids = set(task_configs().keys())
+    cases_by_task: dict[str, list[CaseWithProvenance]] = {}
+    augmentation_results: dict[str, TaskAugmentationResult] = {}
+    args_by_task: dict[str, dict[str, tuple[Any, ...]]] = {}
+
+    for task_id, privileged in privileged_by_id.items():
+        if task_id in augmented_task_ids:
+            cases, result, args_by_id = _augmented_eligible_cases_and_args(
+                task_id, privileged, public_by_id[task_id]
+            )
+            cases_by_task[task_id] = cases
+            augmentation_results[task_id] = result
+            args_by_task[task_id] = args_by_id
+        else:
+            args_by_id = _original_eligible_case_args(privileged)
+            cases_by_task[task_id] = [
+                CaseWithProvenance(case_id=cid, provenance=PROVENANCE_ORIGINAL)
+                for cid in args_by_id
+            ]
+            args_by_task[task_id] = args_by_id
+
+    return cases_by_task, augmentation_results, args_by_task
+
+
 def gather_eligible_cases(
     privileged_by_id: Mapping[str, PrivilegedTaskView], public_by_id: Mapping[str, str]
 ) -> tuple[dict[str, list[CaseWithProvenance]], dict[str, TaskAugmentationResult]]:
@@ -253,20 +311,9 @@ def gather_eligible_cases(
 
     Returns (cases_by_task, augmentation_results_for_the_three_augmented_tasks).
     """
-    augmented_task_ids = set(task_configs().keys())
-    cases_by_task: dict[str, list[CaseWithProvenance]] = {}
-    augmentation_results: dict[str, TaskAugmentationResult] = {}
-
-    for task_id, privileged in privileged_by_id.items():
-        if task_id in augmented_task_ids:
-            cases, result = _augmented_eligible_cases(
-                task_id, privileged, public_by_id[task_id]
-            )
-            cases_by_task[task_id] = cases
-            augmentation_results[task_id] = result
-        else:
-            cases_by_task[task_id] = _original_eligible_cases(privileged)
-
+    cases_by_task, augmentation_results, _args_by_task = gather_eligible_cases_and_args(
+        privileged_by_id, public_by_id
+    )
     return cases_by_task, augmentation_results
 
 

@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C authorized and in progress)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C executed, pending your acceptance)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -679,7 +679,7 @@ Produce the standard checkpoint report and stop. MEGB-03C requires explicit auth
 
 ### Status
 
-**Status:** Authorized and in progress. See the "Approved Execution Amendment (MEGB-03C)" below for the authorized construction rules; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule.
+**Status:** Executed, pending your acceptance. See the "Approved Execution Amendment (MEGB-03C)" below for the authorized construction rules; the "Requirements" text beneath it is preserved as historical/original context per this ticket's amendment-precedence rule.
 
 ### Approved Execution Amendment (MEGB-03C)
 
@@ -779,12 +779,28 @@ Produce the standard checkpoint report and stop. MEGB-03D requires explicit auth
 
 ### Completion Record
 
-- Status: Not started
-- Commit: —
-- Completed: —
-- Tests: —
-- Deviations: —
-- Handoff: —
+- Status: Executed per the "Approved Execution Amendment (MEGB-03C)" above (pending your acceptance)
+- Commit: recorded in the follow-up entry immediately below this one (commit-hash record pattern, matching MEGB-03A.1/03B)
+- Completed: 2026-08-01
+- Tests: `pytest tests/test_reference_oracle.py tests/test_reference_oracle_lock.py -v` — 30/30 passed (21 oracle-construction tests including 1 integration smoke test against the real corpus; 9 oracle-lock tests). Full offline suite 175/175 passed. Full integration-marked (non-Docker) suite 9/9 passed. mypy clean (47 files across `src/` + `tests/`). pylint 10.00/10 for `src/` + `tests/` (one pre-existing, out-of-scope duplicate-code finding between `src/reference/partition_cli.py` and `tests/test_reference_partition_lock.py` — both already-accepted MEGB-03B code, predating this subtask; flagged as a background task rather than fixed here).
+- Deviations:
+  1. **A third determinism-class bug, caught before it reached the artifact**: some canonical solutions (HumanEval/83, HumanEval/139) produce legitimate integers over a million digits on their largest `plus_input` cases. CPython 3.11+'s integer-string-conversion-length guard rejects `json.dumps`/`str()` on such integers by default (a DoS hardening measure, irrelevant here since these are pinned-benchmark values, not attacker input). Fixed via `sys.set_int_max_str_digits(0)` in `oracle.py`, documented inline.
+  2. **Module split for `duplicate-code`, not just line-count**: `oracle_lock.py` and `oracle_cli.py` deliberately mirror `partition_lock.py`/`partition_cli.py`'s write/verify/CLI patterns (same lesson-learned stabilized-payload fix, same refuse-silent-overwrite/on-disk-vs-rebuild verification shape). Consolidating into one shared base was not authorized in this subtask ("execute only MEGB-03C") since `partition_lock.py`/`partition_cli.py` are already MEGB-03B-accepted; the resulting `pylint` `duplicate-code` findings are suppressed with documented, file-scoped disables rather than silently ignored, and consolidation is noted as sensible future cleanup.
+  3. **Two severities for oracle-generation failure, not one**: an original-provenance (upstream EvalPlus) case that fails oracle generation is recorded as an explicit `ORACLE_STATUS_GENERATION_FAILED` record and the build continues (matching the original ticket's acceptance criterion "one valid oracle record or an explicit oracle-generation failure"); a supplementary-provenance (MEGB-03A.1) case that fails aborts the whole build with `AmbiguousSupplementaryOracleError` and writes nothing (matching the amendment's stricter requirement 7). On the real corpus, zero cases of either kind failed — 124,493/124,493 succeeded.
+  4. **Comparison semantics reused, not reimplemented**: `compare_outputs`/`comparison_profile_for_task` call EvalPlus's own `is_floats`/`_poly` (from the pinned `evalplus==0.3.1`) directly rather than re-deriving the tolerance/special-oracle math independently, per requirement 6 ("never replace EvalPlus comparison behavior with universal Python equality"). HumanEval/32 (`find_zero`) is the only HumanEval-specific special oracle in EvalPlus's comparison code; MBPP's special oracles don't apply since MEGB only evaluates HumanEval.
+  5. **`partition.py` extended, not modified in effect**: added `gather_eligible_cases_and_args` (and args-preserving variants of the existing private case-reconstruction helpers) so oracle construction can recover each case's actual argument tuple; the existing `gather_eligible_cases` is now a thin wrapper delegating to the new function, with identical behavior — confirmed by the full pre-existing MEGB-03B test suite (26 tests) still passing unchanged.
+- Handoff:
+  - Library: `src/reference/oracle.py` (`ComparisonProfile`/`compare_outputs`/`comparison_profile_for_task`, `OracleRecord`/`generate_oracle_record`, `OracleArtifact`/`build_oracle_artifacts`, `ReferenceValidationCompositeManifest`, `AmbiguousSupplementaryOracleError`); `src/reference/oracle_lock.py` (`OracleLockEntry`/`OracleLockFile`, `write_privileged_oracle_artifacts`, `verify_oracle_against_lock`, `FrozenArtifactConflictError`, `ManifestKindMismatchError`); `src/reference/oracle_cli.py` (`build`/`verify` CLI, with the mandatory MEGB-03B partition-lock pre-check).
+  - Committed artifacts: `artifacts/reference/oracle/{reference_validation_composite_manifest.json,oracle.lock.json}`.
+  - Privileged (gitignored, not in git) artifacts: `artifacts/privileged/reference/oracle/{development_oracle.json,reference_only_oracle.json,reference_validation_only_oracle.json}` — present on disk, verified via `python -m src.reference.oracle_cli verify` (PASS on all three).
+  - Final lock checksums (from `oracle.lock.json`, `lock_schema_version: oracle-lock-v1`):
+    - `development_oracle`: `logical_sha256=80662e4176be9bed96bb2de74b23cad59815c3485ca0cc736eb972cb7ae2514b`, `size_bytes=463936464`, 163 tasks, 6,520 cases, `trusted_consumers=["MEGB-04-trusted-side"]`.
+    - `reference_only_oracle`: `logical_sha256=aca19c40e464ba1ba9c884d4fa5a2439726bea563c03c832a6d939cbd483123c`, `size_bytes=723830836`, 163 tasks, 117,961 cases, `trusted_consumers=["S*"]`.
+    - `reference_validation_only_oracle`: `logical_sha256=be3d0db9c5fc3457bb8ce34a5b3935d7ca832065cb953d3ceee7a1c75f639933`, `size_bytes=5871`, 1 task (`HumanEval/39`), 12 cases, `trusted_consumers=["MEGB-03D"]`.
+    - Composite manifest checksum: `565a263f179d4870ea5c4f4ab6f4929ce2c8c64174cc4fef645251826b4f8e29` (164 tasks indexed; zero reference-only or `HumanEval/39` case IDs committed, per the same boundary MEGB-03B established for development-pool-only committed IDs).
+  - Total real-corpus coverage: 6,520 + 117,961 + 12 = 124,493 cases, matching MEGB-03B's frozen validation-manifest total exactly; zero oracle-generation failures.
+  - Policy: `docs/measurement/privileged-artifact-policy.md` extended with the concrete MEGB-03C oracle section (access model / authorized-consumer table, lock-field extensions, resource note on the ~1.2 GB combined privileged size, backup requirement).
+  - Flagged, not fixed here: a pre-existing `pylint` `duplicate-code` finding between two already-accepted MEGB-03B files (`src/reference/partition_cli.py` / `tests/test_reference_partition_lock.py`), spun off as a background task rather than touched under this subtask's "execute only MEGB-03C" scope.
 
 ---
 

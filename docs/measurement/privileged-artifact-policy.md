@@ -2,9 +2,10 @@
 
 ## Status
 
-Adopted (MEGB-03B artifact-finalization). Default policy for all subsequent
-MEGB-03 subtasks that produce privileged/oracle artifacts (MEGB-03C onward),
-not only MEGB-03B, per explicit authorization.
+Adopted (MEGB-03B artifact-finalization) and applied (MEGB-03C oracle
+construction). Default policy for all subsequent MEGB-03 subtasks that
+produce privileged/oracle artifacts, not only MEGB-03B/03C, per explicit
+authorization.
 
 ## Rule
 
@@ -123,12 +124,69 @@ here; the specific backup mechanism (destination, access control, rotation)
 is a decision for whoever operates that storage and is out of scope for
 MEGB-03B.
 
+## MEGB-03C: the oracle artifacts
+
+MEGB-03C applies this same policy to the trusted expected-output oracle,
+extended with an access-model requirement MEGB-03B didn't need: three
+**physically separated** privileged files, each authorized for a different,
+disjoint consumer.
+
+| Artifact | Committed / Privileged | Authorized consumer |
+|---|---|---|
+| `artifacts/reference/oracle/reference_validation_composite_manifest.json` | Committed — index only (case counts + development-pool case IDs; never reference-only or `HumanEval/39` case IDs, never expected-output bytes) | The 164-task validation workflow (MEGB-03D), to know which artifact to open |
+| `artifacts/reference/oracle/oracle.lock.json` | Committed — this policy's anchor | Anyone verifying the oracle's identity |
+| `artifacts/privileged/reference/oracle/development_oracle.json` | Privileged — 163 tasks × 40 development-pool cases | MEGB-04's trusted side only |
+| `artifacts/privileged/reference/oracle/reference_only_oracle.json` | Privileged — 163 tasks × every reference-only case | S\* only |
+| `artifacts/privileged/reference/oracle/reference_validation_only_oracle.json` | Privileged — `HumanEval/39`'s complete 12-case domain | MEGB-03D only |
+
+Candidate code and candidate-generation/selection runtimes are authorized
+for **none** of the three privileged files — this is enforced by omission
+(no runtime is ever listed in any artifact's `trusted_consumers`), not by a
+separate denylist. `oracle_lock.py:OracleLockEntry.trusted_consumers` records
+each artifact's authorized consumer for exactly this reason (requirement 10
+of MEGB-03C's execution amendment); `tests/test_reference_oracle_lock.py`
+asserts the three consumer sets are mutually disjoint.
+
+The oracle lock (`oracle-lock-v1`) extends `partition.lock.json`'s fields
+with oracle-specific identity: `comparison_profile_version`,
+`canonical_solution_hashes` (per task, so a canonical-solution edit is
+detectable independent of a dataset-version bump), and `partition_checksum`
+(binding the oracle to the exact MEGB-03B manifest it was built from).
+Build/verify:
+
+```
+python -m src.reference.oracle_cli build [--force]
+python -m src.reference.oracle_cli verify
+```
+
+Both subcommands first run the MEGB-03B partition-lock verification
+in-process and refuse to continue if it fails — an oracle built against a
+partition that has silently drifted would be keyed to case sets the
+committed/privileged partition manifests no longer describe.
+
+**Resource note:** unlike MEGB-03B's manifests, the two experimental-pool
+oracle files are large (development ≈ 460 MB, reference-only ≈ 720 MB on
+the real corpus) — legitimate given a handful of HumanEval tasks (e.g.
+HumanEval/83, HumanEval/139) have canonical solutions whose output on their
+largest `plus_input` cases is an integer with over a million digits. Both
+stay fully outside git via the same `artifacts/privileged/` exclusion.
+
+## Backup requirement (MEGB-03C)
+
+Per the same backup requirement as MEGB-03B, all three privileged oracle
+artifacts must be copied to separate, access-controlled backup storage
+before MEGB-03D+ begins consuming them. No external upload is performed in
+MEGB-03C; the backup mechanism itself remains out of scope.
+
 ## Default policy going forward
 
 This is the default handling for **all** MEGB-03 subtasks that produce
-privileged or oracle artifacts, not a one-off for MEGB-03B. In particular,
-MEGB-03C's expected-output/oracle construction must follow the same pattern:
-oracle bytes live under `artifacts/privileged/...` and stay out of git; a
-committed `*.lock.json` anchors their identity; a `build`/`verify` CLI mode
-regenerates and checks them without printing privileged content; and any
-existing frozen artifact is protected from silent overwrite.
+privileged or oracle artifacts, not a one-off for MEGB-03B or MEGB-03C.
+Any later subtask producing its own privileged artifacts should follow the
+same pattern: bytes live under `artifacts/privileged/...` and stay out of
+git; a committed `*.lock.json` anchors their identity; a `build`/`verify`
+CLI mode regenerates and checks them without printing privileged content;
+any existing frozen artifact is protected from silent overwrite; and, where
+different consumers are authorized for different subsets of the data (as
+with MEGB-03C's three oracle files), each subset is physically separated
+into its own file rather than access-controlled by convention alone.
