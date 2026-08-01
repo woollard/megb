@@ -22,6 +22,74 @@ primitives provide, and does not defend against a kernel or `runc`/`containerd`
 0-day that breaks container isolation itself. See "Known limitations"
 below for the complete list.
 
+## MEGB-03D upstream-comparison path: a separate, non-sandboxed execution path
+
+MEGB-03D (`src/reference/parity.py`) needs to run the pinned upstream
+EvalPlus implementation itself — `evalplus.eval.untrusted_check` — to
+compare its classification against MEGB-02's. **This upstream-comparison
+path is not part of the sandbox this document describes, is not this
+sandbox weakened, and involves no untrusted or adversarial code:**
+
+* **What actually runs there.** `untrusted_check` executes candidates from
+  MEGB-03D's own fixed, hand-authored, version-controlled parity corpus
+  (`src/reference/parity_corpus.py`) — never optimizer output, never a
+  confirmatory experimental candidate, never anything from MEGB-05/06 (see
+  that ticket's requirement 7). This corpus is committed source, reviewed
+  the same way any other code in this repository is.
+* **Which guard is disabled, and how.** EvalPlus's own
+  `evalplus.eval.reliability_guard` sets a process memory limit via
+  `resource.setrlimit(resource.RLIMIT_AS, ...)`. On at least one validation
+  host used for MEGB-03D (macOS + CPython 3.14), that specific call fails
+  unconditionally — confirmed by calling `resource.setrlimit(RLIMIT_AS,
+  ...)` directly with several different limit values, all raising the same
+  `ValueError: current limit exceeds maximum limit` regardless of the
+  requested size; this is a platform/interpreter incompatibility, not a
+  sizing problem, and without a workaround it crashes every single upstream
+  classification before the candidate ever runs. `src.reference.parity`
+  works around it using EvalPlus's own documented, supported escape hatch:
+  setting the `EVALPLUS_MAX_MEMORY_BYTES` environment variable to `-1`,
+  which `evalplus.eval.query_maximum_memory_bytes` treats as "no limit" and
+  skips the `setrlimit` call entirely (see that function's own
+  `if maximum_memory_bytes == -1: return None` branch — this is EvalPlus's
+  own supported configuration path, not a patch to its source).
+* **Why this does not weaken MEGB-02's sandbox enforcement.** The disabled
+  guard is a process-level `RLIMIT_AS` call inside EvalPlus's own
+  `multiprocessing.Process`-isolated comparison utility — a completely
+  different code path, process, and enforcement mechanism from MEGB-02's
+  Docker container limits. MEGB-02's `memory_mb` limit is a **kernel-enforced
+  cgroup limit on the container itself** (`docker run --memory`), applied by
+  the Linux/Docker Desktop VM kernel independently of anything any Python
+  process does or doesn't call. Disabling EvalPlus's own in-process
+  `setrlimit` guard has no effect whatsoever on that cgroup limit: it isn't
+  the same mechanism, isn't in the same process, and MEGB-02's own
+  `docker_backend.py` never imports or depends on `evalplus.eval.reliability_guard`
+  in any way. The two are verified independently to still work as
+  intended — MEGB-03D's own resource-exhausting parity candidates
+  (`he55-resource-exhausting-memory`, `he55-resource-exhausting-infinite-loop`)
+  are confirmed, via real execution, to still be safely OOM-killed /
+  timed out inside MEGB-02's Docker containers with this guard disabled on
+  the upstream side.
+* **Scope of the workaround.** Confined to `src.reference.parity`'s own
+  upstream-classification calls via a context manager
+  (`_disabled_upstream_memory_guard`), which sets
+  `EVALPLUS_MAX_MEMORY_BYTES` immediately before calling `untrusted_check`/
+  `trusted_exec` and restores the environment variable to its exact prior
+  state (removed if it was previously absent, restored to its previous
+  value otherwise) via `try`/`finally` — even if the wrapped call raises.
+  It is never set for the duration of any MEGB-02 execution, never touches
+  `docker_backend.py`, and never persists past the single upstream call
+  that needs it. Proven by dedicated regression tests
+  (`tests/test_parity.py`, and the analogous pattern's own tests in
+  `tests/test_reference_oracle.py` for the sibling `unbounded_int_str_digits`
+  workaround) asserting the environment variable's before/after state is
+  identical, including when the wrapped call raises.
+* **Given this is genuinely a host/interpreter-specific quirk** (not
+  universal to all macOS or all Python 3.14 installs, and not reproduced on
+  every host), this workaround is scoped to remain narrowly applicable:
+  only the parity module's own upstream-classification calls, only for the
+  duration of each call, and only because the corpus it runs is fixed,
+  small, and fully trusted.
+
 ## Security boundary and threat model
 
 Every candidate invocation is untrusted, potentially adversarial code. The

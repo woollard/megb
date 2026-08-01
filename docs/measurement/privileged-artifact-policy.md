@@ -229,7 +229,11 @@ EvalPlus itself supports (`EVALPLUS_MAX_MEMORY_BYTES=-1`), scoped to the
 call and restored afterward — see that module's docstring. The one
 memory-exhausting parity candidate is deliberately sized (~2 GB) to be safe
 to run unprotected on an 8 GB+ host rather than relying on this guard being
-functional.
+functional. For the full security analysis of this workaround — which
+guard is disabled, why it does not weaken MEGB-02's own container-level
+enforcement, and confirmation that the prior process state is always
+restored — see
+[`docs/security/execution-sandbox.md`](../security/execution-sandbox.md#megb-03d-upstream-comparison-path-a-separate-non-sandboxed-execution-path).
 
 ## Backup requirement (MEGB-03D)
 
