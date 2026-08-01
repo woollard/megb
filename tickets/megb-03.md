@@ -2,7 +2,7 @@
 
 ## Epic Status
 
-**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted; MEGB-03D executed, pending your acceptance)  
+**Status:** In progress (MEGB-03A accepted; MEGB-03A.1 accepted, supplementary evidence accepted for partition eligibility only; MEGB-03B accepted; MEGB-03C accepted, including addendum commit `a883650`; MEGB-03D accepted; MEGB-03E authorized and in progress)  
 **Execution mode:** Sequential gated subtasks  
 **Subtasks:** MEGB-03A, MEGB-03A.1, MEGB-03B through MEGB-03I  
 **Dependencies:** MEGB-01 and MEGB-02, complete
@@ -209,7 +209,7 @@ After producing the report, stop. Do not begin the next subtask.
 - [x] MEGB-03A.1 — Resolve evidence-limited task eligibility
 - [x] MEGB-03B — Build and freeze the development/reference partition
 - [x] MEGB-03C — Construct the privileged oracle artifact
-- [ ] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
+- [x] MEGB-03D — Validate upstream EvalPlus parity and the validation corpus
 - [ ] MEGB-03E — Implement typed result models and scoring semantics
 - [ ] MEGB-03F — Implement the task-level reference evaluator
 - [ ] MEGB-03G — Implement aggregation, caching, redaction, and audit
@@ -899,8 +899,8 @@ Produce the standard checkpoint report and stop. MEGB-03E requires explicit auth
 
 ### Completion Record
 
-- Status: Executed per the "Approved Execution Amendment (MEGB-03D)" above (pending your acceptance)
-- Commit: 5d29992
+- Status: ACCEPTED (per the "Approved Execution Amendment (MEGB-03D)" above), including the pre-MEGB-03D MEGB-03C corrections in commit `a883650`
+- Commits: 5d29992, dd81002
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_parity_corpus.py tests/test_parity.py tests/test_parity_lock.py tests/test_supplementary_oracle_validation.py -v` — 46/46 passed offline/integration (17 corpus-structure + 10 offline classification + 9 lock/verify + 8 supplementary-validation + 2 HumanEval/39 non-Docker); 3 Docker-marked tests (full 11-candidate corpus agreement, HumanEval/39 MEGB-side agreement) run and passed against the real corpus via `megb-runner:local`. Full offline suite 226/226 passed. mypy clean (56 files across `src/`+`tests/`). pylint 10.00/10 for `src/`+`tests/` (the one pre-existing, out-of-scope duplicate-code finding between two already-accepted MEGB-03B files remains unchanged, per earlier subtasks' notes).
 - Deviations:
