@@ -780,7 +780,7 @@ Produce the standard checkpoint report and stop. MEGB-03D requires explicit auth
 ### Completion Record
 
 - Status: Executed per the "Approved Execution Amendment (MEGB-03C)" above (pending your acceptance)
-- Commit: recorded in the follow-up entry immediately below this one (commit-hash record pattern, matching MEGB-03A.1/03B)
+- Commit: cf25124
 - Completed: 2026-08-01
 - Tests: `pytest tests/test_reference_oracle.py tests/test_reference_oracle_lock.py -v` — 30/30 passed (21 oracle-construction tests including 1 integration smoke test against the real corpus; 9 oracle-lock tests). Full offline suite 175/175 passed. Full integration-marked (non-Docker) suite 9/9 passed. mypy clean (47 files across `src/` + `tests/`). pylint 10.00/10 for `src/` + `tests/` (one pre-existing, out-of-scope duplicate-code finding between `src/reference/partition_cli.py` and `tests/test_reference_partition_lock.py` — both already-accepted MEGB-03B code, predating this subtask; flagged as a background task rather than fixed here).
 - Deviations:
