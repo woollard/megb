@@ -50,7 +50,7 @@ from src.evaluators.schema import FailureCategory
 from src.reference.result_schema import (
     RESULT_SCHEMA_VERSION,
     CandidateSetEntry,
-    CandidateSetManifest,
+    ReferenceValidationCandidateSetManifest,
     FullSuiteDiagnostic,
     MeasurementStatus,
     ReferenceBenchmarkResult,
@@ -141,8 +141,10 @@ def candidate_set_entry_from_dict(data: Mapping[str, Any]) -> CandidateSetEntry:
     )
 
 
-def candidate_set_manifest_to_dict(manifest: CandidateSetManifest) -> dict[str, Any]:
-    """Full-fidelity serialization of a :class:`CandidateSetManifest`."""
+def candidate_set_manifest_to_dict(
+    manifest: ReferenceValidationCandidateSetManifest,
+) -> dict[str, Any]:
+    """Full-fidelity serialization of a :class:`ReferenceValidationCandidateSetManifest`."""
     return {
         "manifest_schema_version": manifest.manifest_schema_version,
         "algorithm_version": manifest.algorithm_version,
@@ -155,17 +157,19 @@ def candidate_set_manifest_to_dict(manifest: CandidateSetManifest) -> dict[str, 
     }
 
 
-def candidate_set_manifest_from_dict(data: Mapping[str, Any]) -> CandidateSetManifest:
+def candidate_set_manifest_from_dict(
+    data: Mapping[str, Any],
+) -> ReferenceValidationCandidateSetManifest:
     """Inverse of :func:`candidate_set_manifest_to_dict`.
 
-    Reconstructs through :class:`CandidateSetManifest`'s own constructor,
+    Reconstructs through :class:`ReferenceValidationCandidateSetManifest`'s own constructor,
     passing the stored ``manifest_checksum`` through as the "expected"
     value — the constructor always recomputes the checksum from the loaded
     entries and rejects a mismatch, so any tampering with the persisted
     payload (a reordered, duplicated, or hand-edited entry) is caught by
     the act of deserializing it, with no separate verify step needed.
     """
-    return CandidateSetManifest(
+    return ReferenceValidationCandidateSetManifest(
         manifest_schema_version=data["manifest_schema_version"],
         algorithm_version=data["algorithm_version"],
         task_manifest_id=data["task_manifest_id"],
@@ -236,7 +240,7 @@ def task_result_from_dict(data: Mapping[str, Any]) -> ReferenceTaskResult:
 
 def benchmark_result_to_dict(benchmark: ReferenceBenchmarkResult) -> dict[str, Any]:
     """Full-fidelity serialization of a :class:`ReferenceBenchmarkResult`,
-    including the full :class:`CandidateSetManifest`. Privileged: never
+    including the full :class:`ReferenceValidationCandidateSetManifest`. Privileged: never
     send this to a development-facing consumer."""
     return {
         "schema_version": RESULT_SCHEMA_VERSION,

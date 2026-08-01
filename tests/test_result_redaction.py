@@ -9,7 +9,7 @@ explicitly rather than silently misparsing.
 """
 
 # This file's fixture helpers necessarily mirror test_result_schema.py's own
-# (both build well-formed ReferenceTaskResult/CandidateSetManifest objects
+# (both build well-formed ReferenceTaskResult/ReferenceValidationCandidateSetManifest objects
 # from the same required fields); introducing a shared conftest fixture for
 # this isn't warranted in this narrowly scoped subtask.
 # pylint: disable=duplicate-code
@@ -36,14 +36,14 @@ from src.reference.result_redaction import (
     task_result_to_dict,
 )
 from src.reference.result_schema import (
-    CANDIDATE_SET_ALGORITHM_VERSION,
-    CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
+    REFERENCE_VALIDATION_CANDIDATE_SET_ALGORITHM_VERSION,
+    REFERENCE_VALIDATION_CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
     REQUIRED_TASK_COUNT,
     RESULT_SCHEMA_VERSION,
     CandidateSetEntry,
-    CandidateSetManifest,
+    ReferenceValidationCandidateSetManifest,
     FullSuiteDiagnostic,
-    InvalidCandidateSetManifestError,
+    InvalidReferenceValidationCandidateSetManifestError,
     MeasurementStatus,
     ReferenceBenchmarkResult,
     ReferenceOutcome,
@@ -125,7 +125,9 @@ def _minimal_pass_task_result() -> ReferenceTaskResult:
     )
 
 
-def _candidate_set_manifest_for(*results: ReferenceTaskResult) -> CandidateSetManifest:
+def _candidate_set_manifest_for(
+    *results: ReferenceTaskResult,
+) -> ReferenceValidationCandidateSetManifest:
     """A minimal candidate-set manifest binding exactly ``results``' own
     (task_id, candidate_id, candidate_sha256) plus filler entries for the
     remaining required tasks, so ``ReferenceBenchmarkResult`` construction
@@ -153,9 +155,9 @@ def _candidate_set_manifest_for(*results: ReferenceTaskResult) -> CandidateSetMa
             )
         )
     entries.sort(key=lambda entry: entry.task_id)
-    return CandidateSetManifest(
-        manifest_schema_version=CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
-        algorithm_version=CANDIDATE_SET_ALGORITHM_VERSION,
+    return ReferenceValidationCandidateSetManifest(
+        manifest_schema_version=REFERENCE_VALIDATION_CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
+        algorithm_version=REFERENCE_VALIDATION_CANDIDATE_SET_ALGORITHM_VERSION,
         task_manifest_id="reference-validation-composite-manifest",
         task_manifest_checksum=_SHA_MANIFEST,
         selection_provenance_sha256=_SHA_SELECTION_PROVENANCE,
@@ -205,7 +207,7 @@ def test_candidate_set_manifest_reload_detects_tampering() -> None:
     tampered_entry = dict(payload["entries"][0])
     tampered_entry["candidate_sha256"] = "9" * 64
     payload["entries"] = [tampered_entry] + list(payload["entries"][1:])
-    with pytest.raises(InvalidCandidateSetManifestError):
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
         candidate_set_manifest_from_dict(payload)
 
 

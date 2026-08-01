@@ -36,7 +36,7 @@ into: a shared :class:`ReferenceRunContext` (run/evaluator/dataset/
 partition/execution-profile identity, genuinely common across all 164
 tasks); a task-specific ``candidate_id``/``candidate_sha256`` directly on
 :class:`ReferenceTaskResult`; and a versioned, self-checksummed
-:class:`CandidateSetManifest` binding the frozen, ordered task-to-candidate
+:class:`ReferenceValidationCandidateSetManifest` binding the frozen, ordered task-to-candidate
 mapping for the whole benchmark, verified against every task result by
 :class:`ReferenceBenchmarkResult`. This is a breaking schema change —
 ``RESULT_SCHEMA_VERSION`` is incremented accordingly, and v1 payloads are
@@ -57,8 +57,10 @@ from src.evaluators.schema import FailureCategory
 RESULT_SCHEMA_VERSION = "reference-result-schema-v2"
 REQUIRED_TASK_COUNT = 164
 
-CANDIDATE_SET_MANIFEST_SCHEMA_VERSION = "candidate-set-manifest-v1"
-CANDIDATE_SET_ALGORITHM_VERSION = "candidate-set-v1"
+REFERENCE_VALIDATION_CANDIDATE_SET_MANIFEST_SCHEMA_VERSION = (
+    "reference-validation-candidate-set-manifest-v1"
+)
+REFERENCE_VALIDATION_CANDIDATE_SET_ALGORITHM_VERSION = "reference-validation-candidate-set-v1"
 
 _SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _VALID_FAILURE_CATEGORY_VALUES = frozenset(category.value for category in FailureCategory)
@@ -74,8 +76,8 @@ class InvalidReferenceResultError(ValueError):
     """
 
 
-class InvalidCandidateSetManifestError(InvalidReferenceResultError):
-    """Raised when a :class:`CandidateSetManifest` is internally inconsistent
+class InvalidReferenceValidationCandidateSetManifestError(InvalidReferenceResultError):
+    """Raised when a :class:`ReferenceValidationCandidateSetManifest` is internally inconsistent
     or its checksum does not match its own recomputed contents.
 
     A subclass of :class:`InvalidReferenceResultError` so existing callers
@@ -103,7 +105,7 @@ class ReferenceRunContext:
     independent HumanEval task), so nothing here may vary per task or imply
     a single candidate. Task-specific candidate identity lives on
     :class:`ReferenceTaskResult` instead, and the whole set's identity lives
-    in :class:`CandidateSetManifest`. ``portfolio_frozen_at``/
+    in :class:`ReferenceValidationCandidateSetManifest`. ``portfolio_frozen_at``/
     ``portfolio_selection_rule`` describe the one atomic freeze/selection
     event that produced the entire 164-solution portfolio evaluated in this
     run, per the Global Architectural Constraint "No adaptive reference
@@ -286,7 +288,7 @@ class FullSuiteDiagnostic:
 
 @dataclass(frozen=True)
 class CandidateSetEntry:
-    """One task's binding within a :class:`CandidateSetManifest`: which
+    """One task's binding within a :class:`ReferenceValidationCandidateSetManifest`: which
     task-specific candidate was frozen for evaluation against that task.
 
     No room for privileged content: exactly three plain string identifiers,
@@ -332,7 +334,7 @@ def _candidate_set_manifest_checksum(  # pylint: disable=too-many-arguments,too-
 
 
 @dataclass(frozen=True)
-class CandidateSetManifest:
+class ReferenceValidationCandidateSetManifest:
     """Versioned, self-checksummed binding of the whole benchmark's
     task-to-candidate mapping: exactly one :class:`CandidateSetEntry` per
     required task, ordered by ``task_id``.
@@ -369,22 +371,22 @@ class CandidateSetManifest:
         _require_sha256_hex(self, "selection_provenance_sha256")
         _require_non_negative_int(self, "expected_task_count")
         if self.expected_task_count != REQUIRED_TASK_COUNT:
-            raise InvalidCandidateSetManifestError(
+            raise InvalidReferenceValidationCandidateSetManifestError(
                 f"expected_task_count must be exactly {REQUIRED_TASK_COUNT} "
                 f"(never a silently different denominator), got {self.expected_task_count}"
             )
         if len(self.entries) != self.expected_task_count:
-            raise InvalidCandidateSetManifestError(
+            raise InvalidReferenceValidationCandidateSetManifestError(
                 f"candidate_set_manifest must contain exactly {self.expected_task_count} "
                 f"entries (one per required task), got {len(self.entries)}"
             )
         task_ids = [entry.task_id for entry in self.entries]
         if len(task_ids) != len(set(task_ids)):
-            raise InvalidCandidateSetManifestError(
+            raise InvalidReferenceValidationCandidateSetManifestError(
                 "candidate_set_manifest entries contains duplicate task_id entries"
             )
         if task_ids != sorted(task_ids):
-            raise InvalidCandidateSetManifestError(
+            raise InvalidReferenceValidationCandidateSetManifestError(
                 "candidate_set_manifest entries must be sorted by task_id for "
                 "deterministic, reorder-proof serialization"
             )
@@ -397,7 +399,7 @@ class CandidateSetManifest:
             self.entries,
         )
         if self.manifest_checksum and self.manifest_checksum != expected_checksum:
-            raise InvalidCandidateSetManifestError(
+            raise InvalidReferenceValidationCandidateSetManifestError(
                 f"manifest_checksum {self.manifest_checksum!r} does not match the "
                 f"recomputed checksum {expected_checksum!r} over its own contents — "
                 f"tampered or corrupted candidate-set manifest"
@@ -593,7 +595,7 @@ class ReferenceBenchmarkResult:
     """
 
     run_context: ReferenceRunContext
-    candidate_set_manifest: CandidateSetManifest
+    candidate_set_manifest: ReferenceValidationCandidateSetManifest
     task_results: tuple[ReferenceTaskResult, ...]
     task_manifest_checksum: str
     oracle_version: str

@@ -17,13 +17,13 @@ import pytest
 
 from src.evaluators.schema import FailureCategory
 from src.reference.result_schema import (
-    CANDIDATE_SET_ALGORITHM_VERSION,
-    CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
+    REFERENCE_VALIDATION_CANDIDATE_SET_ALGORITHM_VERSION,
+    REFERENCE_VALIDATION_CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
     REQUIRED_TASK_COUNT,
     CandidateSetEntry,
-    CandidateSetManifest,
+    ReferenceValidationCandidateSetManifest,
     FullSuiteDiagnostic,
-    InvalidCandidateSetManifestError,
+    InvalidReferenceValidationCandidateSetManifestError,
     InvalidReferenceResultError,
     MeasurementStatus,
     ReferenceBenchmarkResult,
@@ -104,17 +104,17 @@ def _candidate_set_entries(count: int = REQUIRED_TASK_COUNT) -> tuple[CandidateS
 
 def _candidate_set_manifest(
     entries: tuple[CandidateSetEntry, ...] | None = None, **overrides: object
-) -> CandidateSetManifest:
+) -> ReferenceValidationCandidateSetManifest:
     fields: dict[str, object] = {
-        "manifest_schema_version": CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
-        "algorithm_version": CANDIDATE_SET_ALGORITHM_VERSION,
+        "manifest_schema_version": REFERENCE_VALIDATION_CANDIDATE_SET_MANIFEST_SCHEMA_VERSION,
+        "algorithm_version": REFERENCE_VALIDATION_CANDIDATE_SET_ALGORITHM_VERSION,
         "task_manifest_id": "reference-validation-composite-manifest",
         "task_manifest_checksum": _SHA_TASK_MANIFEST,
         "selection_provenance_sha256": _SHA_SELECTION_PROVENANCE,
         "entries": entries if entries is not None else _candidate_set_entries(),
     }
     fields.update(overrides)
-    return CandidateSetManifest(**fields)  # type: ignore[arg-type]
+    return ReferenceValidationCandidateSetManifest(**fields)  # type: ignore[arg-type]
 
 
 def _valid_results(
@@ -308,7 +308,7 @@ def test_candidate_set_manifest_checksum_is_deterministic() -> None:
 
 def test_candidate_set_manifest_missing_entry_rejected() -> None:
     """A manifest with fewer than 164 entries (a missing task) is rejected."""
-    with pytest.raises(InvalidCandidateSetManifestError):
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
         _candidate_set_manifest(entries=_candidate_set_entries(REQUIRED_TASK_COUNT - 1))
 
 
@@ -316,7 +316,7 @@ def test_candidate_set_manifest_duplicate_task_id_rejected() -> None:
     """Duplicate task_id entries in the candidate-set manifest are rejected."""
     entries = list(_candidate_set_entries(REQUIRED_TASK_COUNT - 1))
     entries.append(entries[0])
-    with pytest.raises(InvalidCandidateSetManifestError):
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
         _candidate_set_manifest(entries=tuple(entries))
 
 
@@ -325,7 +325,7 @@ def test_candidate_set_manifest_reordered_entries_rejected() -> None:
     identical) entry set is rejected, not silently accepted as equivalent."""
     entries = list(_candidate_set_entries())
     entries[0], entries[1] = entries[1], entries[0]
-    with pytest.raises(InvalidCandidateSetManifestError):
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
         _candidate_set_manifest(entries=tuple(entries))
 
 
@@ -339,8 +339,8 @@ def test_candidate_set_manifest_tampered_entry_rejected() -> None:
         candidate_id=tampered_entries[0].candidate_id,
         candidate_sha256="f" * 64,
     )
-    with pytest.raises(InvalidCandidateSetManifestError):
-        CandidateSetManifest(
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
+        ReferenceValidationCandidateSetManifest(
             manifest_schema_version=good_manifest.manifest_schema_version,
             algorithm_version=good_manifest.algorithm_version,
             task_manifest_id=good_manifest.task_manifest_id,
@@ -353,13 +353,13 @@ def test_candidate_set_manifest_tampered_entry_rejected() -> None:
 
 def test_candidate_set_manifest_checksum_mismatch_rejected() -> None:
     """An explicitly wrong manifest_checksum is rejected, never silently overwritten."""
-    with pytest.raises(InvalidCandidateSetManifestError):
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
         _candidate_set_manifest(manifest_checksum="0" * 64)
 
 
 def test_candidate_set_manifest_wrong_expected_task_count_rejected() -> None:
     """expected_task_count must always be exactly REQUIRED_TASK_COUNT."""
-    with pytest.raises(InvalidCandidateSetManifestError):
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
         _candidate_set_manifest(entries=_candidate_set_entries(10), expected_task_count=10)
 
 
@@ -885,5 +885,5 @@ def test_candidate_set_manifest_expected_task_count_mismatch_with_benchmark_reje
     # benchmark still declaring the standard 164 — the manifest's own
     # REQUIRED_TASK_COUNT check fires first, which is an equally valid
     # rejection of the same inconsistency.
-    with pytest.raises(InvalidCandidateSetManifestError):
+    with pytest.raises(InvalidReferenceValidationCandidateSetManifestError):
         _candidate_set_manifest(entries=_candidate_set_entries(163), expected_task_count=163)
