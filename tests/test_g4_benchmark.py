@@ -188,6 +188,38 @@ def test_work_items_share_one_fixed_candidate() -> None:
     )
 
 
+def test_wired_evidence_and_context_never_carry_real_identity() -> None:
+    """The wired g4_benchmark evidence/run_context never carry any real
+    MEGB-03B/C/E/F identity (MEGB-03G.4 correction: no forced-real labels)."""
+    from evalplus.data.humaneval import HUMANEVAL_PLUS_VERSION  # pylint: disable=import-outside-toplevel
+
+    from src.reference.oracle import (  # pylint: disable=import-outside-toplevel
+        COMPARISON_PROFILE_VERSION,
+        ORACLE_ALGORITHM_VERSION,
+    )
+    from src.reference.partition import (  # pylint: disable=import-outside-toplevel
+        PARTITION_ALGORITHM_VERSION,
+    )
+    from src.reference.reference_evaluator import (  # pylint: disable=import-outside-toplevel
+        EVALUATOR_VERSION_FULL,
+        EXECUTION_PROFILE_ID_FULL,
+        EXECUTION_PROTOCOL_VERSION,
+    )
+
+    context = _run_context()
+    evidence = _evidence_for("G4Bench/MEDIAN/0", 1)
+
+    assert context.dataset_version != HUMANEVAL_PLUS_VERSION
+    assert context.partition_version != PARTITION_ALGORITHM_VERSION
+    assert context.evaluator_version != EVALUATOR_VERSION_FULL
+    assert context.execution_profile_id != EXECUTION_PROFILE_ID_FULL
+    assert context.comparison_profile_version != COMPARISON_PROFILE_VERSION
+    assert context.execution_protocol_version != EXECUTION_PROTOCOL_VERSION
+    assert evidence.oracle_version != ORACLE_ALGORITHM_VERSION
+    assert evidence.partition_version != PARTITION_ALGORITHM_VERSION
+    assert evidence.comparison_profile.profile_version != COMPARISON_PROFILE_VERSION
+
+
 # --- Measurement comparator ------------------------------------------------------
 
 

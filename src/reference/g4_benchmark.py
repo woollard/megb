@@ -43,24 +43,25 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable
 
-from evalplus.data.humaneval import HUMANEVAL_PLUS_VERSION
-
 from src.execution.backend import ExecutionBackend
-from src.reference.oracle import (
-    COMPARISON_PROFILE_VERSION,
-    ORACLE_ALGORITHM_VERSION,
-    POOL_REFERENCE_ONLY,
-    comparison_profile_for_task,
-    generate_oracle_record,
+from src.execution.protocol import ExecutionLimits
+from src.reference.g4_benchmark_evaluator import (
+    G4_COMPARISON_PROFILE_VERSION,
+    G4_DATASET_CHECKSUM,
+    G4_DATASET_VERSION,
+    G4_EVALUATOR_VERSION,
+    G4_EXECUTION_PROFILE_ID,
+    G4_EXECUTION_PROTOCOL_VERSION,
+    G4_ORACLE_VERSION,
+    G4_PARTITION_VERSION,
+    G4_TASK_MANIFEST_CHECKSUM,
+    evaluate_g4_benchmark_candidate,
 )
-from src.reference.partition import PARTITION_ALGORITHM_VERSION
+from src.reference.oracle import ComparisonProfile, generate_oracle_record
 from src.reference.reference_audit import ReferenceAuditLog
 from src.reference.reference_cache import ReferenceResultCache
 from src.reference.reference_evaluator import (
-    EVALUATOR_VERSION_FULL,
-    EXECUTION_PROFILE_ID_FULL,
-    EXECUTION_PROTOCOL_VERSION,
-    FULL_EXECUTION_PROFILE,
+    ExecutionProfile,
     ReferenceCase,
     ReferenceTaskEvidence,
 )
@@ -83,19 +84,18 @@ DEFAULT_BENCHMARK_AUDIT_PATH = Path(
 
 _ENTRY_POINT = "g4_compute"
 _CANONICAL_SOLUTION = "def g4_compute(n):\n    return (n * 2) + 1\n"
-# `dataset_version` must be the real HUMANEVAL_PLUS_VERSION: evaluate_reference
-# (already-accepted MEGB-03F code) hardcodes evidence.dataset_version ==
-# HUMANEVAL_PLUS_VERSION as a version-consistency check unrelated to this
-# benchmark, so a synthetic label here would always raise
-# ReferenceEvaluatorVersionMismatchError. This is only a shared *version
-# label* for project-controlled code (like oracle_version/partition_version
-# below) -- it does not mean any real dataset content is loaded or used;
-# dataset_checksum/task_manifest_checksum (the actual content-identity
-# fields) and every task_id (always under the G4Bench/ namespace) remain
-# fully synthetic and never collide with the real corpus.
-_DATASET_VERSION = HUMANEVAL_PLUS_VERSION
-_DATASET_CHECKSUM = hashlib.sha256(b"g4-benchmark-synthetic-dataset-v1").hexdigest()
-_TASK_MANIFEST_CHECKSUM = hashlib.sha256(b"g4-benchmark-synthetic-manifest-v1").hexdigest()
+# Every identity field below is this benchmark's own synthetic constant
+# (from src.reference.g4_benchmark_evaluator) -- none equal any real
+# MEGB-03B/C/E/F constant. See that module's assert_g4_identities_are_synthetic().
+_DATASET_VERSION = G4_DATASET_VERSION
+_DATASET_CHECKSUM = G4_DATASET_CHECKSUM
+_TASK_MANIFEST_CHECKSUM = G4_TASK_MANIFEST_CHECKSUM
+
+_G4_EXECUTION_PROFILE = ExecutionProfile(
+    profile_id=G4_EXECUTION_PROFILE_ID,
+    evaluator_version=G4_EVALUATOR_VERSION,
+    limits=ExecutionLimits(),
+)
 
 _TIER_CASE_COUNTS = {"LOW": 1, "MEDIAN": 5, "HIGH": 20}
 
@@ -263,8 +263,16 @@ def _case_id(index: int, case_count: int) -> str:
     return f"c{index:0{width}d}"
 
 
+_G4_COMPARISON_PROFILE = ComparisonProfile(
+    kind="default_exact_or_tolerance", atol=0.0, profile_version=G4_COMPARISON_PROFILE_VERSION
+)
+# Never the real POOL_REFERENCE_ONLY: these are synthetic benchmark cases,
+# not real reference-only pool membership.
+_G4_SYNTHETIC_POOL = "megb-03g4-benchmark-synthetic"
+_G4_SYNTHETIC_PROVENANCE = "megb-03g4-benchmark-synthetic"
+
+
 def _evidence_for(task_id: str, case_count: int) -> ReferenceTaskEvidence:
-    profile = comparison_profile_for_task(_ENTRY_POINT, atol=0.0)
     canonical_fn = _canonical_fn()
     cases = tuple(
         ReferenceCase(
@@ -274,10 +282,10 @@ def _evidence_for(task_id: str, case_count: int) -> ReferenceTaskEvidence:
                 task_id=task_id,
                 case_id=_case_id(i, case_count),
                 args=(i + 1,),
-                provenance="original",
-                pool=POOL_REFERENCE_ONLY,
+                provenance=_G4_SYNTHETIC_PROVENANCE,
+                pool=_G4_SYNTHETIC_POOL,
                 canonical_fn=canonical_fn,
-                profile=profile,
+                profile=_G4_COMPARISON_PROFILE,
             ),
         )
         for i in range(case_count)
@@ -285,12 +293,12 @@ def _evidence_for(task_id: str, case_count: int) -> ReferenceTaskEvidence:
     return ReferenceTaskEvidence(
         task_id=task_id,
         entry_point=_ENTRY_POINT,
-        comparison_profile=profile,
+        comparison_profile=_G4_COMPARISON_PROFILE,
         cases=cases,
-        oracle_version=ORACLE_ALGORITHM_VERSION,
-        partition_version=PARTITION_ALGORITHM_VERSION,
+        oracle_version=G4_ORACLE_VERSION,
+        partition_version=G4_PARTITION_VERSION,
         dataset_version=_DATASET_VERSION,
-        protocol_version=EXECUTION_PROTOCOL_VERSION,
+        protocol_version=G4_EXECUTION_PROTOCOL_VERSION,
         dataset_checksum=_DATASET_CHECKSUM,
         task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
     )
@@ -303,12 +311,12 @@ def _run_context() -> ReferenceRunContext:
         optimization_config_sha256="0" * 64,
         portfolio_frozen_at="2026-01-01T00:00:00Z",
         portfolio_selection_rule="g4-benchmark-fixed-candidate",
-        evaluator_version=EVALUATOR_VERSION_FULL,
+        evaluator_version=G4_EVALUATOR_VERSION,
         dataset_version=_DATASET_VERSION,
-        partition_version=PARTITION_ALGORITHM_VERSION,
-        execution_profile_id=EXECUTION_PROFILE_ID_FULL,
-        comparison_profile_version=COMPARISON_PROFILE_VERSION,
-        execution_protocol_version=EXECUTION_PROTOCOL_VERSION,
+        partition_version=G4_PARTITION_VERSION,
+        execution_profile_id=G4_EXECUTION_PROFILE_ID,
+        comparison_profile_version=G4_COMPARISON_PROFILE_VERSION,
+        execution_protocol_version=G4_EXECUTION_PROTOCOL_VERSION,
         dataset_checksum=_DATASET_CHECKSUM,
         task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
     )
@@ -354,7 +362,8 @@ def _make_orchestrator(  # pylint: disable=too-many-arguments,too-many-positiona
             max_workers=max_workers,
             max_in_flight=max_workers,
             retry_policy=RetryPolicy(max_attempts=2),
-            profile=FULL_EXECUTION_PROFILE,
+            profile=_G4_EXECUTION_PROFILE,
+            evaluator=evaluate_g4_benchmark_candidate,
         ),
         on_in_flight_change=on_in_flight_change,
     )
