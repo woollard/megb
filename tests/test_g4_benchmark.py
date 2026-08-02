@@ -190,7 +190,11 @@ def test_work_items_share_one_fixed_candidate() -> None:
 
 def test_wired_evidence_and_context_never_carry_real_identity() -> None:
     """The wired g4_benchmark evidence/run_context never carry any real
-    MEGB-03B/C/E/F identity (MEGB-03G.4 correction: no forced-real labels)."""
+    MEGB-03B/C/E/F content/logic identity (MEGB-03G.4 correction: no
+    forced-real labels). ``execution_protocol_version`` is the one
+    deliberate exception (MEGB-03G.4 correction v2): it identifies the
+    shared MEGB-02 wire transport, not evaluated content, so it is
+    correctly real for both the synthetic and real evaluator."""
     from evalplus.data.humaneval import HUMANEVAL_PLUS_VERSION  # pylint: disable=import-outside-toplevel
 
     from src.reference.oracle import (  # pylint: disable=import-outside-toplevel
@@ -214,7 +218,7 @@ def test_wired_evidence_and_context_never_carry_real_identity() -> None:
     assert context.evaluator_version != EVALUATOR_VERSION_FULL
     assert context.execution_profile_id != EXECUTION_PROFILE_ID_FULL
     assert context.comparison_profile_version != COMPARISON_PROFILE_VERSION
-    assert context.execution_protocol_version != EXECUTION_PROTOCOL_VERSION
+    assert context.execution_protocol_version == EXECUTION_PROTOCOL_VERSION
     assert evidence.oracle_version != ORACLE_ALGORITHM_VERSION
     assert evidence.partition_version != PARTITION_ALGORITHM_VERSION
     assert evidence.comparison_profile.profile_version != COMPARISON_PROFILE_VERSION

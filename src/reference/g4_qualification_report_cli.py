@@ -46,17 +46,7 @@ from src.reference.g4_benchmark import (  # noqa: F401  (re-exported for the che
     _UNSCALED_THROUGHPUT_N,
     DEFAULT_BENCHMARK_AUDIT_PATH,
 )
-from src.reference.g4_benchmark_evaluator import (
-    G4_COMPARISON_PROFILE_VERSION,
-    G4_DATASET_CHECKSUM,
-    G4_DATASET_VERSION,
-    G4_EVALUATOR_VERSION,
-    G4_EXECUTION_PROFILE_ID,
-    G4_EXECUTION_PROTOCOL_VERSION,
-    G4_ORACLE_VERSION,
-    G4_PARTITION_VERSION,
-    G4_TASK_MANIFEST_CHECKSUM,
-)
+from src.reference.g4_benchmark_evaluator import G4_EVALUATOR_VERSION
 from src.reference.g4_qualification_report import (
     build_qualification_report,
     qualification_report_to_dict,
@@ -91,19 +81,17 @@ def _benchmark_plan_checksum() -> str:
 
 
 def _synthetic_workload_checksum() -> str:
+    """Checksum of the synthetic workload's actual content only (entry
+    point, canonical solution, tier case counts) -- deliberately excludes
+    every identity/version label, so it stays stable across evaluator
+    version bumps (see ``G4_EVALUATOR_VERSION``, reported separately as
+    ``synthetic_workload_version``) and only changes if the workload
+    content itself changes."""
     workload_repr = repr(
         (
             _ENTRY_POINT,
             _CANONICAL_SOLUTION,
-            G4_EVALUATOR_VERSION,
-            G4_EXECUTION_PROFILE_ID,
-            G4_EXECUTION_PROTOCOL_VERSION,
-            G4_DATASET_VERSION,
-            G4_PARTITION_VERSION,
-            G4_ORACLE_VERSION,
-            G4_COMPARISON_PROFILE_VERSION,
-            G4_DATASET_CHECKSUM,
-            G4_TASK_MANIFEST_CHECKSUM,
+            sorted(_TIER_CASE_COUNTS.items()),
         )
     )
     return hashlib.sha256(workload_repr.encode("utf-8")).hexdigest()
@@ -194,6 +182,7 @@ def main() -> None:
         benchmark_report,
         generated_at=datetime.now(timezone.utc).isoformat(),
         benchmark_plan_checksum=_benchmark_plan_checksum(),
+        synthetic_workload_version=G4_EVALUATOR_VERSION,
         synthetic_workload_checksum=_synthetic_workload_checksum(),
         implementation_commit_sha=_git_commit_sha(),
         implementation_dirty=_git_is_dirty(),

@@ -11,8 +11,14 @@ module and MEGB-03G.2 cache-key module, that a G4 benchmark result:
   same aggregation call (run-context equality already rejects it);
 - cannot contribute to ``q_ref``/``Q_ref`` (a direct consequence of the
   previous two);
-- cannot collide with a real-corpus cache entry (every discriminating
-  cache-key field differs from the real profile's own).
+- cannot collide with a real-corpus cache entry: the complete cache key
+  differs from the real profile's own, via the five genuinely-distinct
+  content/evaluation-logic identities (dataset/partition/oracle/
+  comparison-profile/evaluator-version and execution-profile-id) --
+  ``execution_protocol_version`` is correctly *equal* between a G4 result
+  and a real one, since both reuse the identical, unmodified MEGB-02 wire
+  transport; that shared field alone is never sufficient to cause a
+  collision because a cache key binds on every field jointly.
 
 Offline only -- no real Docker, no real privileged corpus, no changes to
 any already-accepted module.
@@ -36,12 +42,10 @@ from src.reference.g4_benchmark_evaluator import (
     G4_DATASET_CHECKSUM,
     G4_EVALUATOR_VERSION,
     G4_EXECUTION_PROFILE_ID,
-    G4_EXECUTION_PROTOCOL_VERSION,
     G4_ORACLE_VERSION,
     G4_PARTITION_VERSION,
 )
 from src.reference.oracle import COMPARISON_PROFILE_VERSION, ORACLE_ALGORITHM_VERSION
-from src.reference.partition import PARTITION_ALGORITHM_VERSION
 from src.reference.reference_evaluator import (
     EVALUATOR_VERSION_FULL,
     EXECUTION_PROFILE_ID_FULL,
@@ -95,7 +99,9 @@ def _g4_style_run_context(**overrides: str) -> ReferenceRunContext:
         "partition_version": G4_PARTITION_VERSION,
         "execution_profile_id": G4_EXECUTION_PROFILE_ID,
         "comparison_profile_version": G4_COMPARISON_PROFILE_VERSION,
-        "execution_protocol_version": G4_EXECUTION_PROTOCOL_VERSION,
+        # Deliberately the real EXECUTION_PROTOCOL_VERSION: this benchmark
+        # reuses the identical, unmodified MEGB-02 wire transport.
+        "execution_protocol_version": EXECUTION_PROTOCOL_VERSION,
         "dataset_checksum": G4_DATASET_CHECKSUM,
         "task_manifest_checksum": "d" * 64,
     }
@@ -238,20 +244,53 @@ def test_g4_results_can_never_produce_a_benchmark_result_at_all() -> None:
 # --- Cannot collide with a real-corpus cache entry ----------------------------
 
 
-def test_g4_cache_key_differs_from_real_profile_in_every_discriminating_field() -> None:
-    """Every version/checksum field ReferenceResultCacheKey binds on differs
-    between a G4 result and what a real full-profile result would carry --
-    proved by direct field inequality, not probabilistic digest non-collision."""
+def test_g4_cache_key_differs_from_real_profile_overall() -> None:
+    """The complete G4 cache key differs from what a real full-profile
+    result under the *same task_id* would produce -- proved by direct
+    field comparison, not probabilistic digest non-collision. Five fields
+    (dataset/partition/oracle/comparison-profile/evaluator-version and
+    execution-profile-id) are genuinely distinct content/evaluation-logic
+    identities and must differ; ``execution_protocol_version`` is
+    deliberately *equal*, since both reuse the identical, unmodified
+    MEGB-02 wire transport -- a cache key still cannot collide because it
+    binds on every field jointly, and the five distinct fields alone
+    already guarantee a different digest."""
+    task_id = "G4Bench/MEDIAN/0"
     g4_context = _g4_style_run_context()
-    g4_result = _task_result("G4Bench/MEDIAN/0", g4_context, oracle_version=G4_ORACLE_VERSION)
+    g4_result = _task_result(task_id, g4_context, oracle_version=G4_ORACLE_VERSION)
     g4_key = cache_key_for(g4_result)
 
-    assert g4_key.partition_version != PARTITION_ALGORITHM_VERSION
-    assert g4_key.oracle_version != ORACLE_ALGORITHM_VERSION
-    assert g4_key.comparison_profile_version != COMPARISON_PROFILE_VERSION
-    assert g4_key.evaluator_version != EVALUATOR_VERSION_FULL
-    assert g4_key.execution_profile_id != EXECUTION_PROFILE_ID_FULL
-    assert g4_key.execution_protocol_version != EXECUTION_PROTOCOL_VERSION
+    real_context = _real_full_run_context(task_manifest_checksum=g4_context.task_manifest_checksum)
+    real_result = _task_result(task_id, real_context, oracle_version=ORACLE_ALGORITHM_VERSION)
+    real_key = cache_key_for(real_result)
+
+    # The genuinely distinct content/evaluation-logic identities differ.
+    assert g4_key.partition_version != real_key.partition_version
+    assert g4_key.oracle_version != real_key.oracle_version
+    assert g4_key.comparison_profile_version != real_key.comparison_profile_version
+    assert g4_key.evaluator_version != real_key.evaluator_version
+    assert g4_key.execution_profile_id != real_key.execution_profile_id
+
+    # The shared, unmodified wire transport identity is correctly equal.
+    assert g4_key.execution_protocol_version == real_key.execution_protocol_version
+    assert g4_key.execution_protocol_version == EXECUTION_PROTOCOL_VERSION
+
+    # The complete key still differs -- proven by the full digest, not just
+    # by inspecting individual fields.
+    assert g4_key.key_digest != real_key.key_digest
+
+
+def test_g4_result_still_rejected_by_aggregation_despite_shared_protocol_version() -> None:
+    """Sharing execution_protocol_version with the real profile does not
+    weaken the non-contamination guarantee: aggregate_reference_results
+    still rejects a G4 batch (count grounds; independently, profile
+    grounds at 164 padded items) and a G4 result still cannot be mixed
+    into a real aggregation (run-context equality)."""
+    results, manifest = _padded_g4_style_results_and_manifest()
+    with pytest.raises(ReferenceAggregationError):
+        aggregate_reference_results(results[:1], manifest)
+    with pytest.raises(ReferenceAggregationError, match="full reference-only"):
+        aggregate_reference_results(results, manifest)
 
 
 def test_g4_benchmark_never_uses_the_production_cache_directory() -> None:

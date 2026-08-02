@@ -115,6 +115,7 @@ def _qualification_report(**overrides: object) -> G4QualificationReport:
     kwargs: dict[str, object] = {
         "generated_at": "2026-08-02T00:00:00Z",
         "benchmark_plan_checksum": "a" * 64,
+        "synthetic_workload_version": "megb-03g4-benchmark-evaluator-v2",
         "synthetic_workload_checksum": "b" * 64,
         "implementation_commit_sha": "c" * 40,
         "implementation_dirty": False,

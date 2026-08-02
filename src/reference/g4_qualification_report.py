@@ -135,6 +135,7 @@ def build_qualification_report(  # pylint: disable=too-many-arguments,too-many-p
     *,
     generated_at: str,
     benchmark_plan_checksum: str,
+    synthetic_workload_version: str,
     synthetic_workload_checksum: str,
     implementation_commit_sha: str,
     implementation_dirty: bool,
@@ -148,7 +149,12 @@ def build_qualification_report(  # pylint: disable=too-many-arguments,too-many-p
     :class:`G4BenchmarkReport` plus environment/provenance inputs the
     benchmark itself does not know (its own commit SHA, the Docker image
     identity, and the separately-run ordering/isolation Docker tests'
-    results)."""
+    results).
+
+    ``synthetic_workload_version`` identifies the synthetic benchmark
+    evaluator (e.g. ``G4_EVALUATOR_VERSION``), not the throughput report's
+    own schema version -- the two change independently, and only the
+    former should move when the evaluator's provenance behavior changes."""
     concurrency_levels = tuple(
         sorted({result.concurrency for result in benchmark_report.throughput_results})
     )
@@ -160,7 +166,7 @@ def build_qualification_report(  # pylint: disable=too-many-arguments,too-many-p
         generated_at=generated_at,
         benchmark_plan_version=BENCHMARK_PLAN_VERSION,
         benchmark_plan_checksum=benchmark_plan_checksum,
-        synthetic_workload_version=benchmark_report.schema_version,
+        synthetic_workload_version=synthetic_workload_version,
         synthetic_workload_checksum=synthetic_workload_checksum,
         implementation_commit_sha=implementation_commit_sha,
         implementation_dirty=implementation_dirty,

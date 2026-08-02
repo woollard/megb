@@ -42,7 +42,6 @@ from src.reference.g4_benchmark_evaluator import (
     G4_DATASET_VERSION,
     G4_EVALUATOR_VERSION,
     G4_EXECUTION_PROFILE_ID,
-    G4_EXECUTION_PROTOCOL_VERSION,
     G4_ORACLE_VERSION,
     G4_PARTITION_VERSION,
     G4_TASK_MANIFEST_CHECKSUM,
@@ -51,7 +50,12 @@ from src.reference.g4_benchmark_evaluator import (
 from src.reference.oracle import ComparisonProfile, OracleRecord
 from src.reference.reference_audit import ReferenceAuditLog
 from src.reference.reference_cache import ReferenceResultCache
-from src.reference.reference_evaluator import ExecutionProfile, ReferenceCase, ReferenceTaskEvidence
+from src.reference.reference_evaluator import (
+    EXECUTION_PROTOCOL_VERSION,
+    ExecutionProfile,
+    ReferenceCase,
+    ReferenceTaskEvidence,
+)
 from src.reference.reference_orchestrator import (
     MappingEvidenceResolver,
     OrchestrationConfig,
@@ -87,7 +91,7 @@ def _run_context() -> ReferenceRunContext:
         partition_version=G4_PARTITION_VERSION,
         execution_profile_id=G4_EXECUTION_PROFILE_ID,
         comparison_profile_version=G4_COMPARISON_PROFILE_VERSION,
-        execution_protocol_version=G4_EXECUTION_PROTOCOL_VERSION,
+        execution_protocol_version=EXECUTION_PROTOCOL_VERSION,
         dataset_checksum=G4_DATASET_CHECKSUM,
         task_manifest_checksum=G4_TASK_MANIFEST_CHECKSUM,
     )
@@ -115,7 +119,7 @@ def _evidence(
         oracle_version=G4_ORACLE_VERSION,
         partition_version=G4_PARTITION_VERSION,
         dataset_version=G4_DATASET_VERSION,
-        protocol_version=G4_EXECUTION_PROTOCOL_VERSION,
+        protocol_version=EXECUTION_PROTOCOL_VERSION,
         dataset_checksum=G4_DATASET_CHECKSUM,
         task_manifest_checksum=G4_TASK_MANIFEST_CHECKSUM,
     )

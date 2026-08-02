@@ -1,10 +1,12 @@
 """Tests for src.reference.g4_benchmark_evaluator (MEGB-03G.4 correction).
 
 Offline only: a fake execution backend, no real Docker, no real corpus.
-Covers: distinct synthetic identities never collide with real constants,
+Covers: distinct synthetic identities never collide with real constants
+(except ``execution_protocol_version``, which is deliberately the real
+``EXECUTION_PROTOCOL_VERSION`` -- see the module's Correction v2 note),
 correct/wrong-output classification, candidate-hash and version-mismatch
 rejection, execution-status mapping, and that every outbound request
-carries the synthetic protocol version rather than the real one.
+carries the real protocol version.
 """
 
 # See tests/test_reference_cache_key.py's note: this file intentionally
@@ -30,7 +32,6 @@ from src.reference.g4_benchmark_evaluator import (
     G4_DATASET_VERSION,
     G4_EVALUATOR_VERSION,
     G4_EXECUTION_PROFILE_ID,
-    G4_EXECUTION_PROTOCOL_VERSION,
     G4_ORACLE_VERSION,
     G4_PARTITION_VERSION,
     G4_TASK_MANIFEST_CHECKSUM,
@@ -41,6 +42,7 @@ from src.reference.g4_benchmark_evaluator import (
 )
 from src.reference.oracle import ORACLE_STATUS_GENERATION_FAILED, OracleRecord
 from src.reference.reference_evaluator import (
+    EXECUTION_PROTOCOL_VERSION,
     ExecutionProfile,
     ReferenceCase,
     ReferenceTaskEvidence,
@@ -91,7 +93,7 @@ def _execution_result(
         backend_id="fake",
         backend_version="1",
         runner_image_digest="sha256:fake",
-        protocol_version=G4_EXECUTION_PROTOCOL_VERSION,
+        protocol_version=EXECUTION_PROTOCOL_VERSION,
         limits=ExecutionLimits(),
         started_at="2026-08-01T00:00:00Z",
     )
@@ -136,7 +138,7 @@ def _evidence(cases: list[ReferenceCase], **overrides: object) -> ReferenceTaskE
         "oracle_version": G4_ORACLE_VERSION,
         "partition_version": G4_PARTITION_VERSION,
         "dataset_version": G4_DATASET_VERSION,
-        "protocol_version": G4_EXECUTION_PROTOCOL_VERSION,
+        "protocol_version": EXECUTION_PROTOCOL_VERSION,
         "dataset_checksum": G4_DATASET_CHECKSUM,
         "task_manifest_checksum": G4_TASK_MANIFEST_CHECKSUM,
     }
@@ -156,7 +158,7 @@ def _run_context(**overrides: object) -> ReferenceRunContext:
         "partition_version": G4_PARTITION_VERSION,
         "execution_profile_id": G4_EXECUTION_PROFILE_ID,
         "comparison_profile_version": G4_COMPARISON_PROFILE_VERSION,
-        "execution_protocol_version": G4_EXECUTION_PROTOCOL_VERSION,
+        "execution_protocol_version": EXECUTION_PROTOCOL_VERSION,
         "dataset_checksum": G4_DATASET_CHECKSUM,
         "task_manifest_checksum": G4_TASK_MANIFEST_CHECKSUM,
     }
@@ -312,13 +314,11 @@ def test_invalid_oracle_record_is_not_silently_treated_as_success() -> None:
 # --- Protocol-version isolation -------------------------------------------------
 
 
-def test_outbound_requests_carry_the_synthetic_protocol_version_only() -> None:
-    """Every request sent to the backend carries G4_EXECUTION_PROTOCOL_VERSION,
-    never the real EXECUTION_PROTOCOL_VERSION."""
-    from src.reference.reference_evaluator import (  # pylint: disable=import-outside-toplevel
-        EXECUTION_PROTOCOL_VERSION,
-    )
-
+def test_outbound_requests_carry_the_real_protocol_version() -> None:
+    """Every request sent to the backend carries the real
+    EXECUTION_PROTOCOL_VERSION -- this benchmark reuses the identical,
+    unmodified MEGB-02 wire transport, so this field is deliberately
+    shared truthful identity, not a synthetic label."""
     cases = [_case("c0", 3), _case("c1", 4)]
     evidence = _evidence(cases)
     backend = FakeBackend([_execution_result(return_value=6), _execution_result(return_value=8)])
@@ -330,8 +330,7 @@ def test_outbound_requests_carry_the_synthetic_protocol_version_only() -> None:
 
     assert len(backend.requests) == 2
     for request in backend.requests:
-        assert request.protocol_version == G4_EXECUTION_PROTOCOL_VERSION
-        assert request.protocol_version != EXECUTION_PROTOCOL_VERSION
+        assert request.protocol_version == EXECUTION_PROTOCOL_VERSION
 
 
 def test_result_context_never_carries_any_real_identity() -> None:

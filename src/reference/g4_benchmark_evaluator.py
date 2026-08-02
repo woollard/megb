@@ -13,12 +13,36 @@ execution-profile/protocol identity) never applies here, because this
 function performs its *own*, separate internal-consistency check against
 this module's own ``G4_*`` constants only.
 
-Every one of the six version/identity fields ``evaluate_reference``
-cross-checks against a real MEGB-03B/C/E/F constant has a distinct,
-synthetic counterpart here -- none equal to any real constant (enforced
-by :func:`assert_g4_identities_are_synthetic`, and covered by a dedicated
-equality-negation test). This function never claims, and cannot be
-mistaken for, HumanEval, EvalPlus, the frozen reference partition, or S*.
+**Correction v2 -- ``execution_protocol_version`` is deliberately *not*
+synthetic.** Five of the six identities ``evaluate_reference`` cross-checks
+against a real MEGB-03B/C/E/F constant have a distinct, synthetic
+counterpart here -- ``dataset_version``, ``partition_version``,
+``oracle_version``, ``comparison_profile_version``, and ``evaluator_version``/
+``execution_profile_id`` (enforced by :func:`assert_g4_identities_are_synthetic`,
+covered by a dedicated equality-negation test) -- because those describe
+*content* or *evaluation logic* that genuinely differs from the real S*
+evaluator. ``execution_protocol_version`` is different in kind: it
+identifies the *wire transport* between the trusted controller and the
+runner (``CandidateExecutionRequest``/``CandidateExecutionResult``,
+``src.execution.wire``), which this module reuses completely unchanged
+from the real ``evaluate_reference`` path. Giving that shared, unmodified
+apparatus a distinct synthetic label (as an earlier version of this
+module did) is itself a provenance misstatement -- the inverse of the
+false-provenance defect this module exists to fix. This module therefore
+uses the real ``EXECUTION_PROTOCOL_VERSION`` for
+``execution_protocol_version``/``protocol_version``/every
+``CandidateExecutionRequest.protocol_version`` it sends, verified never to
+drift from that one real constant (see
+``test_g4_execution_protocol_provenance.py``'s equality-chain test, which
+proves ``ReferenceTaskResult.context.execution_protocol_version ==
+CandidateExecutionRequest.protocol_version == EXECUTION_PROTOCOL_VERSION``
+for both this evaluator and the real one).
+
+Because the prior version's results carried incorrect protocol
+provenance, ``G4_EVALUATOR_VERSION`` bumps ``v1`` -> ``v2`` here --
+mirroring this project's own schema-version-bump discipline for every
+prior breaking correction, so a result produced under the old, incorrect
+protocol identity is distinguishable by version alone.
 
 Reuses ``ReferenceTaskEvidence``/``ReferenceCase``/``OracleRecord``/
 ``ComparisonProfile``/``ReferenceTaskResult`` as *containers only* --
@@ -49,6 +73,7 @@ from src.execution.protocol import (
 from src.execution.wire import decode_value
 from src.reference.oracle import ComparisonProfile, compare_outputs
 from src.reference.reference_evaluator import (
+    EXECUTION_PROTOCOL_VERSION,
     ExecutionProfile,
     PrivilegedCaseDiagnostic,
     ReferenceCase,
@@ -56,13 +81,16 @@ from src.reference.reference_evaluator import (
 )
 from src.reference.result_schema import MeasurementStatus, ReferenceRunContext, ReferenceTaskResult
 
-# --- Fully synthetic identity constants ---------------------------------------
-# None of these equal any real MEGB-03B/C/E/F constant -- see
-# assert_g4_identities_are_synthetic() and its dedicated test.
+# --- Identity constants --------------------------------------------------------
+# Five of these are fully synthetic -- none equal any real MEGB-03B/C/E/F
+# constant (see assert_g4_identities_are_synthetic() and its dedicated
+# test). execution_protocol_version is deliberately NOT among them: it is
+# the real EXECUTION_PROTOCOL_VERSION, imported above, since this module
+# reuses the real MEGB-02 wire transport unchanged (see the module
+# docstring's Correction v2 note).
 
-G4_EVALUATOR_VERSION = "megb-03g4-benchmark-evaluator-v1"
+G4_EVALUATOR_VERSION = "megb-03g4-benchmark-evaluator-v2"
 G4_EXECUTION_PROFILE_ID = "megb-03g4-benchmark-profile-v1"
-G4_EXECUTION_PROTOCOL_VERSION = "megb-03g4-benchmark-protocol-v1"
 G4_DATASET_VERSION = "megb-03g4-synthetic-dataset-v1"
 G4_PARTITION_VERSION = "megb-03g4-synthetic-partition-v1"
 G4_ORACLE_VERSION = "megb-03g4-synthetic-oracle-v1"
@@ -86,10 +114,16 @@ class G4CandidateIdentityMismatchError(ValueError):
 
 
 def assert_g4_identities_are_synthetic() -> None:
-    """Fail loudly (at import time, via a dedicated test) if any ``G4_*``
-    identity constant here ever collided with a real MEGB-03B/C/E/F
-    constant -- structural proof, not just convention, that this module
-    never claims real-corpus identity."""
+    """Fail loudly (at import time, via a dedicated test) if any of the
+    five genuinely-synthetic ``G4_*`` identity constants here ever
+    collided with a real MEGB-03B/C/E/F constant -- structural proof, not
+    just convention, that this module never claims real-corpus identity
+    for content/evaluation-logic fields.
+
+    Deliberately does **not** check ``execution_protocol_version``: that
+    field is the real ``EXECUTION_PROTOCOL_VERSION`` on purpose (see the
+    module docstring's Correction v2 note) -- equality there is correct,
+    not a collision."""
     from src.reference.oracle import (  # pylint: disable=import-outside-toplevel
         COMPARISON_PROFILE_VERSION,
         ORACLE_ALGORITHM_VERSION,
@@ -102,13 +136,11 @@ def assert_g4_identities_are_synthetic() -> None:
         EVALUATOR_VERSION_REDUCED_DEV,
         EXECUTION_PROFILE_ID_FULL,
         EXECUTION_PROFILE_ID_REDUCED_DEV,
-        EXECUTION_PROTOCOL_VERSION,
     )
 
     real_identities = {
         G4_EVALUATOR_VERSION: (EVALUATOR_VERSION_FULL, EVALUATOR_VERSION_REDUCED_DEV),
         G4_EXECUTION_PROFILE_ID: (EXECUTION_PROFILE_ID_FULL, EXECUTION_PROFILE_ID_REDUCED_DEV),
-        G4_EXECUTION_PROTOCOL_VERSION: (EXECUTION_PROTOCOL_VERSION,),
         G4_ORACLE_VERSION: (ORACLE_ALGORITHM_VERSION,),
         G4_PARTITION_VERSION: (PARTITION_ALGORITHM_VERSION,),
         G4_COMPARISON_PROFILE_VERSION: (COMPARISON_PROFILE_VERSION,),
@@ -162,7 +194,11 @@ def _verify_g4_versions(run_context: ReferenceRunContext, evidence: ReferenceTas
             run_context.execution_protocol_version,
             evidence.protocol_version,
         ),
-        ("protocol_version", evidence.protocol_version, G4_EXECUTION_PROTOCOL_VERSION),
+        # Deliberately checked against the real EXECUTION_PROTOCOL_VERSION,
+        # not a G4_* synthetic constant -- see the module docstring's
+        # Correction v2 note: this field identifies the shared, unmodified
+        # MEGB-02 wire transport, not evaluator-specific content.
+        ("protocol_version", evidence.protocol_version, EXECUTION_PROTOCOL_VERSION),
     )
     for label, actual, expected in checks:
         if actual != expected:
@@ -175,16 +211,17 @@ def _build_g4_request(
     candidate_code: str, entry_point: str, args: tuple[Any, ...], profile: ExecutionProfile
 ) -> CandidateExecutionRequest:
     """A local, fully independent request builder -- never reuses
-    ``reference_evaluator._build_request``, which hardcodes the real
-    ``EXECUTION_PROTOCOL_VERSION``. This benchmark's requests always carry
-    ``G4_EXECUTION_PROTOCOL_VERSION`` instead."""
+    ``reference_evaluator._build_request`` (avoiding any coupling to that
+    module's internals), but deliberately sends the same real
+    ``EXECUTION_PROTOCOL_VERSION`` it does: this benchmark reuses the
+    identical, unmodified MEGB-02 wire transport."""
     return CandidateExecutionRequest(
         candidate_code=candidate_code,
         entry_point=entry_point,
         args=args,
         kwargs={},
         limits=profile.limits,
-        protocol_version=G4_EXECUTION_PROTOCOL_VERSION,
+        protocol_version=EXECUTION_PROTOCOL_VERSION,
     )
 
 
