@@ -365,17 +365,40 @@ class _KeyGroup:
 
 
 def _logically_equivalent(first: ReferenceTaskResult, second: ReferenceTaskResult) -> bool:
-    """True when two results represent the same measurement outcome for the
-    same task/candidate/evidence, ignoring only the per-invocation fields
-    (``evaluated_at``, ``duration_seconds``) that legitimately differ
-    between two independent, correct executions of the same deterministic
-    candidate. Used to decide whether a concurrent-writer conflict
+    """True when two results are *semantically* the same measurement
+    outcome for the same task/candidate/evidence, differing (if at all)
+    only in *observational* metadata about the invocation that produced
+    them.
+
+    This is the **single, centralized** definition of "equivalent enough to
+    reconcile as a cache hit" for the whole orchestrator -- every
+    concurrent-writer-conflict decision goes through this one function
+    (see its one call site in :meth:`ReferenceOrchestrator._accept_valid_result`)
+    rather than each call site inventing its own comparison, so the
+    semantic/observational line stays defined in exactly one place.
+
+    - **Semantic fields** (must match exactly): ``task_id``,
+      ``candidate_sha256``, ``context`` (the full ``ReferenceRunContext``),
+      ``status``, ``q_ref_task``, ``reference_case_total``,
+      ``reference_case_pass_count``, ``first_failure_category``,
+      ``oracle_version``, ``reference_case_checksum``, and
+      ``execution_failure_counts`` -- together these fully determine *what
+      was measured*, and any difference here means the two results
+      genuinely disagree about the outcome, which must never be silently
+      reconciled.
+    - **Observational fields** (deliberately excluded): ``evaluated_at``
+      and ``duration_seconds`` -- these describe *when/how long this
+      particular invocation took*, not what it measured. Two independent,
+      correct executions of the same deterministic candidate against the
+      same evidence will almost never agree on either of these, so an
+      exact ``==`` comparison would reject every genuine concurrent race as
+      a conflict, silently defeating the reconciliation requirement that a
+      logically-equivalent concurrent write be accepted as a hit rather
+      than blocked.
+
+    Used to decide whether a concurrent-writer conflict
     (:attr:`~src.reference.reference_cache.CacheDisposition.CONFLICTING_WRITE`)
-    may be accepted as an equivalent hit rather than blocked -- an exact
-    ``==`` comparison would reject every genuine concurrent race, since
-    ``evaluated_at``/``duration_seconds`` almost never coincide across two
-    independent executions, silently defeating the reconciliation
-    requirement.
+    may be accepted as an equivalent hit rather than blocked.
     """
     return (
         first.task_id == second.task_id
@@ -457,8 +480,23 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
         (``cancellation_event.is_set()``) and ``KeyboardInterrupt`` alike:
         both stop admission of new unique keys, wait for already-admitted
         keys to finish (their results are never discarded), and mark every
-        not-yet-admitted item ``NOT_STARTED`` rather than raising -- see the
-        module docstring's KeyboardInterrupt note.
+        not-yet-admitted item ``NOT_STARTED`` rather than raising.
+
+        **Contract: this method never raises or propagates**
+        ``KeyboardInterrupt``. A Ctrl-C (or any other delivery of
+        ``KeyboardInterrupt``) arriving while ``run`` is executing is caught
+        internally and reflected as a normal return: a fully-formed
+        ``OrchestrationRunSummary`` with ``interrupted=True``, every
+        already-accepted result intact in ``outcomes``, and every
+        not-yet-admitted item marked ``NOT_STARTED``. Callers that want the
+        *process* to actually stop on Ctrl-C must check
+        ``summary.interrupted`` themselves after ``run`` returns and act on
+        it (e.g. exit, or re-raise) -- this method will not do that for
+        them. This is a deliberate design choice for a batch execution
+        engine (accepted as part of MEGB-03G.3): it keeps auditing,
+        partial-result reporting, and resumption deterministic, rather than
+        leaving the caller to reconstruct state from a raised exception.
+        See also the module docstring's KeyboardInterrupt note.
         """
         _require_nonempty(run_id, "run_id")
         work_item_ids = [item.work_item_id for item in work_items]
