@@ -1627,6 +1627,35 @@ Authorized after reviewing the v1 correction (commits `075f7f0`..`13e91dc`). The
 4. The qualification report's `synthetic_workload_checksum` is corrected to hash only the actual workload *content* (entry point, canonical solution source, tier case counts) — never identity/version labels, which change independently of workload content and were never meant to be covered by a "workload" checksum. `synthetic_workload_version` is corrected to report the evaluator's own version (`G4_EVALUATOR_VERSION`), which is expected to, and does, change `v1` → `v2` here.
 5. No change to the frozen workload content, concurrency levels, throughput threshold, cache criteria, or minimum readiness criteria. The benchmark is re-run from a clean cache; only the corrected v2 run may establish `ORCHESTRATION_READY_FOR_MEGB_03H`. The v1-correction run remains in the checkpoint log as superseded, not as readiness evidence.
 
+### Approved MEGB-03G.4/G.5 Conformance Correction (Frozen Synthetic Identity Restoration)
+
+Authorized after a read-only workflow audit (MEGB-03G.5's `g4-qualification.yml`) surfaced a second, independent finding while cross-checking the frozen benchmark plan's stated synthetic identities against the actual implementation: three of the plan's normative values were never implemented as frozen, and this had gone unremediated through every subsequent G.4 correction round (v1, v2, report-schema), each of which checked only that these identities were *synthetic and non-colliding with the real corpus*, never that they matched the frozen plan's own literal values.
+
+**The three normative frozen values** (from "Approved MEGB-03G.4 Benchmark Plan (Frozen)", section 1, above — under the explicit heading "frozen now"):
+
+- `dataset_version = "synthetic-g4-benchmark-v1"`
+- `dataset_checksum = sha256("g4-benchmark-synthetic-dataset-v1")` = `620d891af7232d54263877049d3e8720fc81cb38e3f2afad3e476b7e6936f8a9`
+- `task_manifest_checksum = sha256("g4-benchmark-synthetic-manifest-v1")` = `2660eefaf368c747f88db3842d5d4c021279e6b1c6bd60b7be1cdb318f0f8977`
+
+**The three divergent implemented values** (`src/reference/g4_benchmark_evaluator.py`, present since the original MEGB-03G.4 implementation and never subsequently corrected):
+
+- `G4_DATASET_VERSION = "megb-03g4-synthetic-dataset-v1"`
+- `G4_DATASET_CHECKSUM = sha256("megb-03g4-synthetic-dataset-content-v1")` = `ecd5c87a63b86d0ff290f5a8f243668662da5047d0feac3b55625a40334ca4e6`
+- `G4_TASK_MANIFEST_CHECKSUM = sha256("megb-03g4-synthetic-manifest-content-v1")` = `800231f3a168e18432ca35f64b202274ea0a695e52ccc3b213a650a96a126c4b`
+
+**Determination:** the plan text was normative, not illustrative — the section heading itself states the workload is "frozen now," under a section the Scope Amendment §4 required to specify "the exact synthetic workload definitions and their checksums" *before any material Docker execution*. This is corroborated directly: the same frozen-plan section's `entry_point = "g4_compute"` and canonical solution (sha256 `f677aa4cceca480683e70c3a23d2fd095f8ac3e77fd487432364095cdced5e47`) **were** implemented exactly, byte-for-byte — confirming the plan was treated as binding for those two values, making the divergence on the remaining three an unauthorized deviation, not a deliberate re-derivation.
+
+**The divergence did not affect workload content, candidate behavior, thresholds, or any measured outcome.** Both the frozen and the implemented values are equally fixed, deterministic, synthetic, and non-colliding with any real corpus identity (`HUMANEVAL_PLUS_VERSION`, `PARTITION_ALGORITHM_VERSION`, etc.); every equivalence/ordering/isolation/cache/interruption/throughput measurement and the `≥1.5×` threshold are computed identically regardless of which fixed synthetic string was used. Functional harmlessness does not resolve the conformance gap, however — the frozen plan preceded execution specifically so implementation would not silently diverge from what was reviewed and accepted, and that guarantee was violated here regardless of outcome.
+
+**Decision: restore implementation conformance to the frozen plan. Do not retroactively amend the plan to legitimize the implemented values.** The plan remains the normative artifact; the implementation is corrected to match it.
+
+**Correction:**
+
+1. `G4_DATASET_VERSION`, `G4_DATASET_CHECKSUM`, `G4_TASK_MANIFEST_CHECKSUM` are changed to exactly the three frozen values above. `entry_point`/canonical solution are unchanged (already conformant).
+2. `G4_EVALUATOR_VERSION` bumps `v2` → `v3`: the computation performed is unchanged, but the evaluator now emits corrected provenance and different cache identities than any v2 run did, so v2's results must remain distinguishable by version alone (the same discipline every prior breaking G.4 identity correction has followed). Prior v2 qualification results remain historical, superseded, and are not deleted.
+3. Unchanged by this correction: `benchmark_plan_version`, `synthetic_workload_version`, `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`, `G4_QUALIFICATION_REPORT_SCHEMA_VERSION` (still v2), `EXECUTION_PROTOCOL_VERSION` (still the real, shared value), workload content/ordering, concurrency levels (1/2/4), the `≥1.5×` throughput threshold, and every cache/interruption/equivalence criterion. Because workload content is unchanged, `synthetic_workload_checksum` must remain `c8e20a97f145c01ae39c56297bffa8e4dae95761095cb9d188eb93260ef92c41`.
+4. **Only a clean-cache run using the corrected, frozen identities may support final MEGB-03G.4 readiness.** The prior v2 run (report checksum `9f6e68865f829821ddd6651adf778b83f1cd195239f2a80b9b7ea4dcd1269879`, evaluator v2, non-conformant dataset/manifest identity) is superseded, preserved in git history as historical evidence only, and does not by itself establish `ORCHESTRATION_READY_FOR_MEGB_03H`.
+
 ### Objective
 
 Implement benchmark-level aggregation, content-addressed result reuse, public-result redaction, and append-only auditing without creating an adaptive reference oracle.
