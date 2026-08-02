@@ -70,6 +70,74 @@ or provided here either. This correction does not change
 ``oracle-v1``/``ORACLE_ALGORITHM_VERSION``, or
 ``COMPARISON_PROFILE_VERSION``'s own value -- only ``RESULT_SCHEMA_VERSION``
 moves, from ``reference-result-schema-v2`` to ``reference-result-schema-v3``.
+
+**Approved Correction (v4, post-MEGB-03G.2 cache-provenance audit):**
+surfaced while correcting MEGB-03G.2's reported ``protocol_version`` gap: a
+full provenance audit (against the approved MEGB-03G cache-key amendment,
+this v3 schema, and the dataset/partition/oracle lock schemas in
+``src.dataset``/``src.reference.partition_lock``/``src.reference.oracle_lock``)
+found that several fields MEGB-03G.1/03G.2 treated as sufficient for
+cache-key identity were either not persisted at all, or persisted only as
+human-managed version *labels* rather than content-addressed checksums:
+
+- ``protocol_version`` (the execution wire-protocol identity) was verified
+  once by ``evaluate_reference`` against the live
+  ``EXECUTION_PROTOCOL_VERSION`` module constant but never persisted on
+  :class:`ReferenceRunContext`/:class:`ReferenceTaskResult` -- MEGB-03G.2's
+  cache key sourced it from that live constant instead of a validated
+  result field, so a serialized result could never prove which protocol
+  version actually produced it.
+- ``dataset_version`` is a pinned human-readable version string
+  (``HUMANEVAL_PLUS_VERSION``); the actual content-addressed dataset
+  checksum (``DatasetProvenance.evalplus_dataset_hash``, the same value
+  recorded as ``dataset_checksum`` in both
+  ``src.reference.partition_lock.LockEntry`` and
+  ``src.reference.oracle_lock.OracleLockEntry``) was never persisted here,
+  so a caller could construct a result claiming the correct
+  ``dataset_version`` while the actually-loaded dataset content silently
+  differed.
+- ``partition_version`` is a fixed algorithm-identity string
+  (``PARTITION_ALGORITHM_VERSION``), not the specific frozen partition
+  *instance*'s own content checksum. The instance-level checksum already
+  exists as ``LockEntry.logical_sha256``/``OracleLockEntry.partition_checksum``
+  and (at the whole-164-task-manifest level) as
+  :class:`ReferenceBenchmarkResult`'s own ``task_manifest_checksum`` -- but
+  no per-task-cacheable field carried it before v4.
+- ``reference_case_checksum`` genuinely covers reference-only case
+  membership (task ID + case IDs + oracle-generation success/failure) but,
+  before this correction, hashed only ``oracle_record.status`` -- never
+  ``oracle_record.expected_output``. A corrected canonical solution that
+  regenerates the same case IDs with the same "success" status but a
+  *different* expected output was therefore invisible to the checksum,
+  even though it changes what "correct" means for that task.
+- ``oracle_version``, ``evaluator_version``, ``execution_profile_id``, and
+  ``comparison_profile_version`` were confirmed to be human-managed
+  version labels for code/configuration this project directly controls
+  (mirroring ``RESULT_SCHEMA_VERSION``/``CACHE_KEY_SCHEMA_VERSION``'s own
+  manually-bumped-on-behavior-change discipline), not externally-sourced
+  content that can silently drift underneath a fixed label -- these remain
+  labels, not checksums, by design.
+
+v4 adds ``execution_protocol_version``, ``dataset_checksum``, and
+``task_manifest_checksum`` directly to :class:`ReferenceRunContext` (so all
+three participate in the run context's existing equality check, exactly
+like ``comparison_profile_version`` did in v3), extends
+``_reference_case_checksum`` (in ``src.reference.reference_evaluator``) to
+hash ``expected_output`` too, and adds a
+:class:`ReferenceBenchmarkResult`-level consistency check binding its own
+``task_manifest_checksum`` to ``run_context.task_manifest_checksum``. This
+is a breaking schema change -- ``RESULT_SCHEMA_VERSION`` is incremented
+accordingly, and v1, v2, and v3 payloads are all rejected explicitly. No
+v3 (or v2, or v1) artifact has ever been persisted (confirmed by a
+repo-wide search, including ``artifacts/privileged/``, for any artifact
+stamping ``"reference-result-schema-v1"``, ``"...-v2"``, or ``"...-v3"``),
+so no migration path is required or provided. This correction does not
+change ``reference-validation-candidate-set-manifest-v1``,
+``partition-v1``/``PARTITION_ALGORITHM_VERSION``,
+``oracle-v1``/``ORACLE_ALGORITHM_VERSION``, or
+``COMPARISON_PROFILE_VERSION``'s own value -- only
+``RESULT_SCHEMA_VERSION`` moves, from ``reference-result-schema-v3`` to
+``reference-result-schema-v4``.
 """
 
 import hashlib
@@ -80,7 +148,7 @@ from typing import Any, Mapping
 
 from src.evaluators.schema import FailureCategory
 
-RESULT_SCHEMA_VERSION = "reference-result-schema-v3"
+RESULT_SCHEMA_VERSION = "reference-result-schema-v4"
 REQUIRED_TASK_COUNT = 164
 
 REFERENCE_VALIDATION_CANDIDATE_SET_MANIFEST_SCHEMA_VERSION = (
@@ -142,6 +210,18 @@ class ReferenceRunContext:
     added so run-context equality (already enforced everywhere a benchmark
     or aggregate is constructed) also catches a comparison-profile
     inconsistency, not just dataset/partition/execution/evaluator drift.
+
+    v4 adds three fields closing the cache-provenance audit's confirmed
+    gaps: ``execution_protocol_version`` (the execution wire-protocol
+    identity, now persisted and verified rather than sourced from a live
+    module constant at cache-key-construction time), ``dataset_checksum``
+    (the content-addressed dataset checksum — ``DatasetProvenance.
+    evalplus_dataset_hash`` — distinct from ``dataset_version``'s
+    human-readable pinned-version string), and ``task_manifest_checksum``
+    (the frozen partition/reference-validation manifest's own content
+    checksum, distinct from ``partition_version``'s fixed algorithm-identity
+    string). All three participate in this dataclass's existing equality
+    check like every other field here.
     """
 
     experiment_run_id: str
@@ -154,6 +234,9 @@ class ReferenceRunContext:
     partition_version: str
     execution_profile_id: str
     comparison_profile_version: str
+    execution_protocol_version: str
+    dataset_checksum: str
+    task_manifest_checksum: str
 
     def __post_init__(self) -> None:
         _require_nonempty_str(self, "experiment_run_id")
@@ -166,6 +249,9 @@ class ReferenceRunContext:
         _require_nonempty_str(self, "partition_version")
         _require_nonempty_str(self, "execution_profile_id")
         _require_nonempty_str(self, "comparison_profile_version")
+        _require_nonempty_str(self, "execution_protocol_version")
+        _require_nonempty_str(self, "dataset_checksum")
+        _require_sha256_hex(self, "task_manifest_checksum")
 
 
 class MeasurementStatus(str, Enum):
@@ -618,7 +704,10 @@ class ReferenceBenchmarkResult:
     substituted denominator. ``task_manifest_checksum`` pins exactly which
     164-task reference-validation manifest this benchmark was evaluated
     against, so the denominator's identity — not just its size — cannot
-    silently drift between runs. ``candidate_set_manifest`` pins exactly
+    silently drift between runs; it must also match
+    ``run_context.task_manifest_checksum`` (v4), so the run-level and
+    benchmark-level copies of this identity cannot silently diverge.
+    ``candidate_set_manifest`` pins exactly
     which task-specific candidate solution was evaluated for every task;
     every task result's own ``candidate_id``/``candidate_sha256`` must match
     its manifest entry exactly, so a task result cannot silently claim to
@@ -657,6 +746,12 @@ class ReferenceBenchmarkResult:
             raise InvalidReferenceResultError(
                 f"candidate_set_manifest.task_manifest_checksum "
                 f"({self.candidate_set_manifest.task_manifest_checksum!r}) does not match "
+                f"task_manifest_checksum ({self.task_manifest_checksum!r})"
+            )
+        if self.run_context.task_manifest_checksum != self.task_manifest_checksum:
+            raise InvalidReferenceResultError(
+                f"run_context.task_manifest_checksum "
+                f"({self.run_context.task_manifest_checksum!r}) does not match "
                 f"task_manifest_checksum ({self.task_manifest_checksum!r})"
             )
         task_ids = [result.task_id for result in self.task_results]

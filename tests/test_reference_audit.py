@@ -58,6 +58,9 @@ def _run_context(**overrides: str) -> ReferenceRunContext:
         "partition_version": "partition-v1",
         "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
         "comparison_profile_version": COMPARISON_PROFILE_VERSION,
+        "execution_protocol_version": "reference-evaluator-execution-protocol-v1",
+        "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+        "task_manifest_checksum": "d" * 64,
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)
@@ -169,6 +172,9 @@ def test_negative_duration_rejected() -> None:
         "optimization_run_id",
         "candidate_id",
         "candidate_sha256",
+        "execution_protocol_version",
+        "dataset_checksum",
+        "task_manifest_checksum",
         "task_id",
         "invocation_id",
         "invoked_at",

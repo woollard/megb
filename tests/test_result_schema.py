@@ -64,6 +64,9 @@ def _run_context(**overrides: str) -> ReferenceRunContext:
         "partition_version": "partition-v1",
         "execution_profile_id": "docker-megb02-v1",
         "comparison_profile_version": "comparison-profile-v1",
+        "execution_protocol_version": "reference-evaluator-execution-protocol-v1",
+        "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+        "task_manifest_checksum": _SHA_TASK_MANIFEST,
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)
@@ -182,6 +185,9 @@ def test_valid_run_context_constructs() -> None:
         "partition_version",
         "execution_profile_id",
         "comparison_profile_version",
+        "execution_protocol_version",
+        "dataset_checksum",
+        "task_manifest_checksum",
     ],
 )
 def test_run_context_empty_string_field_rejected(field_name: str) -> None:

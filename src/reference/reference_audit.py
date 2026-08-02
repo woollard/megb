@@ -39,6 +39,15 @@ the full context would either pull in fields this schema must not carry or
 require modifying the already-accepted ``ReferenceRunContext`` -- out of
 scope for this checkpoint. The resulting field-declaration overlap is
 expected and accepted, not a defect.
+
+**Resolved (v2 audit-record schema, post-MEGB-03G.2 cache-provenance
+audit):** adds ``execution_protocol_version``, ``dataset_checksum``, and
+``task_manifest_checksum`` -- the same three safe identity/checksum fields
+the ``result_schema`` v4 correction added to ``ReferenceRunContext`` --
+so an audit record can be reconciled against the cache/result identity it
+accompanies without needing to inspect the privileged result itself.
+``AUDIT_RECORD_SCHEMA_VERSION`` moves from ``reference-audit-record-v1`` to
+``reference-audit-record-v2`` accordingly.
 """
 
 # See the note above: the field-declaration overlap with
@@ -57,7 +66,7 @@ from typing import Any, Mapping
 from src.reference.reference_cache import CacheDisposition
 from src.reference.result_schema import MeasurementStatus, ReferenceRunContext, ReferenceTaskResult
 
-AUDIT_RECORD_SCHEMA_VERSION = "reference-audit-record-v1"
+AUDIT_RECORD_SCHEMA_VERSION = "reference-audit-record-v2"
 
 DEFAULT_AUDIT_LOG_PATH = Path("artifacts/reference/audit/reference_audit_log.jsonl")
 
@@ -97,6 +106,9 @@ class ReferenceAuditRecord:
     oracle_version: str
     execution_profile_id: str
     comparison_profile_version: str
+    execution_protocol_version: str
+    dataset_checksum: str
+    task_manifest_checksum: str
     reference_case_checksum: str
     task_id: str
     invocation_id: str
@@ -122,6 +134,9 @@ class ReferenceAuditRecord:
             "oracle_version",
             "execution_profile_id",
             "comparison_profile_version",
+            "execution_protocol_version",
+            "dataset_checksum",
+            "task_manifest_checksum",
             "reference_case_checksum",
             "task_id",
             "invocation_id",
@@ -194,6 +209,9 @@ def build_audit_record(  # pylint: disable=too-many-arguments,too-many-positiona
         oracle_version=task_result.oracle_version,
         execution_profile_id=run_context.execution_profile_id,
         comparison_profile_version=run_context.comparison_profile_version,
+        execution_protocol_version=run_context.execution_protocol_version,
+        dataset_checksum=run_context.dataset_checksum,
+        task_manifest_checksum=run_context.task_manifest_checksum,
         reference_case_checksum=task_result.reference_case_checksum,
         task_id=task_result.task_id,
         invocation_id=invocation_id,

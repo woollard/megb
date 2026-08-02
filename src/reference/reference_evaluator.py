@@ -30,6 +30,7 @@ per-invocation isolation model exactly.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -154,6 +155,14 @@ class ReferenceCase:
 
 
 def _reference_case_checksum(task_id: str, cases: tuple[ReferenceCase, ...]) -> str:
+    """Hash task/case identity, oracle-generation status, AND (v4 correction)
+    the actual expected-output content -- not just whether generation
+    succeeded. Before this correction, a corrected canonical solution that
+    regenerated the same case IDs with the same "success" status but a
+    *different* expected output was invisible to this checksum. Expected
+    output is already tagged-JSON-safe (see ``OracleRecord.expected_output``),
+    so ``json.dumps(..., sort_keys=True)`` gives a stable, hashable
+    representation without inventing a new encoding."""
     hasher = hashlib.sha256()
     hasher.update(task_id.encode("utf-8"))
     for case in cases:
@@ -161,6 +170,9 @@ def _reference_case_checksum(task_id: str, cases: tuple[ReferenceCase, ...]) -> 
         hasher.update(case.case_id.encode("utf-8"))
         hasher.update(b"\x00")
         hasher.update(case.oracle_record.status.encode("utf-8"))
+        hasher.update(b"\x00")
+        expected_output_json = json.dumps(case.oracle_record.expected_output, sort_keys=True)
+        hasher.update(expected_output_json.encode("utf-8"))
     return hasher.hexdigest()
 
 
@@ -177,6 +189,14 @@ class ReferenceTaskEvidence:
     this (requirement 7: deterministic test ordering) rather than sorting
     silently, so a caller that assembled cases out of order fails loudly
     instead of getting a silently reordered evaluation.
+
+    ``dataset_checksum``/``task_manifest_checksum`` (v4) are the
+    content-addressed counterparts of ``dataset_version``/
+    ``partition_version`` -- verified for internal consistency against
+    ``ReferenceRunContext``'s own copies in ``_verify_versions``, not
+    recomputed from the live corpus/lock here (this trusted-side bundle
+    does not itself load privileged partition/oracle artifacts; whatever
+    constructs it is responsible for supplying the authoritative values).
     """
 
     task_id: str
@@ -187,6 +207,8 @@ class ReferenceTaskEvidence:
     partition_version: str
     dataset_version: str
     protocol_version: str
+    dataset_checksum: str
+    task_manifest_checksum: str
     reference_case_checksum: str = ""
 
     def __post_init__(self) -> None:
@@ -194,6 +216,10 @@ class ReferenceTaskEvidence:
             raise ValueError("task_id must be nonempty")
         if not self.entry_point:
             raise ValueError("entry_point must be nonempty")
+        if not self.dataset_checksum:
+            raise ValueError("dataset_checksum must be nonempty")
+        if not self.task_manifest_checksum:
+            raise ValueError("task_manifest_checksum must be nonempty")
         if not self.cases:
             raise ValueError(f"task {self.task_id!r}: evidence must contain at least one case")
         case_ids = [case.case_id for case in self.cases]
@@ -291,8 +317,14 @@ def _verify_versions(
     checks = (
         ("dataset_version", run_context.dataset_version, evidence.dataset_version),
         ("dataset_version", evidence.dataset_version, HUMANEVAL_PLUS_VERSION),
+        ("dataset_checksum", run_context.dataset_checksum, evidence.dataset_checksum),
         ("partition_version", run_context.partition_version, evidence.partition_version),
         ("partition_version", evidence.partition_version, PARTITION_ALGORITHM_VERSION),
+        (
+            "task_manifest_checksum",
+            run_context.task_manifest_checksum,
+            evidence.task_manifest_checksum,
+        ),
         ("execution_profile_id", run_context.execution_profile_id, profile.profile_id),
         ("evaluator_version", run_context.evaluator_version, profile.evaluator_version),
         ("oracle_version", evidence.oracle_version, ORACLE_ALGORITHM_VERSION),
@@ -305,6 +337,11 @@ def _verify_versions(
             "comparison_profile_version",
             evidence.comparison_profile.profile_version,
             COMPARISON_PROFILE_VERSION,
+        ),
+        (
+            "execution_protocol_version",
+            run_context.execution_protocol_version,
+            evidence.protocol_version,
         ),
         ("protocol_version", evidence.protocol_version, EXECUTION_PROTOCOL_VERSION),
     )

@@ -74,6 +74,9 @@ def _run_context() -> ReferenceRunContext:
         partition_version="partition-v1",
         execution_profile_id="docker-megb02-v1",
         comparison_profile_version="comparison-profile-v1",
+        execution_protocol_version="reference-evaluator-execution-protocol-v1",
+        dataset_checksum="fe585eb4df8c88d844eeb463ea4d0302",
+        task_manifest_checksum=_SHA_MANIFEST,
     )
 
 
@@ -236,12 +239,14 @@ def test_task_result_to_dict_stamps_schema_version() -> None:
 
 
 @pytest.mark.parametrize(
-    "stale_version", ["reference-result-schema-v1", "reference-result-schema-v2"]
+    "stale_version",
+    ["reference-result-schema-v1", "reference-result-schema-v2", "reference-result-schema-v3"],
 )
 def test_task_result_from_dict_rejects_stale_schema_version(stale_version: str) -> None:
     """A payload stamped with a different (older) schema_version is rejected
     explicitly, never silently parsed under the current field names --
-    covers both the pre-v2 and pre-v3 (comparison-profile-incomplete) shapes."""
+    covers the pre-v2, pre-v3 (comparison-profile-incomplete), and pre-v4
+    (protocol/dataset/partition-checksum-incomplete) shapes."""
     payload = task_result_to_dict(_minimal_pass_task_result())
     payload["schema_version"] = stale_version
     with pytest.raises(UnsupportedResultSchemaVersionError):
@@ -267,7 +272,8 @@ def test_benchmark_result_round_trip_preserves_task_results_and_manifest() -> No
 
 
 @pytest.mark.parametrize(
-    "stale_version", ["reference-result-schema-v1", "reference-result-schema-v2"]
+    "stale_version",
+    ["reference-result-schema-v1", "reference-result-schema-v2", "reference-result-schema-v3"],
 )
 def test_benchmark_result_from_dict_rejects_stale_schema_version(stale_version: str) -> None:
     """A benchmark payload stamped with a different (older) schema_version is
@@ -412,6 +418,26 @@ def test_redact_benchmark_result_exposes_comparison_profile_version() -> None:
     )
     redacted = redact_benchmark_result(benchmark)
     assert redacted["comparison_profile_version"] == "comparison-profile-v1"
+
+
+def test_redact_benchmark_result_exposes_v4_checksum_and_protocol_fields() -> None:
+    """execution_protocol_version/dataset_checksum are safe version/checksum
+    identifiers -- exposed at the benchmark level like the other v3/v4
+    run-context identifiers already are."""
+    result = _task_result_with_diagnostics()
+    manifest = _candidate_set_manifest_for(result)
+    benchmark = ReferenceBenchmarkResult(
+        run_context=_run_context(),
+        candidate_set_manifest=manifest,
+        task_results=(result,),
+        task_manifest_checksum=_SHA_MANIFEST,
+        oracle_version=_ORACLE_VERSION,
+        evaluated_at="2026-07-01T00:00:02Z",
+        duration_seconds=1.5,
+    )
+    redacted = redact_benchmark_result(benchmark)
+    assert redacted["execution_protocol_version"] == "reference-evaluator-execution-protocol-v1"
+    assert redacted["dataset_checksum"] == "fe585eb4df8c88d844eeb463ea4d0302"
 
 
 def test_redact_benchmark_result_status_counts_are_json_safe_string_keys() -> None:

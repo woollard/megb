@@ -84,6 +84,9 @@ def run_context_to_dict(context: ReferenceRunContext) -> dict[str, str]:
         "partition_version": context.partition_version,
         "execution_profile_id": context.execution_profile_id,
         "comparison_profile_version": context.comparison_profile_version,
+        "execution_protocol_version": context.execution_protocol_version,
+        "dataset_checksum": context.dataset_checksum,
+        "task_manifest_checksum": context.task_manifest_checksum,
     }
 
 
@@ -100,6 +103,9 @@ def run_context_from_dict(data: Mapping[str, Any]) -> ReferenceRunContext:
         partition_version=data["partition_version"],
         execution_profile_id=data["execution_profile_id"],
         comparison_profile_version=data["comparison_profile_version"],
+        execution_protocol_version=data["execution_protocol_version"],
+        dataset_checksum=data["dataset_checksum"],
+        task_manifest_checksum=data["task_manifest_checksum"],
     )
 
 
@@ -325,6 +331,8 @@ def redact_benchmark_result(
         "optimization_run_id": benchmark.run_context.optimization_run_id,
         "evaluator_version": benchmark.run_context.evaluator_version,
         "comparison_profile_version": benchmark.run_context.comparison_profile_version,
+        "execution_protocol_version": benchmark.run_context.execution_protocol_version,
+        "dataset_checksum": benchmark.run_context.dataset_checksum,
         "oracle_version": benchmark.oracle_version,
         "task_manifest_checksum": benchmark.task_manifest_checksum,
         "candidate_set_manifest_checksum": benchmark.candidate_set_manifest.manifest_checksum,

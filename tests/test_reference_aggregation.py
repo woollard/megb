@@ -80,6 +80,9 @@ def _full_run_context(**overrides: str) -> ReferenceRunContext:
         "partition_version": "partition-v1",
         "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
         "comparison_profile_version": COMPARISON_PROFILE_VERSION,
+        "execution_protocol_version": "reference-evaluator-execution-protocol-v1",
+        "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+        "task_manifest_checksum": _SHA_TASK_MANIFEST,
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)
@@ -385,6 +388,52 @@ def test_rejects_mismatched_comparison_profile_version_across_results() -> None:
     tampered = _replace_result(results, "HumanEval/163", context_b)
     with pytest.raises(ReferenceAggregationError, match="different run_context"):
         aggregate_reference_results(tampered, manifest)
+
+
+def test_rejects_mismatched_execution_protocol_version_across_results() -> None:
+    """A single task result evaluated under a different
+    execution_protocol_version is rejected via run-context equality (v4) --
+    the field the original G.2 submission sourced from a live constant
+    instead of the persisted, validated context."""
+    context_a = _full_run_context()
+    context_b = _full_run_context(execution_protocol_version="stale-protocol-version")
+    manifest, results = _manifest_and_results(context_a)
+    tampered = _replace_result(results, "HumanEval/163", context_b)
+    with pytest.raises(ReferenceAggregationError, match="different run_context"):
+        aggregate_reference_results(tampered, manifest)
+
+
+def test_rejects_mismatched_dataset_checksum_across_results() -> None:
+    """A single task result evaluated under a different (content-bound)
+    dataset_checksum is rejected via run-context equality (v4)."""
+    context_a = _full_run_context()
+    context_b = _full_run_context(dataset_checksum="0" * 32)
+    manifest, results = _manifest_and_results(context_a)
+    tampered = _replace_result(results, "HumanEval/163", context_b)
+    with pytest.raises(ReferenceAggregationError, match="different run_context"):
+        aggregate_reference_results(tampered, manifest)
+
+
+def test_rejects_mismatched_task_manifest_checksum_across_results() -> None:
+    """A single task result evaluated under a different (content-bound)
+    task_manifest_checksum is rejected via run-context equality (v4)."""
+    context_a = _full_run_context()
+    context_b = _full_run_context(task_manifest_checksum="9" * 64)
+    manifest, results = _manifest_and_results(context_a)
+    tampered = _replace_result(results, "HumanEval/163", context_b)
+    with pytest.raises(ReferenceAggregationError, match="different run_context"):
+        aggregate_reference_results(tampered, manifest)
+
+
+def test_rejects_run_context_task_manifest_checksum_disagreeing_with_manifest() -> None:
+    """run_context.task_manifest_checksum must agree with
+    candidate_set_manifest.task_manifest_checksum -- enforced by
+    ReferenceBenchmarkResult's own v4 cross-check, surfaced through
+    aggregate_reference_results."""
+    context = _full_run_context(task_manifest_checksum="9" * 64)
+    manifest, results = _manifest_and_results(context)
+    with pytest.raises(InvalidReferenceResultError, match="task_manifest_checksum"):
+        aggregate_reference_results(results, manifest)
 
 
 # --- Type defense ----------------------------------------------------------

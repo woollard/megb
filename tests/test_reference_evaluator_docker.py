@@ -25,7 +25,7 @@ import hashlib
 from typing import Any, Callable
 
 import pytest
-from evalplus.data.humaneval import HUMANEVAL_PLUS_VERSION
+from evalplus.data.humaneval import HUMANEVAL_PLUS_VERSION, get_human_eval_plus_hash
 
 from src.dataset import PrivilegedTaskView, load_privileged_view, load_public_view
 from src.evaluators.schema import FailureCategory
@@ -52,6 +52,17 @@ from src.reference.result_schema import MeasurementStatus, ReferenceRunContext
 pytestmark = pytest.mark.docker
 
 _TASK_ID = "HumanEval/0"
+
+# The real, content-addressed EvalPlus dataset checksum -- not a synthetic
+# placeholder -- since this file already has real privileged-corpus access.
+_DATASET_CHECKSUM = get_human_eval_plus_hash(version=HUMANEVAL_PLUS_VERSION)
+
+# task_manifest_checksum is only checked for internal consistency between
+# run_context and evidence (see reference_evaluator._verify_versions) --
+# this vertical slice does not exercise real partition-lock integration
+# (a future loader's job), so a fixed, valid-format placeholder is used
+# consistently on both sides.
+_TASK_MANIFEST_CHECKSUM = "d" * 64
 
 
 def _real_task() -> tuple[PrivilegedTaskView, str]:
@@ -96,6 +107,8 @@ def _build_evidence() -> ReferenceTaskEvidence:
         partition_version=PARTITION_ALGORITHM_VERSION,
         dataset_version=HUMANEVAL_PLUS_VERSION,
         protocol_version=EXECUTION_PROTOCOL_VERSION,
+        dataset_checksum=_DATASET_CHECKSUM,
+        task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
     )
 
 
@@ -111,6 +124,9 @@ def _run_context() -> ReferenceRunContext:
         partition_version=PARTITION_ALGORITHM_VERSION,
         execution_profile_id=EXECUTION_PROFILE_ID_FULL,
         comparison_profile_version=COMPARISON_PROFILE_VERSION,
+        execution_protocol_version=EXECUTION_PROTOCOL_VERSION,
+        dataset_checksum=_DATASET_CHECKSUM,
+        task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
     )
 
 

@@ -70,6 +70,9 @@ _TASK_ID = "Test/0"
 _CANDIDATE_CODE = "def double(n):\n    return n * 2\n"
 _CANDIDATE_ID = "cand-Test/0"
 
+_DATASET_CHECKSUM = "fe585eb4df8c88d844eeb463ea4d0302"
+_TASK_MANIFEST_CHECKSUM = "d" * 64
+
 
 class FakeExecutionBackend(ExecutionBackend):
     """Deterministic, queued fake backend for offline unit tests."""
@@ -145,6 +148,8 @@ def _evidence(cases: list[ReferenceCase], **overrides: object) -> ReferenceTaskE
         "partition_version": PARTITION_ALGORITHM_VERSION,
         "dataset_version": HUMANEVAL_PLUS_VERSION,
         "protocol_version": EXECUTION_PROTOCOL_VERSION,
+        "dataset_checksum": _DATASET_CHECKSUM,
+        "task_manifest_checksum": _TASK_MANIFEST_CHECKSUM,
     }
     fields.update(overrides)
     return ReferenceTaskEvidence(**fields)  # type: ignore[arg-type]
@@ -162,6 +167,9 @@ def _run_context(**overrides: object) -> ReferenceRunContext:
         "partition_version": PARTITION_ALGORITHM_VERSION,
         "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
         "comparison_profile_version": COMPARISON_PROFILE_VERSION,
+        "execution_protocol_version": EXECUTION_PROTOCOL_VERSION,
+        "dataset_checksum": _DATASET_CHECKSUM,
+        "task_manifest_checksum": _TASK_MANIFEST_CHECKSUM,
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)  # type: ignore[arg-type]
@@ -618,6 +626,63 @@ def test_comparison_profile_version_mismatch_on_context_rejected() -> None:
     cases = [_case("c0", 3)]
     evidence = _evidence(cases)
     run_context = _run_context(comparison_profile_version="stale-comparison-profile")
+    backend = FakeExecutionBackend([])
+
+    with pytest.raises(ReferenceEvaluatorVersionMismatchError):
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
+    assert not backend.requests
+
+
+def test_execution_protocol_version_persisted_matches_actual_execution_protocol() -> None:
+    """The happy path: run_context.execution_protocol_version already equals
+    the protocol actually used (evidence.protocol_version) -- construction
+    and evaluation both succeed."""
+    cases = [_case("c0", 3)]
+    evidence = _evidence(cases)
+    run_context = _run_context()
+    assert run_context.execution_protocol_version == evidence.protocol_version
+    backend = FakeExecutionBackend([_execution_result(return_value=6)])
+
+    result, _diagnostics = _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
+
+    assert result.status == MeasurementStatus.VALID
+    assert result.context.execution_protocol_version == EXECUTION_PROTOCOL_VERSION
+
+
+def test_execution_protocol_version_mismatch_on_context_rejected() -> None:
+    """run_context.execution_protocol_version must match the protocol
+    actually used (evidence.protocol_version) before any candidate code
+    executes -- the v4 correction: this field is now persisted and
+    verified, not sourced from a live constant only at cache-key time."""
+    cases = [_case("c0", 3)]
+    evidence = _evidence(cases)
+    run_context = _run_context(execution_protocol_version="stale-protocol-version")
+    backend = FakeExecutionBackend([])
+
+    with pytest.raises(ReferenceEvaluatorVersionMismatchError):
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
+    assert not backend.requests
+
+
+def test_dataset_checksum_mismatch_on_context_rejected() -> None:
+    """run_context.dataset_checksum must match evidence.dataset_checksum
+    before any candidate code executes."""
+    cases = [_case("c0", 3)]
+    evidence = _evidence(cases)
+    run_context = _run_context(dataset_checksum="0" * 32)
+    backend = FakeExecutionBackend([])
+
+    with pytest.raises(ReferenceEvaluatorVersionMismatchError):
+        _evaluate(evidence, _CANDIDATE_CODE, run_context, backend=backend)
+    assert not backend.requests
+
+
+def test_task_manifest_checksum_mismatch_on_context_rejected() -> None:
+    """run_context.task_manifest_checksum must match
+    evidence.task_manifest_checksum before any candidate code executes."""
+    cases = [_case("c0", 3)]
+    evidence = _evidence(cases)
+    run_context = _run_context(task_manifest_checksum="9" * 64)
     backend = FakeExecutionBackend([])
 
     with pytest.raises(ReferenceEvaluatorVersionMismatchError):

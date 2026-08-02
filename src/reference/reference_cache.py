@@ -24,6 +24,18 @@ result) raises.
 Does not implement execution orchestration, bounded concurrency,
 resumption, or backend invocation -- those belong to MEGB-03G.3, which
 calls this cache's ``get``/``put`` around its own execution loop.
+
+**Resolved (v2 cache-entry schema, post-MEGB-03G.2 cache-provenance
+audit):** ``CACHE_ENTRY_SCHEMA_VERSION`` moves from
+``reference-result-cache-entry-v1`` to ``reference-result-cache-entry-v2``
+because its meaning depends on ``CACHE_KEY_SCHEMA_VERSION`` (embedded
+``cache_key`` payload) and on ``RESULT_SCHEMA_VERSION`` (embedded
+``task_result`` payload), both of which changed in this same correction.
+No persisted cache artifact has ever existed (this cache's own
+``artifacts/privileged/reference/cache/`` directory is confirmed empty/
+nonexistent in the repository), so no migration path is required or
+provided; an old-envelope entry would in any case be rejected via the
+existing ``STALE_INCOMPATIBLE`` disposition, not silently reinterpreted.
 """
 
 import hashlib
@@ -50,7 +62,7 @@ from src.reference.result_schema import (
     UnsupportedResultSchemaVersionError,
 )
 
-CACHE_ENTRY_SCHEMA_VERSION = "reference-result-cache-entry-v1"
+CACHE_ENTRY_SCHEMA_VERSION = "reference-result-cache-entry-v2"
 
 DEFAULT_CACHE_DIR = Path("artifacts/privileged/reference/cache")
 

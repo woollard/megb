@@ -34,6 +34,18 @@ already catches a comparison-profile inconsistency across task results —
 no separate, dedicated check is needed here, since (unlike
 ``execution_profile_id``/``evaluator_version``) comparison-profile identity
 does not itself vary between the full and reduced-development profiles.
+
+**Cache-provenance audit note (resolved by the v4 correction):** the same
+reasoning now also covers ``execution_protocol_version``, ``dataset_checksum``,
+and ``task_manifest_checksum`` -- all three are v4 additions to
+``ReferenceRunContext``, so ``_require_shared_run_context``'s equality
+check picks up an inconsistency in any of them automatically, with no
+change to this module's own logic required. ``execution_protocol_version``
+in particular used to be sourced from the live ``EXECUTION_PROTOCOL_VERSION``
+module constant inside ``src.reference.cache_key.cache_key_for`` rather
+than from this aggregator's inputs at all; it is now a genuine
+``ReferenceRunContext`` field like every other identity this module
+already validates by equality.
 """
 
 from typing import Sequence

@@ -51,6 +51,9 @@ def _run_context(**overrides: str) -> ReferenceRunContext:
         "partition_version": "partition-v1",
         "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
         "comparison_profile_version": COMPARISON_PROFILE_VERSION,
+        "execution_protocol_version": "reference-evaluator-execution-protocol-v1",
+        "dataset_checksum": "fe585eb4df8c88d844eeb463ea4d0302",
+        "task_manifest_checksum": "d" * 64,
     }
     fields.update(overrides)
     return ReferenceRunContext(**fields)
@@ -383,4 +386,4 @@ def test_default_cache_directory_is_gitignored() -> None:
 
 def test_cache_entry_schema_version_constant_is_stable() -> None:
     """Cache entry schema version constant is stable."""
-    assert CACHE_ENTRY_SCHEMA_VERSION == "reference-result-cache-entry-v1"
+    assert CACHE_ENTRY_SCHEMA_VERSION == "reference-result-cache-entry-v2"
