@@ -1,9 +1,9 @@
 {
   "benchmark_plan_checksum": "16b8634a5700cee173b5f5b916db1d7f8a5023bcd83332c581bb81e8db9b7fd8",
   "benchmark_plan_version": "megb-03g4-benchmark-plan-v1",
-  "best_speedup": 1.8227692031888638,
+  "best_speedup": 2.364323117360507,
   "cache_all_hits_on_warm_run": true,
-  "calibration_mean_seconds": 0.3865660695979993,
+  "calibration_mean_seconds": 0.4178162645548582,
   "calibration_sample_count": 3,
   "concurrency_levels": [
     1,
@@ -15,16 +15,16 @@
   "docker_image_provenance_checksum": "cdf2fa8490f2a0dd2b8470e8d7218a864afe655d3018e56dd788a47bbe7caa29",
   "equivalence_all_matched": true,
   "equivalence_mismatch_count": 0,
-  "generated_at": "2026-08-02T20:11:38.703713+00:00",
+  "generated_at": "2026-08-02T20:32:36.604133+00:00",
   "host_platform_summary": "macOS-26.5.1-arm64-arm-64bit-Mach-O",
-  "implementation_commit_sha": "732457c0dac3b37234e1806ae6ddf9f100706060",
+  "implementation_commit_sha": "b56ee02c33e58435db264cfd3922a16b1d0de204",
   "implementation_dirty": false,
   "interruption_n": 6,
   "isolation_all_matched": true,
   "leftover_containers_found": false,
   "ordering_deterministic": true,
   "readiness": "ORCHESTRATION_READY_FOR_MEGB_03H",
-  "report_checksum": "6615d238325f16cd2af4823339fc51fad9bfcd4b356f395d19f7bff54968da01",
+  "report_checksum": "4884e66fa8141b43a2ceba012666651821bb86cf2beb355fc598b004aa7afe27",
   "resumption_no_gaps": true,
   "scale_factor": 1.0,
   "schema_version": "megb-03g4-qualification-report-v2",
@@ -32,5 +32,5 @@
   "synthetic_workload_checksum_algorithm_version": "megb-03g4-workload-checksum-algorithm-v1",
   "synthetic_workload_version": "megb-03g4-synthetic-workload-v1",
   "throughput_sweep_n": 8,
-  "total_wall_seconds": 73.39503729203716
+  "total_wall_seconds": 68.61517437500879
 }
