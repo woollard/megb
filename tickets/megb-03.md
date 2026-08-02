@@ -1550,6 +1550,67 @@ Measures real per-invocation Docker overhead (`measured_per_invocation_sec`) on 
 
 **Minimum `ORCHESTRATION_READY_FOR_MEGB_03H` criteria** are exactly the amendment's own list in section 4 above (100% sequential/concurrent typed-result equivalence; zero isolation violations; zero missing or duplicate accepted work items; deterministic final ordering; exact cache-hit behavior with no backend execution for valid hits; successful interruption/resumption without repeating already-accepted work; at least one concurrency configuration achieving ≥1.5× throughput over sequential on the same host/workload; no unresolved infrastructure error or resource leak).
 
+### Approved MEGB-03G.4 Correction (Synthetic Evaluator Provenance + Ordering/Isolation Validation)
+
+Authorized after reviewing the first MEGB-03G.4 run (commits `888430c`, `e13a997`, `9db967b`; readiness declared `ORCHESTRATION_READY_FOR_MEGB_03H`). That declaration is **not accepted** and does not qualify readiness, for two reasons, both corrected below. The measurements themselves (calibration `0.361s`/invocation, best speedup `2.905×`, `66.5s` total wall-clock) are preserved as **historical context only** — the frozen threshold (`≥1.5×`, 60-minute ceiling, 1/2/4 concurrency levels, cache/interruption/equivalence criteria) is unchanged by this correction and must not be re-litigated.
+
+**Defect 1 — false provenance.** The prior run set `dataset_version = HUMANEVAL_PLUS_VERSION` (and, less visibly, also reused `PARTITION_ALGORITHM_VERSION`, `ORACLE_ALGORITHM_VERSION`, `COMPARISON_PROFILE_VERSION`, `EVALUATOR_VERSION_FULL`, `EXECUTION_PROFILE_ID_FULL`, and `EXECUTION_PROTOCOL_VERSION` — every real-corpus identity `evaluate_reference`'s internal cross-check touches) purely to satisfy `evaluate_reference`'s hardcoded `evidence.dataset_version == HUMANEVAL_PLUS_VERSION` assertion. This is unacceptable: a synthetic benchmark result must never carry any real-corpus identity, even as an inert label.
+
+**Defect 2 — omitted validation.** The frozen plan's own minimum criteria already required "zero isolation violations" and "deterministic final ordering" against the real backend. The prior run only *asserted* these were "inherited unchanged from MEGB-03G.3's synthetic-backend tests" rather than actually measuring them against a real `DockerPerInvocationBackend`. That assertion is insufficient — MEGB-03G.4's whole purpose is to validate G.3's synthetic-backend guarantees hold under the real MEGB-02 boundary, not to assume it.
+
+#### 1. Benchmark-only evaluator adapter — design
+
+**The result schema has no conflict.** `ReferenceRunContext`/`ReferenceTaskEvidence`/`ReferenceTaskResult`/`ExecutionProfile` validate their string identity fields only for nonempty-ness (or sha256-hex shape where a checksum is required) — none of them hardcode a comparison against any real constant. The real-corpus cross-check lives *only* inside `evaluate_reference`'s own `_verify_versions` (in `src.reference.reference_evaluator`), which this correction never touches. There is therefore no schema conflict to report — the fix is a new, separate, benchmark-only evaluation function that never calls or is called by `evaluate_reference`.
+
+**New module `src/reference/g4_benchmark_evaluator.py`** defines its own fully synthetic identity constants, none equal to any real MEGB-03B/C/E/F constant:
+
+- `G4_EVALUATOR_VERSION = "megb-03g4-benchmark-evaluator-v1"`
+- `G4_EXECUTION_PROFILE_ID = "megb-03g4-benchmark-profile-v1"`
+- `G4_EXECUTION_PROTOCOL_VERSION = "megb-03g4-benchmark-protocol-v1"`
+- `G4_DATASET_VERSION = "megb-03g4-synthetic-dataset-v1"`
+- `G4_PARTITION_VERSION = "megb-03g4-synthetic-partition-v1"`
+- `G4_ORACLE_VERSION = "megb-03g4-synthetic-oracle-v1"`
+- `G4_COMPARISON_PROFILE_VERSION = "megb-03g4-synthetic-comparison-v1"`
+- `G4_DATASET_CHECKSUM`/`G4_TASK_MANIFEST_CHECKSUM`: sha256 of fixed literal synthetic labels (unchanged in kind from the prior run, already never real).
+
+`evaluate_g4_benchmark_candidate(evidence, candidate_code, candidate_id, candidate_sha256, run_context, *, backend, profile)` mirrors `evaluate_reference`'s *shape* (same parameter list, same real `ExecutionBackend`/`CandidateExecutionRequest` boundary, same `compare_outputs` comparison utility, same `ReferenceTaskResult` construction) but performs its own internal consistency check — `run_context`'s fields must match `evidence`'s fields and this module's own `G4_*` constants — never against `HUMANEVAL_PLUS_VERSION`/`PARTITION_ALGORITHM_VERSION`/`ORACLE_ALGORITHM_VERSION`/`COMPARISON_PROFILE_VERSION`/`EVALUATOR_VERSION_FULL`/`EXECUTION_PROFILE_ID_FULL`/`EXECUTION_PROTOCOL_VERSION`. It never claims to be HumanEval, EvalPlus, the frozen reference partition, or S\* — its own `oracle_version`/`partition_version`/`comparison_profile_version`/`evaluator_version`/`execution_profile_id`/`execution_protocol_version` are all `G4_*`-prefixed and structurally distinct from every real constant (proved by a direct equality-negation test, not just by convention).
+
+`ReferenceTaskEvidence`/`ReferenceCase`/`OracleRecord`/`ComparisonProfile` (all already-accepted, generic MEGB-03C/F types) are still reused as *containers* — reusing a generic, content-agnostic schema is not the same as claiming real content — but every value stored inside them (`pool`, `provenance`, `comparison_profile.profile_version`, task/case IDs, `expected_output`) is fully synthetic, matching the original plan's own already-accepted requirement.
+
+#### 2. Required additive extension to MEGB-03G.3
+
+To let the orchestrator call `evaluate_g4_benchmark_candidate` instead of `evaluate_reference` for this benchmark's work items — without weakening `evaluate_reference` or adding any bypass inside it — `ReferenceOrchestrator.__init__`/`OrchestrationConfig` gains one new, purely additive constructor parameter:
+
+```python
+evaluator: Evaluator = evaluate_reference
+```
+
+(`Evaluator` a `Protocol` matching `evaluate_reference`'s exact call signature.) Defaulting to the real `evaluate_reference` means **every existing MEGB-03G.3 behavior, test, and production call site is byte-for-byte unchanged** — this is confirmed, not assumed, by re-running the complete existing `tests/test_reference_orchestrator.py` suite unmodified after the change and requiring 100% pass with no edits to that file. `_execute_with_retries`'s one hardcoded call becomes `self._evaluator(...)`. This is the only change to already-accepted G.3 code in this correction; `evaluate_reference` itself, `reference_cache.py`, `reference_audit.py`, and `cache_key.py` are all untouched.
+
+#### 3. Structural non-contamination proof (required tests, offline)
+
+- `aggregate_reference_results` rejects any G4 benchmark result set: proved on two independent grounds — wrong count (`_require_exact_count`, since G4 batches are never 164 items) and, separately, profile mismatch (`_require_full_reference_profile` rejects `G4_EVALUATOR_VERSION`/`G4_EXECUTION_PROFILE_ID` even if artificially padded to 164).
+- A G4 result can never be mixed into the same `ReferenceBenchmarkResult`/aggregation call as a real result: `_require_shared_run_context`'s existing run-context-equality check already rejects any context whose `dataset_version`/`partition_version`/`oracle_version`/`comparison_profile_version`/`evaluator_version`/`execution_profile_id`/`execution_protocol_version` differ from the real profile's — proved directly rather than assumed.
+- A G4 result can never contribute to `q_ref`/`Q_ref`: `ReferenceBenchmarkResult.q_ref` is only ever computed over `task_results` actually inside a constructed benchmark result, and the previous bullet already proves a G4 result can never enter one.
+- Cache-collision freedom: primarily structural (a dedicated `g4_benchmark_cache/` directory, never the production `artifacts/privileged/reference/cache/`), reinforced by every one of the six version/checksum fields in `ReferenceResultCacheKey` differing from the real profile's own — proved by direct field-inequality assertions, not probabilistic digest non-collision.
+- Manifest-independence is unchanged: the orchestrator still never imports `ReferenceValidationCandidateSetManifest`/`primary_experiment_task_manifest`/`aggregate_reference_results` (already covered by an existing G.3 test); this correction adds no new manifest coupling.
+
+#### 4. Real-Docker ordering validation (new, Docker-marked, joins the existing Docker-marked suite — not the throughput benchmark's own "not on every push" path, since this is a bounded correctness check, not an expensive measurement)
+
+A concurrency=4 run whose per-item candidates have deliberately staggered sleep durations (longest-sleeping item admitted first) so real completion order provably differs from admission order. Verifies: actual completion order (observed via a thread-safe completion-order recorder wrapping the real backend) differs from input order; `summary.outcomes` order exactly matches declared `input_ordinal`; each outcome's `task_id`/`candidate_id` matches its own work item; a second, independent run over the same items reproduces identical ordering and associations; zero duplicate or missing accepted results.
+
+#### 5. Real-Docker concurrent-isolation validation (new, Docker-marked)
+
+Multiple writer/reader candidate pairs, run concurrently (concurrency=4) through the orchestrator, each pair using the *same* fixed in-container filename but a distinct per-pair secret: a writer candidate writes its own secret to that filename and briefly sleeps (keeping its container alive concurrently with other pairs' containers); a reader candidate (a logically separate work item/container) attempts to read the same filename and returns what it finds. Verifies: every reader's result is `"NOT_FOUND"` — never any writer's secret, including its own pair's (since MEGB-02 gives every invocation, even within the same pair, a fresh container with no persistent state) — proving no writable-state sharing between concurrently-running containers; each writer's own result correctly reflects its own secret; no result is ever attributed to the wrong work item under concurrency; `docker ps -a --filter name=megb-runner-` shows no leftover container after the test, including on a failure path.
+
+#### 6. Safe qualification report (committed, non-privileged)
+
+`src/reference/g4_qualification_report.py` derives a committed JSON report plus a Markdown rendering, deterministically from a `G4BenchmarkReport`, containing only: benchmark-plan version/checksum; synthetic-workload version/checksum; implementation commit SHA and dirty-state flag; Docker image ID/provenance checksum; host/platform summary; configuration counts/concurrency levels; aggregate timing/throughput; equivalence/isolation/ordering booleans and mismatch counts; cache/resumption counts; leftover-container result; readiness classification. It must never contain candidate source, individual synthetic inputs/expected outputs, real task/case identifiers, privileged paths, or raw exception/diagnostic payloads — enforced by an explicit field allowlist (mirroring `AUDIT_RECORD_FIELD_NAMES`'s own pattern) and a leakage test. The JSON report is self-checksummed (a `report_checksum` field over its own canonical remaining content, same auto-compute-or-reject pattern as `ReferenceResultCacheKey`/`ReferenceValidationCandidateSetManifest`). Both files are committed to git (unlike the raw run log/audit-log directory, which stays gitignored).
+
+#### 7. Verification and re-run
+
+The corrected benchmark is re-run in full from a clean synthetic cache directory (a fresh `g4_benchmark_cache/`, never reusing the historical run's entries, which in any case used different — now-corrected — identity fields and would miss regardless). Only this corrected run may establish `ORCHESTRATION_READY_FOR_MEGB_03H`. The historical run's measurements remain in the checkpoint log as superseded context, not as evidence for readiness.
+
 ### Objective
 
 Implement benchmark-level aggregation, content-addressed result reuse, public-result redaction, and append-only auditing without creating an adaptive reference oracle.
