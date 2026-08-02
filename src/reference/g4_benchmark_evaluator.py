@@ -38,11 +38,28 @@ proves ``ReferenceTaskResult.context.execution_protocol_version ==
 CandidateExecutionRequest.protocol_version == EXECUTION_PROTOCOL_VERSION``
 for both this evaluator and the real one).
 
-Because the prior version's results carried incorrect protocol
-provenance, ``G4_EVALUATOR_VERSION`` bumps ``v1`` -> ``v2`` here --
-mirroring this project's own schema-version-bump discipline for every
-prior breaking correction, so a result produced under the old, incorrect
-protocol identity is distinguishable by version alone.
+Because the v1 version's results carried incorrect protocol provenance,
+``G4_EVALUATOR_VERSION`` bumped ``v1`` -> ``v2`` -- mirroring this
+project's own schema-version-bump discipline for every prior breaking
+correction, so a result produced under the old, incorrect protocol
+identity is distinguishable by version alone.
+
+**Conformance correction (v3) -- restoring the frozen plan's own
+identities.** ``G4_DATASET_VERSION``, ``G4_DATASET_CHECKSUM``, and
+``G4_TASK_MANIFEST_CHECKSUM`` did not match the values the "Approved
+MEGB-03G.4 Benchmark Plan (Frozen)" itself specifies (`tickets/megb-03.md`)
+-- a normative divergence discovered during a later workflow audit and
+corrected here to the plan's exact frozen values
+(``dataset_version="synthetic-g4-benchmark-v1"``,
+``dataset_checksum=sha256("g4-benchmark-synthetic-dataset-v1")``,
+``task_manifest_checksum=sha256("g4-benchmark-synthetic-manifest-v1")``),
+never having affected workload content, candidate behavior, thresholds,
+or any measured outcome (the prior values were equally fixed, synthetic,
+and non-colliding -- see the "Approved MEGB-03G.4/G.5 Conformance
+Correction" ticket section for the full analysis). ``G4_EVALUATOR_VERSION``
+bumps ``v2`` -> ``v3`` accordingly: the computation is unchanged, but the
+evaluator now emits corrected provenance and different cache identities
+than any v2 run did.
 
 Reuses ``ReferenceTaskEvidence``/``ReferenceCase``/``OracleRecord``/
 ``ComparisonProfile``/``ReferenceTaskResult`` as *containers only* --
@@ -89,14 +106,19 @@ from src.reference.result_schema import MeasurementStatus, ReferenceRunContext, 
 # reuses the real MEGB-02 wire transport unchanged (see the module
 # docstring's Correction v2 note).
 
-G4_EVALUATOR_VERSION = "megb-03g4-benchmark-evaluator-v2"
+G4_EVALUATOR_VERSION = "megb-03g4-benchmark-evaluator-v3"
 G4_EXECUTION_PROFILE_ID = "megb-03g4-benchmark-profile-v1"
-G4_DATASET_VERSION = "megb-03g4-synthetic-dataset-v1"
+# Conformance correction: restored to the exact values the "Approved
+# MEGB-03G.4 Benchmark Plan (Frozen)" specifies -- these two previously
+# used a different, non-conformant literal (see the module docstring's
+# "Conformance correction (v3)" note and tickets/megb-03.md's "Approved
+# MEGB-03G.4/G.5 Conformance Correction" section).
+G4_DATASET_VERSION = "synthetic-g4-benchmark-v1"
 G4_PARTITION_VERSION = "megb-03g4-synthetic-partition-v1"
 G4_ORACLE_VERSION = "megb-03g4-synthetic-oracle-v1"
 G4_COMPARISON_PROFILE_VERSION = "megb-03g4-synthetic-comparison-v1"
-G4_DATASET_CHECKSUM = hashlib.sha256(b"megb-03g4-synthetic-dataset-content-v1").hexdigest()
-G4_TASK_MANIFEST_CHECKSUM = hashlib.sha256(b"megb-03g4-synthetic-manifest-content-v1").hexdigest()
+G4_DATASET_CHECKSUM = hashlib.sha256(b"g4-benchmark-synthetic-dataset-v1").hexdigest()
+G4_TASK_MANIFEST_CHECKSUM = hashlib.sha256(b"g4-benchmark-synthetic-manifest-v1").hexdigest()
 
 
 class G4BenchmarkEvaluatorVersionMismatchError(ValueError):
