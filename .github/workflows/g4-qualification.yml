@@ -1,0 +1,150 @@
+name: MEGB-03G.4 Qualification Benchmark
+
+# Manual-invocation only (MEGB-03G.5, per the "Approved MEGB-03G.2-G.5 Scope
+# Amendment" section 5: "Expensive throughput checks (MEGB-03G.4's
+# benchmark) must use a designated manual or scheduled workflow and must
+# not run on every push"). No approved policy requires scheduling this
+# benchmark, so it is workflow_dispatch-only -- deliberately no `push:` or
+# `pull_request:` trigger.
+#
+# Runs ONLY the synthetic, non-privileged G.4 workload (see the "Approved
+# MEGB-03G.4 Benchmark Plan (Frozen)" in tickets/megb-03.md) -- never real
+# reference-only evidence, expected outputs, canonical solutions, or
+# privileged manifests.
+#
+# Uploads only the safe, explicitly-allowlisted qualification report
+# (docs/measurement/megb-03g4-qualification-report.{json,md}, regenerated
+# fresh by this run) and the Docker image provenance text -- never the raw
+# benchmark report, cache contents, privileged artifacts, or unrestricted
+# logs. The raw g4_benchmark_report.json this run produces stays on the
+# runner and is discarded when the job ends.
+#
+# References no repository secrets anywhere in this workflow.
+#
+# All third-party actions are pinned to the same immutable commit SHAs
+# ci.yml already uses -- see that file's own header comment for the
+# human-readable version each SHA corresponds to. Do not bump these
+# independently of ci.yml.
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  g4-qualification:
+    name: G.4 synthetic orchestration-qualification benchmark
+    runs-on: ubuntu-latest
+    # Safety-net ceiling only, at 70 minutes -- the benchmark's OWN frozen
+    # 55-minute-target/60-minute-absolute ceiling (see the frozen plan) is
+    # enforced internally by src.reference.g4_benchmark itself, which
+    # aborts and reports ORCHESTRATION_BLOCKED well before this fires. This
+    # exists only to stop a genuinely hung run from consuming CI resources
+    # indefinitely.
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Docker is available
+        # Same posture as ci.yml's docker-sandbox job: fail loudly rather
+        # than silently skip the benchmark if Docker is missing.
+        run: |
+          if ! docker version; then
+            echo "::error::Docker is not available on this runner; the G.4 qualification benchmark cannot run. Failing rather than skipping."
+            exit 1
+          fi
+
+      - name: Build the pinned runner image and record provenance
+        run: ./docker/runner/compute_provenance.sh | tee runner-image-provenance.txt
+
+      - name: Capture the committed qualification report (pre-run, from git HEAD)
+        # Read from git history, not the working-tree file -- the working-tree
+        # copy is about to be overwritten by this run's own regeneration
+        # step, so comparing against it afterward would be comparing the
+        # fresh report against itself.
+        run: git show HEAD:docs/measurement/megb-03g4-qualification-report.json > /tmp/committed-qualification-report.json
+
+      - name: Clear any pre-existing G.4 benchmark cache/audit state
+        # Ensures this run measures a genuine cold start, not a reused
+        # runner's leftover state. Scoped exclusively to the G.4 synthetic
+        # benchmark's own directories -- never the production reference
+        # cache (artifacts/privileged/reference/cache/), which this
+        # workflow never touches at all.
+        run: rm -rf artifacts/privileged/reference/g4_benchmark_cache artifacts/reference/g4_benchmark_audit
+
+      - name: Run the synthetic G.4 qualification benchmark
+        run: python -m src.reference.g4_benchmark
+
+      - name: Regenerate the safe qualification report
+        run: python -m src.reference.g4_qualification_report_cli
+
+      - name: Verify plan/workload identities and frozen qualification criteria
+        # A workflow-generated report has host-specific timings
+        # (calibration, wall-clock) and therefore its own report_checksum
+        # -- it is not required to byte-match the committed local report.
+        # What IS required: the frozen plan/workload identities agree
+        # (proving the frozen plan and workload content were not altered),
+        # the schema versions this workflow's code produces are the ones
+        # currently accepted, and the measured run actually satisfies the
+        # frozen minimum readiness criteria.
+        run: |
+          python3 -c "
+          import json
+          fresh = json.load(open('docs/measurement/megb-03g4-qualification-report.json'))
+          committed = json.load(open('/tmp/committed-qualification-report.json'))
+
+          for field in (
+              'benchmark_plan_version', 'benchmark_plan_checksum',
+              'synthetic_workload_version', 'synthetic_workload_checksum',
+              'synthetic_workload_checksum_algorithm_version', 'schema_version',
+          ):
+              fresh_value, committed_value = fresh[field], committed[field]
+              assert fresh_value == committed_value, (
+                  f'{field} differs from the committed report: '
+                  f'{fresh_value!r} != {committed_value!r} -- the frozen plan or '
+                  f'workload content may have drifted'
+              )
+
+          assert fresh['readiness'] == 'ORCHESTRATION_READY_FOR_MEGB_03H', (
+              f'readiness={fresh[\"readiness\"]!r} -- ORCHESTRATION_BLOCKED or unknown'
+          )
+          assert fresh['best_speedup'] >= 1.5, f'best_speedup={fresh[\"best_speedup\"]!r} below the 1.5x threshold'
+          assert fresh['equivalence_all_matched'] is True
+          assert fresh['ordering_deterministic'] is True
+          assert fresh['isolation_all_matched'] is True
+          assert fresh['cache_all_hits_on_warm_run'] is True
+          assert fresh['resumption_no_gaps'] is True
+          assert fresh['leftover_containers_found'] is False
+          print('Plan/workload identities match; all frozen qualification criteria satisfied.')
+          print(f'This run: best_speedup={fresh[\"best_speedup\"]}, report_checksum={fresh[\"report_checksum\"]}')
+          "
+
+      - name: Post-run leftover-container check
+        if: always()
+        run: |
+          leftover="$(docker ps -a --filter 'name=megb-runner-' --format '{{.Names}}')"
+          if [ -n "$leftover" ]; then
+            echo "::error::Leftover megb-runner-* containers found after the benchmark: $leftover"
+            docker rm -f $leftover
+            exit 1
+          fi
+          echo "No leftover megb-runner-* containers."
+
+      - name: Upload safe qualification report and Docker provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: g4-qualification-report
+          path: |
+            docs/measurement/megb-03g4-qualification-report.json
+            docs/measurement/megb-03g4-qualification-report.md
+            runner-image-provenance.txt
+          retention-days: 30

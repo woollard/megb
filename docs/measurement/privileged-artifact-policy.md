@@ -241,6 +241,33 @@ Same requirement, same scope note: the one privileged parity artifact must
 be copied to separate, access-controlled backup storage before MEGB-03E+
 begins consuming it. No external upload performed here.
 
+## MEGB-03G: cache, audit, and G.4 benchmark artifacts
+
+MEGB-03G's protected data differs from MEGB-03B/03C/03D's in one important
+way: those subtasks freeze a small number of large, static artifacts once;
+MEGB-03G produces a stream of small, individually-keyed artifacts (one cache
+entry and one audit record per task-candidate invocation) as production
+orchestration runs. The lock-file identity-anchor pattern above does not
+apply directly to a growing stream — instead, every entry carries its own
+embedded schema-version/checksum envelope, checked on every read.
+
+| Artifact | Committed / Privileged | Storage location | Allowed fields | Prohibited fields | Integrity mechanism | Authorized consumers | Recovery / invalidation |
+|---|---|---|---|---|---|---|---|
+| Reference-result cache entries | **Privileged**, gitignored | `artifacts/privileged/reference/cache/<key_digest>.json` (one file per cache key) | Full `ReferenceTaskResult` (status, `q_ref_task`, context, candidate identity, everything `RESULT_SCHEMA_VERSION` defines) | Nothing withheld — this *is* the privileged full-fidelity store | Per-entry `entry_checksum` (sha256 over the envelope minus itself), `cache_entry_schema_version`, `cache_key_schema_version`; atomic write (temp file + `os.replace`) | `ReferenceOrchestrator` (read/write); any trusted MEGB-06H reuse of the same cache class | See [cache-recovery-runbook.md](../operations/cache-recovery-runbook.md). Never silently overwritten — a conflicting write is refused (`CONFLICTING_WRITE`), never merged or clobbered. |
+| `PrivilegedCaseDiagnostic` | **Not persisted at all** by G.2–G.4 | — (exists only as an in-memory return value from `evaluate_reference`/`evaluate_g4_benchmark_candidate`) | N/A | N/A — no storage means no field-level policy is needed | N/A | N/A | If a future subtask persists these, it must use a separate privileged location and retention policy from both the cache and the audit log, never commingled with either (per the Scope Amendment §2) |
+| Safe audit records | Safe by schema construction (explicit allowlist — no case content, no candidate source); **not currently gitignored, not currently committed** — treated as a local generated operational log, like `g4_benchmark_audit/` below | `artifacts/reference/audit/reference_audit_log.jsonl` (append-only JSONL) | `ReferenceAuditRecord`'s 24 allowlisted fields only: caller, run IDs, candidate id/hash, freeze metadata, version/checksum identities, invocation id/timestamp/duration, cache disposition, status, result-artifact location (a cache-key digest/path, never case content) | Candidate code, case inputs/identifiers, expected outputs, canonical solutions, `PrivilegedCaseDiagnostic`, exception payloads, free-form diagnostics — none has a field on this schema at all | `AUDIT_RECORD_SCHEMA_VERSION` stamped on every record; append-only (`ReferenceAuditLog.append` never rewrites/removes) | `ReferenceOrchestrator` (write); operators reconciling a run (read via `read_all()`) | See [cache-recovery-runbook.md](../operations/cache-recovery-runbook.md#audit-reconciliation) |
+| Redacted projections | Safe by schema construction; **no on-disk artifact exists yet** — `redact_task_result`/`redact_benchmark_result` are pure functions with no production caller in this repository yet (documented in `result_redaction.py`'s own module docstring since MEGB-03E) | N/A (function return values only) | Task id, status, `q_ref_task`, failure category, oracle version, timing, failure-category counts, full-suite-diagnostic *labels*; aggregate manifest checksum | `diagnostics`, full `context`, task-specific `candidate_id`/`candidate_sha256`, the full candidate-set manifest, per-case reference counts (unless `include_reference_case_counts=True` is explicitly opted into by a future caller) | N/A (no persisted artifact; correctness enforced by `tests/test_result_redaction.py`'s feedback-leakage tests) | Whichever future subtask (MEGB-03I/MEGB-06I) introduces the first production caller — must document, at that point, whether/why it enables `include_reference_case_counts` | N/A |
+| G.4 raw run outputs | Safe (synthetic-only content), gitignored — generated, reproducible local run artifacts, not source | `artifacts/reference/g4_benchmark_audit/` (`g4_benchmark_report.json`, `g4_benchmark_audit_log.jsonl`) | Full `G4BenchmarkReport` (synthetic workload only — never real reference-only evidence) | N/A — this benchmark never touches real reference-only evidence at all | None beyond ordinary JSON structure; not self-checksummed (unlike the qualification report derived from it) | Whoever runs the G.4 benchmark locally or in the manual `g4-qualification.yml` workflow; the qualification-report CLI (reads this to build the committed report) | Regenerate via `python -m src.reference.g4_benchmark` (clean cache: `rm -rf artifacts/privileged/reference/g4_benchmark_cache artifacts/reference/g4_benchmark_audit`) |
+| G.4 committed qualification reports | Safe, explicitly allowlisted, **committed** | `docs/measurement/megb-03g4-qualification-report.{json,md}` | `QUALIFICATION_REPORT_FIELD_NAMES` only — counts, booleans, timing/throughput numbers, version labels, checksums | Candidate source, individual synthetic inputs/outputs, real task/case identifiers, privileged paths, raw exception/diagnostic payloads — no field exists to carry any of these | Self-computed `report_checksum` (sha256 over every other field, canonical JSON), auto-recomputed and verified at construction (`G4QualificationReport.__post_init__`) — tamper or corruption is rejected, never silently accepted | Anyone reviewing MEGB-03G.4's readiness declaration; MEGB-03H (infrastructure-throughput reconciliation input) | Regenerate via `python -m src.reference.g4_qualification_report_cli`; the prior report is always preserved in git history, never overwritten in place without a new commit |
+
+**Confirmation:** `PrivilegedCaseDiagnostic` is not persisted by MEGB-03G.2–G.4.
+It appears only as a discarded return value at the orchestrator's sole call
+site (`result, _diagnostics = self._config.evaluator(...)` in
+`reference_orchestrator.py`) and as a return-type annotation in the two
+evaluator functions (`evaluate_reference`, `evaluate_g4_benchmark_candidate`).
+No cache entry, audit record, or committed report has a field capable of
+carrying one.
+
 ## Default policy going forward
 
 This is the default handling for **all** MEGB-03 subtasks that produce
@@ -253,3 +280,8 @@ any existing frozen artifact is protected from silent overwrite; and, where
 different consumers are authorized for different subsets of the data (as
 with MEGB-03C's three oracle files), each subset is physically separated
 into its own file rather than access-controlled by convention alone.
+
+MEGB-03G's cache/audit stream is the one accepted variant of this pattern:
+in place of a single static lock file, each cache entry and audit record
+carries its own embedded schema-version/checksum envelope, checked on every
+read rather than once at freeze time.

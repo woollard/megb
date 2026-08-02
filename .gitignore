@@ -33,3 +33,10 @@ artifacts/privileged/
 # report) -- generated, reproducible local run artifacts, not source; see
 # tickets/megb-03.md's checkpoint log for the recorded measured results.
 artifacts/reference/g4_benchmark_audit/
+
+# MEGB-03G.2/G.3 production reference-audit log (safe by schema
+# construction -- explicit allowlist, no case content or candidate source;
+# see docs/measurement/privileged-artifact-policy.md's "MEGB-03G" section)
+# -- still a generated local operational log, not source, so it is not
+# committed by default, mirroring the g4_benchmark_audit/ treatment above.
+artifacts/reference/audit/

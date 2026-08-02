@@ -239,8 +239,14 @@ class ReferenceAuditLog:
 
     Each :meth:`append` call adds exactly one line; nothing is ever
     rewritten or removed. Safe to commit in principle -- see the module
-    docstring for why this schema carries no privileged content -- though
-    no production caller writes here yet (MEGB-03G.3's job).
+    docstring for why this schema carries no privileged content --
+    though not committed by default in practice (see
+    ``docs/measurement/privileged-artifact-policy.md``'s "MEGB-03G"
+    section: treated as a generated local operational log, mirroring
+    ``g4_benchmark_audit/``). ``ReferenceOrchestrator`` (MEGB-03G.3,
+    accepted) is the production caller, appending one record per
+    invocation attempt via its own ``_append_audit`` method regardless of
+    disposition (cache hit, miss, fresh execution, retry).
     """
 
     def __init__(self, path: Path | None = None) -> None:
