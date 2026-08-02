@@ -63,6 +63,7 @@ from src.reference.reference_evaluator import (
     EXECUTION_PROFILE_ID_FULL,
     EXECUTION_PROTOCOL_VERSION,
     FULL_EXECUTION_PROFILE,
+    ExecutionProfile,
     ReferenceCase,
     ReferenceTaskEvidence,
 )
@@ -76,7 +77,7 @@ from src.reference.reference_orchestrator import (
     WorkItem,
     WorkItemDisposition,
 )
-from src.reference.result_schema import MeasurementStatus, ReferenceRunContext
+from src.reference.result_schema import MeasurementStatus, ReferenceRunContext, ReferenceTaskResult
 
 _ENTRY_POINT = "double"
 _PROMPT = f"def {_ENTRY_POINT}(n):\n"
@@ -988,6 +989,65 @@ def test_no_aggregation_function_is_referenced() -> None:
     assert "ReferenceValidationCandidateSetManifest" not in joined_imports
     assert "primary_experiment_task_manifest" not in joined_imports
     assert "src.reference.aggregation" not in joined_imports
+
+
+# --- Injectable evaluator (MEGB-03G.4 correction: additive extension point) ---
+
+
+def test_orchestration_config_defaults_to_the_real_evaluate_reference() -> None:
+    """OrchestrationConfig's new evaluator field defaults to the real
+    evaluate_reference, so every pre-existing call site is unaffected."""
+    from src.reference.reference_evaluator import evaluate_reference  # pylint: disable=import-outside-toplevel
+
+    config = OrchestrationConfig(max_workers=1, max_in_flight=1)
+    assert config.evaluator is evaluate_reference
+
+
+def test_custom_evaluator_is_used_instead_of_the_default(tmp_path: Path) -> None:
+    """A caller-supplied evaluator is actually invoked by the orchestrator,
+    in place of the default evaluate_reference -- the extension MEGB-03G.4
+    needs to run its own benchmark-only synthetic evaluator through this
+    same, unmodified orchestrator."""
+    from src.reference.reference_evaluator import (  # pylint: disable=import-outside-toplevel
+        PrivilegedCaseDiagnostic,
+        evaluate_reference,
+    )
+
+    calls = {"n": 0}
+
+    def fake_evaluator(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        evidence: ReferenceTaskEvidence,
+        candidate_code: str,
+        candidate_id: str,
+        candidate_sha256: str,
+        run_context: ReferenceRunContext,
+        *,
+        backend: ExecutionBackend,
+        profile: ExecutionProfile,
+    ) -> tuple[ReferenceTaskResult, tuple[PrivilegedCaseDiagnostic, ...]]:
+        calls["n"] += 1
+        return evaluate_reference(
+            evidence, candidate_code, candidate_id, candidate_sha256, run_context,
+            backend=backend, profile=profile,
+        )
+
+    cache = ReferenceResultCache(tmp_path / "cache")
+    audit_log = ReferenceAuditLog(tmp_path / "audit.jsonl")
+    orchestrator = ReferenceOrchestrator(
+        cache=cache,
+        audit_log=audit_log,
+        evidence_resolver=MappingEvidenceResolver({_TASK_ID: _evidence()}),
+        backend_factory=RecordingBackend,
+        config=OrchestrationConfig(
+            max_workers=1, max_in_flight=1, evaluator=fake_evaluator
+        ),
+    )
+    item = _work_item("wi-0", 0)
+
+    summary = orchestrator.run([item], run_id="run-1")
+
+    assert calls["n"] == 1
+    assert summary.outcomes[0].disposition == WorkItemDisposition.EXECUTED_VALID
 
 
 # --- Leakage checks ------------------------------------------------------------

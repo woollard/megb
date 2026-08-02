@@ -72,6 +72,7 @@ from src.reference.reference_evaluator import (
     FULL_EXECUTION_PROFILE,
     CandidateIdentityMismatchError,
     ExecutionProfile,
+    PrivilegedCaseDiagnostic,
     ReferenceEvaluatorVersionMismatchError,
     ReferenceTaskEvidence,
     evaluate_reference,
@@ -180,17 +181,53 @@ class RetryPolicy:
             raise ValueError(f"max_attempts must be at least 1, got {self.max_attempts!r}")
 
 
+class Evaluator(Protocol):
+    """The exact call shape of :func:`~src.reference.reference_evaluator.evaluate_reference`,
+    factored out so a caller may substitute a different evaluation function
+    entirely (e.g. MEGB-03G.4's benchmark-only synthetic evaluator, which
+    performs the same kind of real-``ExecutionBackend`` case-by-case
+    invocation and comparison but against fully synthetic, non-privileged
+    evidence with its own distinct identity constants -- never against
+    ``evaluate_reference``'s real-corpus version cross-check).
+
+    Purely additive: :class:`OrchestrationConfig`'s ``evaluator`` field
+    defaults to the real ``evaluate_reference``, so every existing
+    orchestration call site is completely unaffected unless it explicitly
+    supplies a different one.
+    """
+
+    def __call__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        evidence: ReferenceTaskEvidence,
+        candidate_code: str,
+        candidate_id: str,
+        candidate_sha256: str,
+        run_context: ReferenceRunContext,
+        *,
+        backend: ExecutionBackend,
+        profile: ExecutionProfile,
+    ) -> tuple[ReferenceTaskResult, tuple[PrivilegedCaseDiagnostic, ...]]:
+        """Evaluate one candidate against one task's evidence, exactly like
+        ``evaluate_reference``."""
+
+
 @dataclass(frozen=True)
 class OrchestrationConfig:
     """Run-level orchestration policy: concurrency bounds, retry policy,
-    execution profile, and the ``caller`` label recorded on every audit
-    event (prefixed with the run ID at record-build time)."""
+    execution profile, the ``caller`` label recorded on every audit event
+    (prefixed with the run ID at record-build time), and the ``evaluator``
+    function invoked per attempt.
+
+    ``evaluator`` defaults to the real ``evaluate_reference`` -- every
+    existing production call site is unaffected unless it explicitly
+    supplies a different one (see :class:`Evaluator`)."""
 
     max_workers: int
     max_in_flight: int
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     profile: ExecutionProfile = FULL_EXECUTION_PROFILE
     caller: str = "MEGB-03G.3-orchestrator"
+    evaluator: Evaluator = evaluate_reference
 
     def __post_init__(self) -> None:
         if not isinstance(self.max_workers, int) or isinstance(self.max_workers, bool):
@@ -761,7 +798,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
         while True:
             attempts += 1
             try:
-                result, _diagnostics = evaluate_reference(
+                result, _diagnostics = self._config.evaluator(
                     evidence,
                     representative.candidate_code,
                     representative.candidate_id,
