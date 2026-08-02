@@ -1512,6 +1512,44 @@ Expensive throughput checks (MEGB-03G.4's benchmark) must use a designated manua
 
 Confirmation only, no new requirement: the already-proven invariant that `FullSuiteDiagnostic` may be attached to a task result but can never affect `q_ref_task` or benchmark `q_ref` remains in force, per MEGB-03G.1's accepted regression test (`test_full_suite_diagnostic_never_affects_q_ref`). No additional implementation is required for this unless later work is found to violate it.
 
+### Approved MEGB-03G.4 Benchmark Plan (Frozen)
+
+Satisfies section 4's requirement, above, that a benchmark plan be frozen and separately accepted before any material Docker execution for MEGB-03G.4. Nothing here authorizes exceeding the corrected scale rejection already recorded in section 4 (the original 15–20 tasks × 3 candidates plan remains rejected).
+
+**1. Synthetic workload (fully non-privileged, frozen now, no real corpus content)**
+
+- `entry_point = "g4_compute"`; canonical solution `def g4_compute(n):\n    return (n * 2) + 1\n` — sha256 `f677aa4cceca480683e70c3a23d2fd095f8ac3e77fd487432364095cdced5e47`.
+- Comparison profile: default kind, `atol=0.0`, via the existing `comparison_profile_for_task` (purely structural; not a binding to any real task).
+- Benchmark-only run-context identity, never confusable with the real corpus: `dataset_version="synthetic-g4-benchmark-v1"`, `dataset_checksum = sha256("g4-benchmark-synthetic-dataset-v1") = 620d891af7232d54263877049d3e8720fc81cb38e3f2afad3e476b7e6936f8a9`; `task_manifest_checksum = sha256("g4-benchmark-synthetic-manifest-v1") = 2660eefaf368c747f88db3842d5d4c021279e6b1c6bd60b7be1cdb318f0f8977`.
+- Three tiers by per-task case count: **LOW=1**, **MEDIAN=5**, **HIGH=20** (args `n=1..count`). Task IDs are namespaced per (tier, run) as `G4Bench/{tier}-{run_label}/{i}` so every run below is guaranteed a cold cache (no accidental reuse across runs that are each supposed to measure a fresh execution) — coldness by construction, not by clearing state.
+- One fixed correct candidate reused across tasks within a run; per-task dedup still yields one unique cache key per task_id (candidate_sha256 alone never collapses distinct tasks — already proven in MEGB-03G.3).
+
+**2. Calibration step (runs first, sequential, N=3 single-case LOW invocations, concurrency=1)**
+
+Measures real per-invocation Docker overhead (`measured_per_invocation_sec`) on the executing host before any other run proceeds.
+
+**3. Scaling rule (per this checkpoint's requested modification — supersedes a plan that merely "fits")**
+
+- `total_case_invocations` for the workload below at full (unscaled) size = 358 (throughput sweep 120 + cross-tier equivalence 208 + interruption/resumption 30; the warm-cache run contributes ~0 real invocations).
+- `projected_seconds = measured_per_invocation_sec × total_case_invocations` (a conservative, concurrency-blind upper bound — concurrent legs will finish faster in wall-clock than this projects, giving additional real margin beyond what the projection itself claims).
+- Target ceiling: **55 minutes (3300s)**, not 60 — a deliberate 5-minute headroom, per this checkpoint's instruction not to merely "fit."
+- If `projected_seconds > 3300`, scale every tier's/run's item count `N` down by the same factor `min(1.0, 3300 / projected_seconds)` (rounded down, minimum 1 per run), preserving the plan's relative proportions (throughput-sweep : cross-tier : interruption item counts) rather than cutting one section disproportionately. Re-derive `total_case_invocations` and `projected_seconds` from the scaled counts and confirm the scaled projection is under the ceiling before proceeding.
+- If `measured_per_invocation_sec` is so high that even `N=1` per run cannot fit under 3300s, stop and report `ORCHESTRATION_BLOCKED` for the throughput-measurement portion specifically, rather than silently running over budget; correctness-only runs (equivalence, cache, interruption) may still proceed at `N=1` if they independently fit.
+- The checkpoint report must record: `measured_per_invocation_sec`, the calibration run's own raw timings, `total_case_invocations` (unscaled and scaled), `projected_seconds` (unscaled and scaled), the scaling factor applied (or "no scaling required"), and the resulting per-run `N` actually used — sufficient for the chosen workload size to be independently reproduced from these inputs.
+
+**4. Work items per run (at full, unscaled size — subject to section 3's scaling rule)**
+
+- **Throughput sweep** (proves the ≥1.5× criterion): MEDIAN tier, N=8 unique work items per run, run cold at concurrency **1, 2, and 4** (3 runs, each in its own task namespace) = 8×5×3 = 120 case invocations (unscaled).
+- **Cross-tier correctness/equivalence**: for each of LOW, MEDIAN, HIGH tiers, N=4 unique work items, run once at concurrency=1 (sequential) and once at concurrency=4 (concurrent), each pair in its own task namespace; the two runs' typed outcomes (per work item, ignoring only the observational `evaluated_at`/`duration_seconds` fields — the same semantic/observational distinction `_logically_equivalent()` already draws) must match exactly. Case invocations: (1×4 + 5×4 + 20×4) × 2 legs = 104 × 2 = 208 (unscaled).
+- **Warm-cache run**: immediately re-run the MEDIAN throughput-sweep's concurrency=4 run's N=8 items a second time — every item must be a `CACHE_HIT` with zero backend calls.
+- **Interruption/resumption**: MEDIAN tier, N=6, concurrency=2, in its own task namespace; cooperative cancellation triggered once the first item completes; a second `run()` call over the same 6 items must then complete the rest with zero duplicate accepted results. Case invocations: 6×5 = 30 (unscaled), split across the two `run()` calls.
+
+**5. Ceiling and abort**
+
+60-minute absolute ceiling per the original amendment; this plan targets ≤55 minutes actual/projected per section 3. Abort with `ORCHESTRATION_BLOCKED` if either the (possibly re-scaled) projection or actual measured elapsed time would exceed 60 minutes, or if any existing MEGB-02 host-resource ceiling is hit, or if the leftover-container check (the same one the Docker CI job already runs) finds anything left behind.
+
+**Minimum `ORCHESTRATION_READY_FOR_MEGB_03H` criteria** are exactly the amendment's own list in section 4 above (100% sequential/concurrent typed-result equivalence; zero isolation violations; zero missing or duplicate accepted work items; deterministic final ordering; exact cache-hit behavior with no backend execution for valid hits; successful interruption/resumption without repeating already-accepted work; at least one concurrency configuration achieving ≥1.5× throughput over sequential on the same host/workload; no unresolved infrastructure error or resource leak).
+
 ### Objective
 
 Implement benchmark-level aggregation, content-addressed result reuse, public-result redaction, and append-only auditing without creating an adaptive reference oracle.
