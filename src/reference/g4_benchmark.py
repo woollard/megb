@@ -30,8 +30,11 @@ the cross-tier measurement comparator) is pure/offline and covered by
 invoke a backend.
 """
 
+import dataclasses
 import hashlib
+import json
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -790,3 +793,43 @@ def run_g4_benchmark(
         leftover_containers=leftover_containers,
         total_wall_seconds=total_wall_seconds,
     )
+
+
+def report_to_dict(report: G4BenchmarkReport) -> dict[str, object]:
+    """Full-fidelity, JSON-serializable projection of a report -- every
+    field the checkpoint report needs for reproducibility, nothing
+    privileged (this benchmark never touches real reference-only evidence)."""
+
+    def _default(value: object) -> object:
+        if isinstance(value, ReadinessState):
+            return value.value
+        raise TypeError(f"object of type {type(value)!r} is not JSON serializable")
+
+    result: dict[str, object] = json.loads(json.dumps(dataclasses.asdict(report), default=_default))
+    return result
+
+
+def main() -> None:
+    """Manual/scheduled-workflow entry point: ``python -m src.reference.g4_benchmark``.
+
+    Runs the full frozen plan against a real ``DockerPerInvocationBackend``
+    and writes the typed report as JSON next to the benchmark's own cache/
+    audit directories, per the plan's "not on every push" requirement.
+    """
+    from src.execution.docker_backend import (  # pylint: disable=import-outside-toplevel
+        DockerPerInvocationBackend,
+    )
+
+    report = run_g4_benchmark(backend_factory=DockerPerInvocationBackend)
+    output_path = Path("artifacts/reference/g4_benchmark_audit/g4_benchmark_report.json")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(report_to_dict(report), indent=2, sort_keys=True)
+    output_path.write_text(serialized, encoding="utf-8")
+    print(f"MEGB-03G.4 readiness: {report.readiness.value}")
+    print(f"Report written to {output_path}")
+    if report.readiness == ReadinessState.ORCHESTRATION_BLOCKED:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

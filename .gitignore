@@ -28,3 +28,8 @@ venv/
 # see docs/measurement/privileged-artifact-policy.md. Regenerate via each
 # module's `build`/`verify` CLI mode rather than trusting a copy on disk.
 artifacts/privileged/
+
+# MEGB-03G.4 benchmark run outputs (safe, non-privileged audit log + JSON
+# report) -- generated, reproducible local run artifacts, not source; see
+# tickets/megb-03.md's checkpoint log for the recorded measured results.
+artifacts/reference/g4_benchmark_audit/
