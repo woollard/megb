@@ -1,15 +1,15 @@
 # MEGB-03G.4 Qualification Report
 
 - **Readiness:** `ORCHESTRATION_READY_FOR_MEGB_03H`
-- **Generated at:** 2026-08-02T19:38:27.211851+00:00
+- **Generated at:** 2026-08-02T20:11:38.703713+00:00
 - **Schema version:** `megb-03g4-qualification-report-v2`
-- **Report checksum:** `9f6e68865f829821ddd6651adf778b83f1cd195239f2a80b9b7ea4dcd1269879`
+- **Report checksum:** `6615d238325f16cd2af4823339fc51fad9bfcd4b356f395d19f7bff54968da01`
 
 ## Provenance
 
 - Benchmark plan: `megb-03g4-benchmark-plan-v1` (checksum `16b8634a5700cee173b5f5b916db1d7f8a5023bcd83332c581bb81e8db9b7fd8`)
 - Synthetic workload: `megb-03g4-synthetic-workload-v1` (checksum `c8e20a97f145c01ae39c56297bffa8e4dae95761095cb9d188eb93260ef92c41`, algorithm `megb-03g4-workload-checksum-algorithm-v1`)
-- Implementation commit: `6e703d10eeb438d71430b62d04daa49b8a6befb8`
+- Implementation commit: `732457c0dac3b37234e1806ae6ddf9f100706060`
 - Docker image: `sha256:3ddfd2080085e256d7c7a787e3b470ef9e721abe49cbb3f9b4f4cf6db6abc8ee` (provenance `cdf2fa8490f2a0dd2b8470e8d7218a864afe655d3018e56dd788a47bbe7caa29`)
 - Host/platform: macOS-26.5.1-arm64-arm-64bit-Mach-O
 
