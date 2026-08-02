@@ -3,12 +3,12 @@
 ## Status
 
 Produced by MEGB-03G.5. Snapshot of every active accepted identity as of the
-MEGB-03G.4/G.5 conformance correction (commit `81ffd9d`; qualification
-report checksum pending the clean-cache evaluator-v3 rerun this correction
-requires — see the "Approved MEGB-03G.4/G.5 Conformance Correction" ticket
-section). This is a point-in-time registry, not a live document — re-derive
-from source (`grep -n "_VERSION = " src/reference/*.py`) rather than
-trusting this file after any later version bump.
+MEGB-03G.4/G.5 conformance correction's clean-cache evaluator-v3 run
+(implementation commit `81ffd9d`; qualification report checksum
+`4884e66fa8141b43a2ceba012666651821bb86cf2beb355fc598b004aa7afe27`, commit
+`f4c7fb9`). This is a point-in-time registry, not a live document —
+re-derive from source (`grep -n "_VERSION = " src/reference/*.py`) rather
+than trusting this file after any later version bump.
 
 ## Two categories of identity
 
@@ -78,7 +78,7 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `benchmark_plan_checksum` | `16b8634a5700cee173b5f5b916db1d7f8a5023bcd83332c581bb81e8db9b7fd8` | Frozen plan constants only: tier case counts, unscaled N values, concurrency tuples, calibration sample count, ceiling seconds. Unchanged across every G.4 correction — proves the frozen plan itself was never touched. |
 | `synthetic_workload_checksum` | `c8e20a97f145c01ae39c56297bffa8e4dae95761095cb9d188eb93260ef92c41` | Workload *content only*: entry point, canonical solution source, tier case counts (`_synthetic_workload_checksum()` in `g4_qualification_report_cli.py`). Deliberately excludes every version/identity label — signature is `(entry_point, canonical_solution, tier_case_counts)`, nothing else, so it cannot depend on evaluator/schema/protocol/plan version, code revision, timestamps, or measured outcomes (structurally tested). |
 | `docker_image_provenance_checksum` | `cdf2fa8490f2a0dd2b8470e8d7218a864afe655d3018e56dd788a47bbe7caa29` | sha256 of the runner `Dockerfile` bytes |
-| `report_checksum` | *pending* — set by the clean-cache evaluator-v3 rerun this correction requires (task in progress; the prior value, `9f6e68865f829821ddd6651adf778b83f1cd195239f2a80b9b7ea4dcd1269879`, belongs to the superseded, non-conformant v2 run and is preserved in git history as historical evidence only) | Every other qualification-report field, canonical JSON, sha256 — auto-recomputed and verified at construction (`G4QualificationReport.__post_init__`), never a caller-supplied value |
+| `report_checksum` (final, accepted) | `4884e66fa8141b43a2ceba012666651821bb86cf2beb355fc598b004aa7afe27` — from the clean-cache evaluator-v3 run (the prior value, `9f6e68865f829821ddd6651adf778b83f1cd195239f2a80b9b7ea4dcd1269879`, belongs to the superseded, non-conformant v2 run and is preserved in git history as historical evidence only) | Every other qualification-report field, canonical JSON, sha256 — auto-recomputed and verified at construction (`G4QualificationReport.__post_init__`), never a caller-supplied value |
 | `G4_DATASET_CHECKSUM` | `620d891af7232d54263877049d3e8720fc81cb38e3f2afad3e476b7e6936f8a9` | `sha256(b"g4-benchmark-synthetic-dataset-v1")` — the frozen plan's own value, restored by the conformance correction (previously `sha256(b"megb-03g4-synthetic-dataset-content-v1")` = `ecd5c87a63b86d0ff290f5a8f243668662da5047d0feac3b55625a40334ca4e6`, a non-conformant divergence — see below). Fixed synthetic constant either way, never colliding with any real `dataset_checksum`. |
 | `G4_TASK_MANIFEST_CHECKSUM` | `2660eefaf368c747f88db3842d5d4c021279e6b1c6bd60b7be1cdb318f0f8977` | `sha256(b"g4-benchmark-synthetic-manifest-v1")` — the frozen plan's own value, restored by the conformance correction (previously `sha256(b"megb-03g4-synthetic-manifest-content-v1")` = `800231f3a168e18432ca35f64b202274ea0a695e52ccc3b213a650a96a126c4b`, a non-conformant divergence — see below). |
 | `reference_case_checksum` | (per-case, includes `oracle_record.expected_output`) | `case_serialization.py` — bound into the cache key so a corrected canonical solution with the same case IDs but a different expected output is never invisible to the cache |
