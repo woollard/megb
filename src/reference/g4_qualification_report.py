@@ -16,6 +16,19 @@ Unlike the raw benchmark run log/audit-log directory (gitignored, per
 report's JSON and Markdown renderings are committed: they are the safe,
 non-privileged qualification evidence for MEGB-03G.4's readiness
 declaration.
+
+Correction (report-schema v2): four identities in this module are
+independent, fixed, module-owned labels -- ``schema_version``,
+``benchmark_plan_version``, ``synthetic_workload_version``, and
+``synthetic_workload_checksum_algorithm_version``. None of them is
+supplied by a caller and none is derived from the others or from
+``G4_EVALUATOR_VERSION``: a prior version of this module incorrectly set
+``synthetic_workload_version`` from the caller-supplied benchmark
+evaluator version, conflating "which workload this report format
+describes" with "which evaluator produced the run". Only the two
+*checksums* (``benchmark_plan_checksum``, ``synthetic_workload_checksum``)
+are externally computed and supplied, since the actual frozen content
+they hash lives in other modules this one deliberately does not import.
 """
 
 import dataclasses
@@ -25,8 +38,10 @@ from dataclasses import dataclass
 
 from src.reference.g4_benchmark import G4BenchmarkReport, ReadinessState
 
-G4_QUALIFICATION_REPORT_SCHEMA_VERSION = "megb-03g4-qualification-report-v1"
+G4_QUALIFICATION_REPORT_SCHEMA_VERSION = "megb-03g4-qualification-report-v2"
 BENCHMARK_PLAN_VERSION = "megb-03g4-benchmark-plan-v1"
+SYNTHETIC_WORKLOAD_VERSION = "megb-03g4-synthetic-workload-v1"
+SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION = "megb-03g4-workload-checksum-algorithm-v1"
 
 
 class InvalidQualificationReportError(ValueError):
@@ -57,6 +72,7 @@ class G4QualificationReport:  # pylint: disable=too-many-instance-attributes
     benchmark_plan_checksum: str
     synthetic_workload_version: str
     synthetic_workload_checksum: str
+    synthetic_workload_checksum_algorithm_version: str
     implementation_commit_sha: str
     implementation_dirty: bool
     docker_image_id: str
@@ -89,6 +105,7 @@ class G4QualificationReport:  # pylint: disable=too-many-instance-attributes
             "benchmark_plan_checksum",
             "synthetic_workload_version",
             "synthetic_workload_checksum",
+            "synthetic_workload_checksum_algorithm_version",
             "implementation_commit_sha",
             "docker_image_id",
             "docker_image_provenance_checksum",
@@ -135,7 +152,6 @@ def build_qualification_report(  # pylint: disable=too-many-arguments,too-many-p
     *,
     generated_at: str,
     benchmark_plan_checksum: str,
-    synthetic_workload_version: str,
     synthetic_workload_checksum: str,
     implementation_commit_sha: str,
     implementation_dirty: bool,
@@ -151,10 +167,13 @@ def build_qualification_report(  # pylint: disable=too-many-arguments,too-many-p
     identity, and the separately-run ordering/isolation Docker tests'
     results).
 
-    ``synthetic_workload_version`` identifies the synthetic benchmark
-    evaluator (e.g. ``G4_EVALUATOR_VERSION``), not the throughput report's
-    own schema version -- the two change independently, and only the
-    former should move when the evaluator's provenance behavior changes."""
+    ``synthetic_workload_version`` and ``synthetic_workload_checksum_algorithm_version``
+    are fixed, module-owned identities (:data:`SYNTHETIC_WORKLOAD_VERSION`,
+    :data:`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`) -- never a
+    caller-supplied value, and in particular never the benchmark
+    evaluator's own version (``G4_EVALUATOR_VERSION``). The workload's
+    identity and the evaluator's identity change independently: bumping
+    the evaluator does not, and must not, move the workload identity."""
     concurrency_levels = tuple(
         sorted({result.concurrency for result in benchmark_report.throughput_results})
     )
@@ -166,8 +185,9 @@ def build_qualification_report(  # pylint: disable=too-many-arguments,too-many-p
         generated_at=generated_at,
         benchmark_plan_version=BENCHMARK_PLAN_VERSION,
         benchmark_plan_checksum=benchmark_plan_checksum,
-        synthetic_workload_version=synthetic_workload_version,
+        synthetic_workload_version=SYNTHETIC_WORKLOAD_VERSION,
         synthetic_workload_checksum=synthetic_workload_checksum,
+        synthetic_workload_checksum_algorithm_version=SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION,
         implementation_commit_sha=implementation_commit_sha,
         implementation_dirty=implementation_dirty,
         docker_image_id=docker_image_id,
@@ -230,7 +250,8 @@ def render_markdown(report: G4QualificationReport) -> str:
         ),
         (
             f"- Synthetic workload: `{report.synthetic_workload_version}` "
-            f"(checksum `{report.synthetic_workload_checksum}`)"
+            f"(checksum `{report.synthetic_workload_checksum}`, "
+            f"algorithm `{report.synthetic_workload_checksum_algorithm_version}`)"
         ),
         f"- Implementation commit: `{report.implementation_commit_sha}`"
         + (" (dirty working tree)" if report.implementation_dirty else ""),

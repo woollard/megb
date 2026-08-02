@@ -6,9 +6,19 @@ the explicit field allowlist (exhaustive and safe -- no candidate code,
 individual synthetic inputs/outputs, real task/case identifiers,
 privileged paths, or free-form diagnostics), round-trip serialization,
 self-checksum tamper detection, and the Markdown rendering.
+
+Also covers the report-schema-v2 correction: independence of
+``synthetic_workload_version``/``synthetic_workload_checksum`` from
+``G4_EVALUATOR_VERSION`` and the qualification-report's own schema
+version, distinctness of all five identities, content-sensitivity of the
+workload checksum, and consistency of the actual committed JSON/Markdown
+qualification reports.
 """
 
 import copy
+import inspect
+import json
+from pathlib import Path
 
 import pytest
 
@@ -23,8 +33,13 @@ from src.reference.g4_benchmark import (
     ThroughputSweepResult,
     WarmCacheCheckResult,
 )
+from src.reference.g4_benchmark_evaluator import G4_EVALUATOR_VERSION
 from src.reference.g4_qualification_report import (
+    BENCHMARK_PLAN_VERSION,
+    G4_QUALIFICATION_REPORT_SCHEMA_VERSION,
     QUALIFICATION_REPORT_FIELD_NAMES,
+    SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION,
+    SYNTHETIC_WORKLOAD_VERSION,
     G4QualificationReport,
     InvalidQualificationReportError,
     build_qualification_report,
@@ -32,6 +47,10 @@ from src.reference.g4_qualification_report import (
     qualification_report_to_dict,
     render_markdown,
 )
+from src.reference.g4_qualification_report_cli import _synthetic_workload_checksum
+
+_COMMITTED_JSON_PATH = Path("docs/measurement/megb-03g4-qualification-report.json")
+_COMMITTED_MARKDOWN_PATH = Path("docs/measurement/megb-03g4-qualification-report.md")
 
 _FORBIDDEN_NAME_FRAGMENTS = (
     "candidate_code",
@@ -115,7 +134,6 @@ def _qualification_report(**overrides: object) -> G4QualificationReport:
     kwargs: dict[str, object] = {
         "generated_at": "2026-08-02T00:00:00Z",
         "benchmark_plan_checksum": "a" * 64,
-        "synthetic_workload_version": "megb-03g4-benchmark-evaluator-v2",
         "synthetic_workload_checksum": "b" * 64,
         "implementation_commit_sha": "c" * 40,
         "implementation_dirty": False,
@@ -264,3 +282,109 @@ def test_render_markdown_never_contains_forbidden_content() -> None:
     markdown = render_markdown(report)
     for label, canary in _FORBIDDEN_CONTENT.items():
         assert canary not in markdown, f"{label} leaked into the Markdown rendering"
+
+
+# --- Report-schema v2 correction: independent identities --------------------------
+
+
+def test_synthetic_workload_version_does_not_equal_evaluator_version() -> None:
+    """Synthetic workload version does not equal evaluator version."""
+    assert SYNTHETIC_WORKLOAD_VERSION != G4_EVALUATOR_VERSION
+
+
+def test_report_synthetic_workload_version_is_always_the_fixed_constant() -> None:
+    """A built report's synthetic_workload_version is always the module's
+    own fixed constant -- never the benchmark evaluator's version, and
+    never derived from the benchmark report's own schema_version."""
+    report = _qualification_report(
+        benchmark_report=_benchmark_report(schema_version="some-other-benchmark-schema-v99")
+    )
+    assert report.synthetic_workload_version == SYNTHETIC_WORKLOAD_VERSION
+    assert report.synthetic_workload_version != G4_EVALUATOR_VERSION
+    assert report.synthetic_workload_version != "some-other-benchmark-schema-v99"
+
+
+def test_all_five_identities_are_pairwise_distinct() -> None:
+    """Benchmark-plan, synthetic-workload, checksum-algorithm, evaluator,
+    and qualification-report-schema identities are pairwise distinct."""
+    identities = {
+        "benchmark_plan_version": BENCHMARK_PLAN_VERSION,
+        "synthetic_workload_version": SYNTHETIC_WORKLOAD_VERSION,
+        "synthetic_workload_checksum_algorithm_version": (
+            SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION
+        ),
+        "evaluator_version": G4_EVALUATOR_VERSION,
+        "report_schema_version": G4_QUALIFICATION_REPORT_SCHEMA_VERSION,
+    }
+    values = list(identities.values())
+    assert len(values) == len(set(values)), f"identities collide: {identities}"
+
+
+def test_workload_checksum_function_has_no_evaluator_or_schema_parameter() -> None:
+    """_synthetic_workload_checksum only accepts workload-content
+    parameters -- it structurally cannot depend on evaluator version,
+    report-schema version, execution-protocol version, benchmark-plan
+    version, code revision, timestamps, or measured outcomes, because
+    none of those is even an accepted input."""
+    params = set(inspect.signature(_synthetic_workload_checksum).parameters)
+    assert params == {"entry_point", "canonical_solution", "tier_case_counts"}
+
+
+def test_workload_checksum_is_deterministic_for_the_same_content() -> None:
+    """Workload checksum is deterministic for the same content."""
+    assert _synthetic_workload_checksum() == _synthetic_workload_checksum()
+
+
+def test_workload_checksum_changes_when_any_canonical_item_changes() -> None:
+    """Changing any canonical workload item changes the workload checksum."""
+    base = _synthetic_workload_checksum()
+    assert _synthetic_workload_checksum(entry_point="different_entry_point") != base
+    assert _synthetic_workload_checksum(canonical_solution="def f(): pass\n") != base
+    assert _synthetic_workload_checksum(tier_case_counts={"LOW": 999}) != base
+
+
+def test_report_synthetic_workload_checksum_is_a_pure_passthrough() -> None:
+    """The report's synthetic_workload_checksum is exactly whatever value
+    was supplied -- unaffected by the benchmark report's own schema
+    version, i.e. by a change in report-schema-adjacent metadata."""
+    checksum = _synthetic_workload_checksum()
+    report_a = _qualification_report(
+        synthetic_workload_checksum=checksum,
+        benchmark_report=_benchmark_report(schema_version="megb-03g4-throughput-report-v1"),
+    )
+    report_b = _qualification_report(
+        synthetic_workload_checksum=checksum,
+        benchmark_report=_benchmark_report(schema_version="megb-03g4-throughput-report-v2"),
+    )
+    assert report_a.synthetic_workload_checksum == checksum
+    assert report_b.synthetic_workload_checksum == checksum
+
+
+# --- Consistency of the actual committed qualification report ---------------------
+
+
+def test_committed_json_report_verifies_against_its_own_self_checksum() -> None:
+    """The committed JSON qualification report round-trips through
+    qualification_report_from_dict without raising -- i.e. it verifies
+    against its own self-checksum (the same check every reader gets)."""
+    data = json.loads(_COMMITTED_JSON_PATH.read_text(encoding="utf-8"))
+    report = qualification_report_from_dict(data)
+    assert report.report_checksum == data["report_checksum"]
+
+
+def test_committed_json_and_markdown_reports_describe_the_same_frozen_run() -> None:
+    """The committed JSON and Markdown qualification reports describe the
+    same frozen run -- same readiness, schema version, workload identity,
+    and self-checksum appear in both."""
+    data = json.loads(_COMMITTED_JSON_PATH.read_text(encoding="utf-8"))
+    markdown = _COMMITTED_MARKDOWN_PATH.read_text(encoding="utf-8")
+    for field in (
+        "readiness",
+        "schema_version",
+        "report_checksum",
+        "synthetic_workload_version",
+        "synthetic_workload_checksum",
+        "synthetic_workload_checksum_algorithm_version",
+        "benchmark_plan_version",
+    ):
+        assert str(data[field]) in markdown, f"{field}={data[field]!r} missing from Markdown"

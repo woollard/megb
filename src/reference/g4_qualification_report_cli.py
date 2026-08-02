@@ -46,7 +46,6 @@ from src.reference.g4_benchmark import (  # noqa: F401  (re-exported for the che
     _UNSCALED_THROUGHPUT_N,
     DEFAULT_BENCHMARK_AUDIT_PATH,
 )
-from src.reference.g4_benchmark_evaluator import G4_EVALUATOR_VERSION
 from src.reference.g4_qualification_report import (
     build_qualification_report,
     qualification_report_to_dict,
@@ -80,18 +79,28 @@ def _benchmark_plan_checksum() -> str:
     return hashlib.sha256(plan_repr.encode("utf-8")).hexdigest()
 
 
-def _synthetic_workload_checksum() -> str:
+def _synthetic_workload_checksum(
+    entry_point: str = _ENTRY_POINT,
+    canonical_solution: str = _CANONICAL_SOLUTION,
+    tier_case_counts: dict[str, int] | None = None,
+) -> str:
     """Checksum of the synthetic workload's actual content only (entry
     point, canonical solution, tier case counts) -- deliberately excludes
-    every identity/version label, so it stays stable across evaluator
-    version bumps (see ``G4_EVALUATOR_VERSION``, reported separately as
-    ``synthetic_workload_version``) and only changes if the workload
-    content itself changes."""
+    every identity/version label (evaluator version, report-schema
+    version, execution-protocol version, benchmark-plan version, code
+    revision, timestamps, measured outcomes), so it stays stable across
+    evaluator version bumps and report-schema bumps, and only changes if
+    the workload content itself changes. The default arguments are the
+    real committed workload; the parameters exist so tests can verify
+    the independence and content-sensitivity properties directly without
+    monkeypatching module globals."""
+    if tier_case_counts is None:
+        tier_case_counts = _TIER_CASE_COUNTS
     workload_repr = repr(
         (
-            _ENTRY_POINT,
-            _CANONICAL_SOLUTION,
-            sorted(_TIER_CASE_COUNTS.items()),
+            entry_point,
+            canonical_solution,
+            sorted(tier_case_counts.items()),
         )
     )
     return hashlib.sha256(workload_repr.encode("utf-8")).hexdigest()
@@ -182,7 +191,6 @@ def main() -> None:
         benchmark_report,
         generated_at=datetime.now(timezone.utc).isoformat(),
         benchmark_plan_checksum=_benchmark_plan_checksum(),
-        synthetic_workload_version=G4_EVALUATOR_VERSION,
         synthetic_workload_checksum=_synthetic_workload_checksum(),
         implementation_commit_sha=_git_commit_sha(),
         implementation_dirty=_git_is_dirty(),
