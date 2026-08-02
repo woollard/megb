@@ -36,13 +36,13 @@ jobs:
   g4-qualification:
     name: G.4 synthetic orchestration-qualification benchmark
     runs-on: ubuntu-latest
-    # Safety-net ceiling only, at 70 minutes -- the benchmark's OWN frozen
-    # 55-minute-target/60-minute-absolute ceiling (see the frozen plan) is
-    # enforced internally by src.reference.g4_benchmark itself, which
-    # aborts and reports ORCHESTRATION_BLOCKED well before this fires. This
+    # Safety-net ceiling at 60 minutes, matching the benchmark's own frozen
+    # absolute ceiling exactly (see the frozen plan) -- the benchmark
+    # itself targets <=55 minutes and aborts internally with
+    # ORCHESTRATION_BLOCKED before this fires in the ordinary case. This
     # exists only to stop a genuinely hung run from consuming CI resources
-    # indefinitely.
-    timeout-minutes: 70
+    # beyond the frozen ceiling.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
