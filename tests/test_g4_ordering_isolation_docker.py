@@ -12,6 +12,14 @@ against the real MEGB-02 execution boundary through the real,
 already-accepted MEGB-03G.3 orchestrator.
 """
 
+# This file intentionally builds its own local orchestrator-construction
+# helper and leftover-container check (mirroring
+# tests/test_execution_sandbox.py's own _list_megb_runner_containers and
+# src.reference.g4_benchmark's _make_orchestrator) rather than importing
+# either -- see tests/test_reference_cache_key.py's note on why test files
+# keep their own local fixtures independent of each other.
+# pylint: disable=duplicate-code
+
 import hashlib
 import subprocess
 import threading
