@@ -24,49 +24,51 @@ module proves its own behavior with deterministic synthetic/offline tests
 only (fake backends/evaluators, temp cache/audit directories, synthetic
 evidence).
 
-**Evidence-resolver production-readiness (Requirement 3) -- reported, not
-silently worked around:** :class:`EvidenceResolver` is a typed, minimal
-boundary (``resolve(task_id) -> ReferenceTaskEvidence``) so orchestration
-policy never depends on where evidence comes from. A resolver that reads
-directly from the committed MEGB-03B/MEGB-03C privileged lock artifacts
-(``src.reference.partition_lock``/``src.reference.oracle_lock``) is *not*
-implemented in this checkpoint. This is a deliberate scope decision, not a
-schema/access-policy blocker: every field such a loader would need (frozen
-reference-only case membership, per-case ``OracleRecord``\\ s, dataset/
-partition checksums) already exists in those modules' accepted schemas
-without any change. Building and properly testing that loader was deferred
-because doing so would require either touching the real privileged corpus
-(explicitly prohibited by this checkpoint's test-scope restriction) or
-adding a substantial new privileged-artifact-reading code path with no
-corresponding test coverage inside this same checkpoint -- both undesirable
-given the size of the rest of this specification. :class:`MappingEvidenceResolver`
-is provided instead as the production-usable adapter in the meantime: a
-caller (MEGB-06H, or a future dedicated loader subtask) resolves evidence
-through its own process and hands this orchestrator a plain mapping. This
-should be confirmed or redirected before MEGB-03G.4.
+**Evidence-resolver production-readiness (Requirement 3):** :class:`EvidenceResolver`
+is a typed, minimal boundary (``resolve(task_id) -> ReferenceTaskEvidence``)
+so orchestration policy never depends on where evidence comes from. A
+resolver reading directly from the committed MEGB-03B/MEGB-03C privileged
+lock artifacts is *not* implemented here (deliberate scope decision, not a
+schema/access-policy blocker -- every field it would need already exists in
+those modules' accepted schemas). :class:`MappingEvidenceResolver` is the
+production-usable adapter in the meantime: a caller resolves evidence
+through its own process and hands this orchestrator a plain mapping.
 
-**KeyboardInterrupt handling -- a deliberate design decision:** :meth:`ReferenceOrchestrator.run`
-catches ``KeyboardInterrupt`` internally rather than letting it propagate,
-performs the same safe reconciliation as cooperative cancellation, and
-*returns* a typed, ``interrupted=True`` :class:`OrchestrationRunSummary`
-instead of raising. A caller that wants the process to actually exit on
-Ctrl-C should check ``summary.interrupted`` and act on it; nothing here
-imposes ``sys.exit`` on the caller's behalf.
+**KeyboardInterrupt handling:** :meth:`ReferenceOrchestrator.run` catches
+``KeyboardInterrupt`` internally, performs the same safe reconciliation as
+cooperative cancellation, and *returns* a typed, ``interrupted=True``
+:class:`OrchestrationRunSummary` instead of raising. A caller that wants
+the process to actually exit on Ctrl-C must check ``summary.interrupted``
+itself; nothing here imposes ``sys.exit`` on the caller's behalf.
 """
 
 import hashlib
 import re
 import threading
 import uuid
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable, Mapping, Protocol, Sequence
 
 from src.execution.backend import ExecutionBackend
-from src.reference.cache_key import CACHE_KEY_SCHEMA_VERSION, ReferenceResultCacheKey, cache_key_for
+from src.reference.cache_key import ReferenceResultCacheKey, cache_key_for
+from src.reference.orchestration_trace import (
+    FRESH_CACHE_POLICIES,
+    CachePolicy,
+    CalibrationTraceRequiredError,
+    ReplicateRequiresFreshPolicyError,
+    TraceRecorder,
+)
 from src.reference.reference_audit import ReferenceAuditLog, build_audit_record
+from src.reference.reference_orchestrator_admission import (
+    AdmissionState,
+    KeyExecutionResult,
+    KeyGroup,
+    logically_equivalent,
+    prospective_cache_key,
+)
 from src.reference.reference_cache import CacheDisposition, ReferenceResultCache
 from src.reference.reference_evaluator import (
     FULL_EXECUTION_PROFILE,
@@ -117,18 +119,23 @@ def _require_nonempty(value: object, field_name: str) -> None:
 class WorkItem:
     """One task-candidate work item submitted for orchestrated evaluation.
 
-    ``candidate_code`` lives here only in trusted, in-process memory: this
-    class has no serialization function and is never written to the cache,
-    the audit log, a run summary, an exception message, or any committed
-    artifact -- only ``candidate_sha256``/``candidate_id`` (never the source
-    itself) ever leave the orchestrator's in-process boundary.
+    ``candidate_code`` lives here only in trusted, in-process memory: never
+    written to the cache, audit log, run summary, exception message, or any
+    committed artifact -- only ``candidate_sha256``/``candidate_id`` ever
+    leave the orchestrator's in-process boundary.
 
     ``candidate_sha256`` is *not* verified against ``candidate_code`` at
-    construction time -- that check happens as an explicit orchestration
-    step (:meth:`ReferenceOrchestrator.run`, before cache lookup or
-    execution) so a caller can legitimately submit a batch containing a
-    malformed item and receive a typed ``CANDIDATE_HASH_MISMATCH`` outcome
-    for it, rather than the whole batch's construction failing outright.
+    construction time -- that check happens explicitly in
+    :meth:`ReferenceOrchestrator.run`, before cache lookup or execution, so
+    a malformed item in a batch gets a typed ``CANDIDATE_HASH_MISMATCH``
+    outcome rather than failing the whole batch's construction.
+
+    ``task_evaluation_replicate_id`` (H.2B.1, default ``0``): an admission-
+    layer-only identity letting ``N`` identical (task, candidate, context)
+    items admit as ``N`` distinct fresh measurements. Never enters
+    :class:`~src.reference.cache_key.ReferenceResultCacheKey`; a nonzero
+    value is rejected under :attr:`CachePolicy.CACHE_FIRST` (see
+    :exc:`ReplicateRequiresFreshPolicyError`).
     """
 
     work_item_id: str
@@ -138,6 +145,7 @@ class WorkItem:
     candidate_sha256: str
     candidate_code: str
     run_context: ReferenceRunContext
+    task_evaluation_replicate_id: int = 0
 
     def __post_init__(self) -> None:
         _require_nonempty(self.work_item_id, "work_item_id")
@@ -163,6 +171,18 @@ class WorkItem:
             raise InvalidWorkItemError(
                 f"run_context must be a ReferenceRunContext, got {self.run_context!r}"
             )
+        if not isinstance(self.task_evaluation_replicate_id, int) or isinstance(
+            self.task_evaluation_replicate_id, bool
+        ):
+            raise InvalidWorkItemError(
+                f"task_evaluation_replicate_id must be an int, got "
+                f"{self.task_evaluation_replicate_id!r}"
+            )
+        if self.task_evaluation_replicate_id < 0:
+            raise InvalidWorkItemError(
+                f"task_evaluation_replicate_id must be non-negative, got "
+                f"{self.task_evaluation_replicate_id!r}"
+            )
 
 
 @dataclass(frozen=True)
@@ -184,16 +204,11 @@ class RetryPolicy:
 class Evaluator(Protocol):
     """The exact call shape of :func:`~src.reference.reference_evaluator.evaluate_reference`,
     factored out so a caller may substitute a different evaluation function
-    entirely (e.g. MEGB-03G.4's benchmark-only synthetic evaluator, which
-    performs the same kind of real-``ExecutionBackend`` case-by-case
-    invocation and comparison but against fully synthetic, non-privileged
-    evidence with its own distinct identity constants -- never against
-    ``evaluate_reference``'s real-corpus version cross-check).
-
-    Purely additive: :class:`OrchestrationConfig`'s ``evaluator`` field
-    defaults to the real ``evaluate_reference``, so every existing
-    orchestration call site is completely unaffected unless it explicitly
-    supplies a different one.
+    entirely (e.g. MEGB-03G.4's benchmark-only synthetic evaluator, against
+    fully synthetic, non-privileged evidence). Purely additive:
+    :class:`OrchestrationConfig`'s ``evaluator`` field defaults to the real
+    ``evaluate_reference``, so every existing call site is unaffected
+    unless it explicitly supplies a different one.
     """
 
     def __call__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -214,13 +229,13 @@ class Evaluator(Protocol):
 @dataclass(frozen=True)
 class OrchestrationConfig:
     """Run-level orchestration policy: concurrency bounds, retry policy,
-    execution profile, the ``caller`` label recorded on every audit event
-    (prefixed with the run ID at record-build time), and the ``evaluator``
-    function invoked per attempt.
+    execution profile, the audit ``caller`` label, the ``evaluator``
+    function invoked per attempt, and the ``cache_policy``/``trace_recorder``
+    pair governing the production cache and calibration trace.
 
-    ``evaluator`` defaults to the real ``evaluate_reference`` -- every
-    existing production call site is unaffected unless it explicitly
-    supplies a different one (see :class:`Evaluator`)."""
+    ``evaluator``/``cache_policy`` default to the real ``evaluate_reference``/
+    :attr:`CachePolicy.CACHE_FIRST` -- every existing call site that omits
+    them is completely unaffected (a purely additive H.2B.1 extension)."""
 
     max_workers: int
     max_in_flight: int
@@ -228,6 +243,8 @@ class OrchestrationConfig:
     profile: ExecutionProfile = FULL_EXECUTION_PROFILE
     caller: str = "MEGB-03G.3-orchestrator"
     evaluator: Evaluator = evaluate_reference
+    cache_policy: CachePolicy = CachePolicy.CACHE_FIRST
+    trace_recorder: TraceRecorder | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.max_workers, int) or isinstance(self.max_workers, bool):
@@ -242,6 +259,14 @@ class OrchestrationConfig:
                 f"({self.max_workers})"
             )
         _require_nonempty(self.caller, "caller")
+        if not isinstance(self.cache_policy, CachePolicy):
+            raise ValueError(f"cache_policy must be a CachePolicy, got {self.cache_policy!r}")
+        if self.cache_policy in FRESH_CACHE_POLICIES and self.trace_recorder is None:
+            raise CalibrationTraceRequiredError(
+                f"cache_policy={self.cache_policy.value!r} requires a trace_recorder -- a "
+                f"fresh policy's entire purpose is to produce a durable calibration trace, "
+                f"so it can never be configured without one"
+            )
 
 
 class WorkItemDisposition(str, Enum):
@@ -255,23 +280,27 @@ class WorkItemDisposition(str, Enum):
     EXECUTED_INVALID = "EXECUTED_INVALID"
     # INVALID_INFRASTRUCTURE persisted across every authorized retry attempt.
     RETRY_EXHAUSTED = "RETRY_EXHAUSTED"
-    # candidate_sha256 did not match sha256(candidate_code); rejected before
-    # any cache lookup, evidence resolution, or execution.
+    # candidate_sha256 mismatched sha256(candidate_code); rejected pre-cache.
     CANDIDATE_HASH_MISMATCH = "CANDIDATE_HASH_MISMATCH"
-    # evaluate_reference()'s own internal version/checksum cross-check
-    # (run_context vs. resolved evidence) failed before any candidate code ran.
+    # evaluate_reference()'s own version/checksum cross-check failed first.
     EVIDENCE_VERSION_MISMATCH = "EVIDENCE_VERSION_MISMATCH"
-    # A valid result was computed but a conflicting entry already occupies
-    # its cache key and could not be reconciled as equivalent.
+    # A valid result, but a conflicting cache entry could not be reconciled.
     CACHE_CONFLICT_BLOCKED = "CACHE_CONFLICT_BLOCKED"
-    # A valid result was computed but the cache layer itself failed to store it.
+    # A valid result, but the cache layer itself failed to store it.
     CACHE_STORAGE_FAILURE = "CACHE_STORAGE_FAILURE"
+    # A valid, fresh result under FRESH_MEASURE_NO_PRODUCTION_CACHE_WRITE --
+    # deliberately never written to the production cache.
+    EXECUTED_VALID_UNCACHED = "EXECUTED_VALID_UNCACHED"
     # Orchestration was interrupted before this item's unique key was ever admitted.
     NOT_STARTED = "NOT_STARTED"
 
 
 _ACCEPTED_DISPOSITIONS = frozenset(
-    {WorkItemDisposition.CACHE_HIT, WorkItemDisposition.EXECUTED_VALID}
+    {
+        WorkItemDisposition.CACHE_HIT,
+        WorkItemDisposition.EXECUTED_VALID,
+        WorkItemDisposition.EXECUTED_VALID_UNCACHED,
+    }
 )
 
 
@@ -335,14 +364,10 @@ class EvidenceResolver(Protocol):
 @dataclass(frozen=True)
 class MappingEvidenceResolver:
     """Production-usable :class:`EvidenceResolver` wrapping a pre-resolved
-    ``{task_id: ReferenceTaskEvidence}`` mapping.
-
-    Suitable both for tests (a small synthetic mapping) and for real
-    callers that resolve evidence through their own trusted-side process
-    (e.g. a future privileged-corpus loader, or MEGB-06H's own evidence
-    assembly) and hand this orchestrator the result -- see the module
-    docstring's Requirement 3 note for why a corpus-reading resolver is not
-    implemented directly in this checkpoint.
+    ``{task_id: ReferenceTaskEvidence}`` mapping -- suitable for tests and
+    for real callers that resolve evidence through their own trusted-side
+    process and hand this orchestrator the result (see the module
+    docstring's Requirement 3 note).
     """
 
     evidence_by_task_id: Mapping[str, ReferenceTaskEvidence]
@@ -353,124 +378,6 @@ class MappingEvidenceResolver:
             return self.evidence_by_task_id[task_id]
         except KeyError as exc:
             raise UnknownTaskIdError(f"no evidence supplied for task_id {task_id!r}") from exc
-
-
-def _prospective_cache_key(
-    item: WorkItem, evidence: ReferenceTaskEvidence
-) -> ReferenceResultCacheKey:
-    """Construct the cache key a fresh evaluation of ``item`` against
-    ``evidence`` would produce, *before* any execution happens.
-
-    Every field ``cache_key_for(actual_result)`` (see
-    ``src.reference.cache_key``) would derive from a real result is already
-    knowable from ``item.run_context`` and ``evidence`` alone --
-    ``evaluate_reference`` always copies ``run_context`` onto the result's
-    ``context`` verbatim and always sources ``reference_case_checksum``/
-    ``oracle_version`` from ``evidence`` verbatim -- so this prospective key
-    is guaranteed to equal the key the real result will later hash to,
-    letting the orchestrator consult the cache before running any candidate
-    code. Deliberately implemented here rather than by extending
-    ``src.reference.cache_key`` (an accepted, closed MEGB-03G.2 module):
-    this is a pure additive read of that module's already-public
-    constructor and fields, not a change to its schema or behavior.
-    """
-
-    context = item.run_context
-    return ReferenceResultCacheKey(
-        cache_key_schema_version=CACHE_KEY_SCHEMA_VERSION,
-        task_id=item.task_id,
-        candidate_sha256=item.candidate_sha256,
-        reference_case_checksum=evidence.reference_case_checksum,
-        dataset_version=context.dataset_version,
-        dataset_checksum=context.dataset_checksum,
-        partition_version=context.partition_version,
-        task_manifest_checksum=context.task_manifest_checksum,
-        oracle_version=evidence.oracle_version,
-        comparison_profile_version=context.comparison_profile_version,
-        evaluator_version=context.evaluator_version,
-        execution_profile_id=context.execution_profile_id,
-        execution_protocol_version=context.execution_protocol_version,
-    )
-
-
-@dataclass
-class _KeyGroup:
-    key: ReferenceResultCacheKey
-    evidence: ReferenceTaskEvidence
-    representative: WorkItem
-    members: list[WorkItem]
-
-
-def _logically_equivalent(first: ReferenceTaskResult, second: ReferenceTaskResult) -> bool:
-    """True when two results are *semantically* the same measurement
-    outcome for the same task/candidate/evidence, differing (if at all)
-    only in *observational* metadata about the invocation that produced
-    them.
-
-    This is the **single, centralized** definition of "equivalent enough to
-    reconcile as a cache hit" for the whole orchestrator -- every
-    concurrent-writer-conflict decision goes through this one function
-    (see its one call site in :meth:`ReferenceOrchestrator._accept_valid_result`)
-    rather than each call site inventing its own comparison, so the
-    semantic/observational line stays defined in exactly one place.
-
-    - **Semantic fields** (must match exactly): ``task_id``,
-      ``candidate_sha256``, ``context`` (the full ``ReferenceRunContext``),
-      ``status``, ``q_ref_task``, ``reference_case_total``,
-      ``reference_case_pass_count``, ``first_failure_category``,
-      ``oracle_version``, ``reference_case_checksum``, and
-      ``execution_failure_counts`` -- together these fully determine *what
-      was measured*, and any difference here means the two results
-      genuinely disagree about the outcome, which must never be silently
-      reconciled.
-    - **Observational fields** (deliberately excluded): ``evaluated_at``
-      and ``duration_seconds`` -- these describe *when/how long this
-      particular invocation took*, not what it measured. Two independent,
-      correct executions of the same deterministic candidate against the
-      same evidence will almost never agree on either of these, so an
-      exact ``==`` comparison would reject every genuine concurrent race as
-      a conflict, silently defeating the reconciliation requirement that a
-      logically-equivalent concurrent write be accepted as a hit rather
-      than blocked.
-
-    Used to decide whether a concurrent-writer conflict
-    (:attr:`~src.reference.reference_cache.CacheDisposition.CONFLICTING_WRITE`)
-    may be accepted as an equivalent hit rather than blocked.
-    """
-    return (
-        first.task_id == second.task_id
-        and first.candidate_sha256 == second.candidate_sha256
-        and first.context == second.context
-        and first.status == second.status
-        and first.q_ref_task == second.q_ref_task
-        and first.reference_case_total == second.reference_case_total
-        and first.reference_case_pass_count == second.reference_case_pass_count
-        and first.first_failure_category == second.first_failure_category
-        and first.oracle_version == second.oracle_version
-        and first.reference_case_checksum == second.reference_case_checksum
-        and dict(first.execution_failure_counts) == dict(second.execution_failure_counts)
-    )
-
-
-@dataclass(frozen=True)
-class _KeyExecutionResult:
-    disposition: WorkItemDisposition
-    task_result: ReferenceTaskResult | None
-    attempts: int
-    detail: str
-
-
-@dataclass
-class _AdmissionState:
-    """Mutable bookkeeping for one :meth:`ReferenceOrchestrator._execute_key_groups`
-    call -- bundled into one object purely to keep that method's own local
-    variable count small; not used anywhere else."""
-
-    pending: list[str]
-    key_results: dict[str, _KeyExecutionResult] = field(default_factory=dict)
-    in_flight: "dict[Future[_KeyExecutionResult], str]" = field(default_factory=dict)
-    unstarted: set[str] = field(default_factory=set)
-    interrupted: bool = False
 
 
 class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
@@ -519,21 +426,10 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
         keys to finish (their results are never discarded), and mark every
         not-yet-admitted item ``NOT_STARTED`` rather than raising.
 
-        **Contract: this method never raises or propagates**
-        ``KeyboardInterrupt``. A Ctrl-C (or any other delivery of
-        ``KeyboardInterrupt``) arriving while ``run`` is executing is caught
-        internally and reflected as a normal return: a fully-formed
-        ``OrchestrationRunSummary`` with ``interrupted=True``, every
-        already-accepted result intact in ``outcomes``, and every
-        not-yet-admitted item marked ``NOT_STARTED``. Callers that want the
-        *process* to actually stop on Ctrl-C must check
-        ``summary.interrupted`` themselves after ``run`` returns and act on
-        it (e.g. exit, or re-raise) -- this method will not do that for
-        them. This is a deliberate design choice for a batch execution
-        engine (accepted as part of MEGB-03G.3): it keeps auditing,
-        partial-result reporting, and resumption deterministic, rather than
-        leaving the caller to reconstruct state from a raised exception.
-        See also the module docstring's KeyboardInterrupt note.
+        **Contract: never raises or propagates ``KeyboardInterrupt``** --
+        returns a normal, fully-formed ``OrchestrationRunSummary`` with
+        ``interrupted=True`` instead (see the module docstring's
+        KeyboardInterrupt note for the full rationale).
         """
         _require_nonempty(run_id, "run_id")
         work_item_ids = [item.work_item_id for item in work_items]
@@ -596,34 +492,37 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
 
     @staticmethod
     def _fill_outcomes_from_keys(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        key_groups: dict[str, _KeyGroup],
-        ordered_key_digests: list[str],
-        key_results: dict[str, _KeyExecutionResult],
-        unstarted_digests: set[str],
+        key_groups: dict[str, KeyGroup],
+        ordered_admission_keys: list[str],
+        key_results: dict[str, KeyExecutionResult],
+        unstarted_admission_keys: set[str],
         outcomes_by_id: dict[str, WorkItemOutcome],
     ) -> None:
-        for digest in ordered_key_digests:
-            group = key_groups[digest]
-            if digest in unstarted_digests:
+        for admission_key in ordered_admission_keys:
+            group = key_groups[admission_key]
+            # The real cache digest, never the admission_key itself (which
+            # also folds in the replicate id for bookkeeping only).
+            cache_key_digest = group.key.key_digest
+            if admission_key in unstarted_admission_keys:
                 for item in group.members:
                     outcomes_by_id[item.work_item_id] = WorkItemOutcome(
                         work_item_id=item.work_item_id,
                         input_ordinal=item.input_ordinal,
                         task_id=item.task_id,
-                        cache_key_digest=digest,
+                        cache_key_digest=cache_key_digest,
                         disposition=WorkItemDisposition.NOT_STARTED,
                         task_result=None,
                         attempts=0,
                         detail="orchestration interrupted before this cache key was admitted",
                     )
                 continue
-            exec_result = key_results[digest]
+            exec_result = key_results[admission_key]
             for item in group.members:
                 outcomes_by_id[item.work_item_id] = WorkItemOutcome(
                     work_item_id=item.work_item_id,
                     input_ordinal=item.input_ordinal,
                     task_id=item.task_id,
-                    cache_key_digest=digest,
+                    cache_key_digest=cache_key_digest,
                     disposition=exec_result.disposition,
                     task_result=exec_result.task_result,
                     attempts=exec_result.attempts,
@@ -632,22 +531,44 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
 
     def _group_by_cache_key(
         self, valid_items: list[WorkItem]
-    ) -> tuple[dict[str, _KeyGroup], list[str]]:
+    ) -> tuple[dict[str, KeyGroup], list[str]]:
+        """Group ``valid_items`` for admission, keyed by
+        ``f"{cache_key_digest}#{replicate_id}"``. Under ``CACHE_FIRST``
+        every replicate id is guaranteed ``0`` (validated below), so this
+        degenerates to the original cache-key-only grouping -- byte-for-
+        byte unchanged. Under a fresh policy, ``N`` items sharing a cache
+        key but carrying ``N`` distinct replicate ids form ``N`` distinct
+        groups; ``KeyGroup.key`` is always the plain, replicate-free key.
+        """
         evidence_by_task: dict[str, ReferenceTaskEvidence] = {}
-        key_groups: dict[str, _KeyGroup] = {}
-        ordered_key_digests: list[str] = []
+        key_groups: dict[str, KeyGroup] = {}
+        ordered_admission_keys: list[str] = []
         for item in valid_items:
+            if (
+                self._config.cache_policy == CachePolicy.CACHE_FIRST
+                and item.task_evaluation_replicate_id != 0
+            ):
+                raise ReplicateRequiresFreshPolicyError(
+                    f"work_item {item.work_item_id!r} has explicit replicate semantics "
+                    f"(task_evaluation_replicate_id={item.task_evaluation_replicate_id}) but "
+                    f"cache_policy is CACHE_FIRST -- configure a fresh CachePolicy instead"
+                )
             if item.task_id not in evidence_by_task:
                 evidence_by_task[item.task_id] = self._evidence_resolver.resolve(item.task_id)
             evidence = evidence_by_task[item.task_id]
-            key = _prospective_cache_key(item, evidence)
-            if key.key_digest not in key_groups:
-                key_groups[key.key_digest] = _KeyGroup(
-                    key=key, evidence=evidence, representative=item, members=[]
+            key = prospective_cache_key(item, evidence)
+            admission_key = f"{key.key_digest}#{item.task_evaluation_replicate_id}"
+            if admission_key not in key_groups:
+                key_groups[admission_key] = KeyGroup(
+                    key=key,
+                    evidence=evidence,
+                    representative=item,
+                    members=[],
+                    task_evaluation_replicate_id=item.task_evaluation_replicate_id,
                 )
-                ordered_key_digests.append(key.key_digest)
-            key_groups[key.key_digest].members.append(item)
-        return key_groups, ordered_key_digests
+                ordered_admission_keys.append(admission_key)
+            key_groups[admission_key].members.append(item)
+        return key_groups, ordered_admission_keys
 
     def _build_summary(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -656,7 +577,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
         total_work_items: int,
         unique_cache_keys: int,
         duplicate_work_items: int,
-        key_results: dict[str, _KeyExecutionResult],
+        key_results: dict[str, KeyExecutionResult],
         interrupted: bool,
         outcomes: tuple[WorkItemOutcome, ...],
     ) -> OrchestrationRunSummary:
@@ -688,17 +609,17 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
             outcomes=outcomes,
         )
 
-    def _report_in_flight(self, state: _AdmissionState) -> None:
+    def _report_in_flight(self, state: AdmissionState) -> None:
         if self._on_in_flight_change is not None:
             self._on_in_flight_change(len(state.in_flight))
 
-    def _drain_in_flight(self, state: _AdmissionState) -> None:
+    def _drain_in_flight(self, state: AdmissionState) -> None:
         for future, digest in list(state.in_flight.items()):
             state.key_results[digest] = future.result()
         state.in_flight.clear()
         self._report_in_flight(state)
 
-    def _interrupt(self, state: _AdmissionState) -> None:
+    def _interrupt(self, state: AdmissionState) -> None:
         state.interrupted = True
         self._drain_in_flight(state)
         state.unstarted.update(state.pending)
@@ -706,8 +627,8 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
 
     def _admit_ready(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
-        state: _AdmissionState,
-        key_groups: dict[str, _KeyGroup],
+        state: AdmissionState,
+        key_groups: dict[str, KeyGroup],
         run_id: str,
         cancelled: threading.Event,
         executor: ThreadPoolExecutor,
@@ -724,13 +645,13 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
 
     def _execute_key_groups(
         self,
-        key_groups: dict[str, _KeyGroup],
+        key_groups: dict[str, KeyGroup],
         ordered_key_digests: list[str],
         run_id: str,
         cancellation_event: threading.Event | None,
-    ) -> tuple[dict[str, _KeyExecutionResult], set[str], bool]:
+    ) -> tuple[dict[str, KeyExecutionResult], set[str], bool]:
         cancelled = cancellation_event if cancellation_event is not None else threading.Event()
-        state = _AdmissionState(pending=list(ordered_key_digests))
+        state = AdmissionState(pending=list(ordered_key_digests))
 
         executor = ThreadPoolExecutor(max_workers=self._config.max_workers)
         try:
@@ -753,10 +674,18 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
 
         return state.key_results, state.unstarted, state.interrupted
 
-    def _execute_key_group(self, group: _KeyGroup, run_id: str) -> _KeyExecutionResult:
+    def _execute_key_group(self, group: KeyGroup, run_id: str) -> KeyExecutionResult:
         key = group.key
         representative = group.representative
         evidence = group.evidence
+        replicate_id = group.task_evaluation_replicate_id
+
+        # Fresh policies bypass cache.get() completely (requirement 3);
+        # CACHE_FIRST's own lookup path below is byte-for-byte unchanged.
+        if self._config.cache_policy != CachePolicy.CACHE_FIRST:
+            return self._execute_with_retries(
+                evidence, representative, key, run_id, "", replicate_id
+            )
 
         with self._io_lock:
             lookup = self._cache.get(key)
@@ -767,7 +696,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                 self._append_audit(
                     run_id, representative, lookup.task_result, CacheDisposition.VALID_HIT, 1
                 )
-            return _KeyExecutionResult(
+            return KeyExecutionResult(
                 WorkItemDisposition.CACHE_HIT, lookup.task_result, 0, "served from cache"
             )
 
@@ -782,16 +711,19 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                 f"{lookup.detail}; treated as a miss and re-executed)"
             )
 
-        return self._execute_with_retries(evidence, representative, key, run_id, prior_note)
+        return self._execute_with_retries(
+            evidence, representative, key, run_id, prior_note, replicate_id
+        )
 
-    def _execute_with_retries(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    def _execute_with_retries(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
         self,
         evidence: ReferenceTaskEvidence,
         representative: WorkItem,
         key: ReferenceResultCacheKey,
         run_id: str,
         prior_note: str,
-    ) -> _KeyExecutionResult:
+        task_evaluation_replicate_id: int,
+    ) -> KeyExecutionResult:
         backend = self._backend_factory()
         max_attempts = self._config.retry_policy.max_attempts
         attempts = 0
@@ -808,79 +740,127 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                     profile=self._config.profile,
                 )
             except ReferenceEvaluatorVersionMismatchError as exc:
-                return _KeyExecutionResult(
-                    WorkItemDisposition.EVIDENCE_VERSION_MISMATCH,
-                    None,
-                    attempts,
+                return self._finalize(
+                    evidence, representative, task_evaluation_replicate_id,
+                    WorkItemDisposition.EVIDENCE_VERSION_MISMATCH, None, attempts,
                     f"evidence/run_context version mismatch: {exc}",
                 )
             except CandidateIdentityMismatchError as exc:
-                # Unreachable in practice (run() already verifies this before
-                # any key is admitted) -- handled defensively so a future
-                # caller of _execute_with_retries cannot crash the pool.
-                return _KeyExecutionResult(
-                    WorkItemDisposition.CANDIDATE_HASH_MISMATCH, None, attempts, str(exc)
+                # Unreachable in practice (run() already verifies this) --
+                # handled defensively so this cannot crash the pool.
+                return self._finalize(
+                    evidence, representative, task_evaluation_replicate_id,
+                    WorkItemDisposition.CANDIDATE_HASH_MISMATCH, None, attempts, str(exc),
                 )
             except Exception as exc:  # pylint: disable=broad-except
-                # ExecutionBackend.execute() "may raise for genuine backend-
-                # setup failures the caller cannot recover from" per its own
-                # interface contract -- treated as a transient infrastructure
-                # failure for retry purposes, same as a typed
-                # INVALID_INFRASTRUCTURE result. No ReferenceTaskResult was
-                # ever constructed, so no audit record is built here (see the
-                # module's audit-coverage note); only the type name is kept,
-                # never the raw message, to avoid ever surfacing backend
-                # implementation detail that might embed request content.
+                # Backend setup failure -- treated as transient infrastructure
+                # failure; only the type name is kept, never the raw message.
                 if attempts < max_attempts:
                     continue
-                return _KeyExecutionResult(
-                    WorkItemDisposition.RETRY_EXHAUSTED,
-                    None,
-                    attempts,
+                return self._finalize(
+                    evidence, representative, task_evaluation_replicate_id,
+                    WorkItemDisposition.RETRY_EXHAUSTED, None, attempts,
                     f"infrastructure retries exhausted after {attempts} attempts "
                     f"(backend raised {type(exc).__name__})",
                 )
 
             if result.status == MeasurementStatus.VALID:
                 return self._accept_valid_result(
-                    result, key, representative, run_id, attempts, prior_note
+                    result,
+                    key,
+                    representative,
+                    evidence,
+                    run_id,
+                    attempts,
+                    prior_note,
+                    task_evaluation_replicate_id,
                 )
 
             with self._io_lock:
                 self._append_audit(run_id, representative, result, CacheDisposition.MISS, attempts)
 
             if result.status not in _RETRYABLE_STATUSES:
-                return _KeyExecutionResult(
-                    WorkItemDisposition.EXECUTED_INVALID,
-                    result,
-                    attempts,
+                return self._finalize(
+                    evidence, representative, task_evaluation_replicate_id,
+                    WorkItemDisposition.EXECUTED_INVALID, result, attempts,
                     f"non-retryable status {result.status.value}",
                 )
             if attempts < max_attempts:
                 continue
-            return _KeyExecutionResult(
-                WorkItemDisposition.RETRY_EXHAUSTED,
-                result,
-                attempts,
+            return self._finalize(
+                evidence, representative, task_evaluation_replicate_id,
+                WorkItemDisposition.RETRY_EXHAUSTED, result, attempts,
                 f"infrastructure retries exhausted after {attempts} attempts",
             )
+
+    def _finalize(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
+        evidence: ReferenceTaskEvidence,
+        representative: WorkItem,
+        task_evaluation_replicate_id: int,
+        disposition: WorkItemDisposition,
+        result: ReferenceTaskResult | None,
+        attempts: int,
+        detail: str,
+    ) -> KeyExecutionResult:
+        """Build the terminal result for a non-cache-writing code path,
+        durably tracing it first under a fresh :class:`CachePolicy` (a
+        no-op under ``CACHE_FIRST`` -- never touches ``trace_recorder``
+        there, per requirement 8)."""
+        if self._config.cache_policy != CachePolicy.CACHE_FIRST:
+            assert (trace_recorder := self._config.trace_recorder) is not None
+            trace_recorder.record_fresh_attempt(
+                work_item=representative,
+                evidence=evidence,
+                task_evaluation_replicate_id=task_evaluation_replicate_id,
+                attempts=attempts,
+                disposition=disposition,
+                task_result=result,
+            )
+        return KeyExecutionResult(disposition, result, attempts, detail)
 
     def _accept_valid_result(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         result: ReferenceTaskResult,
         key: ReferenceResultCacheKey,
         representative: WorkItem,
+        evidence: ReferenceTaskEvidence,
         run_id: str,
         attempts: int,
         prior_note: str,
-    ) -> _KeyExecutionResult:
+        task_evaluation_replicate_id: int,
+    ) -> KeyExecutionResult:
+        if self._config.cache_policy != CachePolicy.CACHE_FIRST:
+            # Fresh policies: trace first (requirement 4/5); a raised
+            # failure propagates before cache.put() is ever reached.
+            assert (trace_recorder := self._config.trace_recorder) is not None
+            trace_recorder.record_fresh_attempt(
+                work_item=representative,
+                evidence=evidence,
+                task_evaluation_replicate_id=task_evaluation_replicate_id,
+                attempts=attempts,
+                disposition=WorkItemDisposition.EXECUTED_VALID,
+                task_result=result,
+            )
+        if self._config.cache_policy == CachePolicy.FRESH_MEASURE_NO_PRODUCTION_CACHE_WRITE:
+            # Bypass cache reads and writes completely (requirement 5).
+            with self._io_lock:
+                self._append_audit(run_id, representative, result, CacheDisposition.MISS, attempts)
+            return KeyExecutionResult(
+                WorkItemDisposition.EXECUTED_VALID_UNCACHED,
+                result,
+                attempts,
+                "fresh valid execution, not written to the production cache "
+                "(FRESH_MEASURE_NO_PRODUCTION_CACHE_WRITE)" + prior_note,
+            )
+
         with self._io_lock:
             write = self._cache.put(result)
             if write.disposition == CacheDisposition.WRITE_ACCEPTED:
                 self._append_audit(
                     run_id, representative, result, CacheDisposition.WRITE_ACCEPTED, attempts
                 )
-                return _KeyExecutionResult(
+                return KeyExecutionResult(
                     WorkItemDisposition.EXECUTED_VALID,
                     result,
                     attempts,
@@ -892,7 +872,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                 reread_matches = (
                     reread_valid
                     and reread.task_result is not None
-                    and _logically_equivalent(reread.task_result, result)
+                    and logically_equivalent(reread.task_result, result)
                 )
                 if reread_matches:
                     assert reread.task_result is not None
@@ -903,7 +883,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                         CacheDisposition.VALID_HIT,
                         attempts,
                     )
-                    return _KeyExecutionResult(
+                    return KeyExecutionResult(
                         WorkItemDisposition.CACHE_HIT,
                         reread.task_result,
                         attempts,
@@ -912,7 +892,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                 self._append_audit(
                     run_id, representative, result, CacheDisposition.CONFLICTING_WRITE, attempts
                 )
-                return _KeyExecutionResult(
+                return KeyExecutionResult(
                     WorkItemDisposition.CACHE_CONFLICT_BLOCKED,
                     result,
                     attempts,
@@ -927,7 +907,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                 CacheDisposition.STORAGE_INFRASTRUCTURE_FAILURE,
                 attempts,
             )
-            return _KeyExecutionResult(
+            return KeyExecutionResult(
                 WorkItemDisposition.CACHE_STORAGE_FAILURE,
                 result,
                 attempts,
