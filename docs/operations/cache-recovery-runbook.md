@@ -142,7 +142,13 @@ tuple if the log doesn't exist yet). To reconcile a run:
 2. Read the audit log's records for the same `run_id` (the `caller` field is
    stamped `f"{config.caller}:{run_id}"`) and confirm one record exists per
    invocation attempt, with `cache_disposition` values consistent with the
-   summary's own hit/miss counts.
+   summary's own hit/miss counts. Under a fresh `CachePolicy`
+   (`AUDIT_RECORD_SCHEMA_VERSION` v3+), expect `BYPASSED_BY_POLICY` instead
+   of `MISS` for every attempt — the cache was deliberately never consulted
+   or written for that run, not genuinely queried and found empty; seeing
+   `BYPASSED_BY_POLICY` there is expected, not a sign of a broken run. See
+   `docs/reference/version-registry.md`'s "MEGB-03H.2B.1 addendum" for the
+   full bypass/miss/hit/write-disposition distinction.
 3. Repeated or adaptive querying is visible directly in the log — every
    attempt appends a new record; nothing is ever overwritten or removed, so
    a pattern of repeated invocations for the same task/candidate is

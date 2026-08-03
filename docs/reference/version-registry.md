@@ -43,7 +43,7 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `RESULT_SCHEMA_VERSION` | `reference-result-schema-v4` | `result_schema.py` | `ReferenceTaskResult`/`ReferenceRunContext`/`ReferenceBenchmarkResult` schema shape |
 | `CACHE_KEY_SCHEMA_VERSION` | `reference-result-cache-key-v2` | `cache_key.py` | `ReferenceResultCacheKey` field shape |
 | `CACHE_ENTRY_SCHEMA_VERSION` | `reference-result-cache-entry-v2` | `reference_cache.py` | On-disk cache-entry envelope shape |
-| `AUDIT_RECORD_SCHEMA_VERSION` | `reference-audit-record-v2` | `reference_audit.py` | `ReferenceAuditRecord` field shape |
+| `AUDIT_RECORD_SCHEMA_VERSION` | `reference-audit-record-v3` (see "MEGB-03H.2B.1 addendum" below) | `reference_audit.py` | `ReferenceAuditRecord` field shape |
 | `ORCHESTRATION_MODEL_SCHEMA_VERSION` | `reference-orchestration-v1` | `reference_orchestrator.py` | `WorkItem`/`OrchestrationRunSummary` shape |
 | `EXECUTION_PROTOCOL_VERSION` | `reference-evaluator-execution-protocol-v1` | `reference_evaluator.py` | **The actual MEGB-02 execution protocol** — `CandidateExecutionRequest`/`CandidateExecutionResult` wire shape, `src.execution.wire`. Shared, unchanged transport; real for both the accepted reference evaluator *and* the G.4 synthetic benchmark evaluator (see below). |
 | `EVALUATOR_VERSION_FULL` | `reference-evaluator-v1` | `reference_evaluator.py` | Full reference-only evaluator identity |
@@ -135,6 +135,71 @@ The prior v2 run (report checksum
 `9f6e68865f829821ddd6651adf778b83f1cd195239f2a80b9b7ea4dcd1269879`) is
 superseded, preserved in git history as historical evidence only, and does
 not by itself establish readiness.
+
+## MEGB-03H.2B.1 addendum: `AUDIT_RECORD_SCHEMA_VERSION` v2→v3
+
+This registry's own "Status" note above (a point-in-time snapshot as of the
+G.4/G.5 conformance correction) predates this addendum; it is recorded here
+rather than by rewriting that snapshot's prose, per this project's
+established convention of appending correction notes instead of silently
+rewriting an already-accepted historical record.
+
+**Current schema: `reference-audit-record-v3`** (`reference_audit.py`,
+commit `a179160`, MEGB-03H.2B.1's fresh-execution-semantics correction).
+
+**Reason:** addition of `CacheDisposition.BYPASSED_BY_POLICY`
+(`reference_cache.py`) as a legal value of `ReferenceAuditRecord`'s
+`cache_disposition` field. Even though that field's own validation
+computes its accepted-value set dynamically from the current
+`CacheDisposition` enum (rather than a separately hardcoded literal list),
+adding a new legal value to an already-versioned, persisted record type is
+still a schema-semantic expansion of what the record may contain — the
+same reasoning already applied to every prior `v(n)`→`v(n+1)` bump in this
+table, not a special exemption.
+
+**Semantic distinction — bypass vs. miss vs. hit vs. write disposition:**
+`cache_disposition` on one audit record can describe either a *read*
+outcome or a *write* outcome, and (as of H.2B.1) whether the cache was
+consulted at all:
+
+- `VALID_HIT` — a real `cache.get()` call found a valid entry (served
+  without a fresh evaluator invocation, or a fresh evaluation's write
+  reconciled against an identical pre-existing entry).
+- `MISS` — a real `cache.get()` call was made and genuinely found nothing.
+  Reserved exclusively for an *attempted, empty* lookup.
+- `BYPASSED_BY_POLICY` — the cache was never consulted (read) or never
+  written (write) at all, because a fresh
+  `~src.reference.orchestration_trace.CachePolicy` deliberately skipped it.
+  Never returned by `ReferenceResultCache.get()`/`.put()` themselves;
+  constructed only by `ReferenceOrchestrator` to describe this deliberate
+  decision. Distinct from `MISS` precisely because no lookup was ever
+  attempted — labeling a bypass as `MISS` would misrepresent it as a real,
+  empty lookup.
+- `WRITE_ACCEPTED` / `CONFLICTING_WRITE` / `STORAGE_INFRASTRUCTURE_FAILURE`
+  — real `cache.put()` outcomes, unchanged by this correction.
+
+**Local artifact disposition:** a real, gitignored, non-privileged
+`reference-audit-record-v2`-stamped audit log exists locally at
+`artifacts/reference/g4_benchmark_audit/g4_benchmark_audit_log.jsonl` (66
+records, from the MEGB-03G.4 benchmark run). It is now stale under v3 and
+is not migrated — consistent with the v1→v2 bump's own precedent
+(documented in `reference_audit.py`'s module docstring) of never providing
+a migration path for this artifact type. This is a deliberate, accepted
+consequence, not an oversight: the file is explicitly a "generated local
+operational log" (per `reference_audit.py`'s own docstring and
+`privileged-artifact-policy.md`), regenerable at any time by rerunning the
+G.4 benchmark, and it is **not** a committed or otherwise authoritative
+artifact — no committed `reference-audit-record-v2` artifact exists
+anywhere in this repository (confirmed by a repository-wide search), so no
+migration is required for correctness.
+
+**Historical references remain historical:** `docs/reference/megb-03h1-calibration-design.md`'s
+own "Inventory" table records `AUDIT_RECORD_SCHEMA_VERSION` as
+`reference-audit-record-v2` because that was the true, current value at
+the time MEGB-03H.1 was produced (before H.2B.1 existed) — that table is
+deliberately left unchanged. Rewriting a historical point-in-time snapshot
+to reflect a version that did not yet exist when it was recorded would be
+misleading, not corrective.
 
 ## Cache key: complete field list
 
