@@ -100,8 +100,23 @@ did not need:
 - **`baseline` candidate**: returns immediately, no extra allocation or
   processes — establishes the runner's own fixed memory/process-count
   floor, subtracted from the above two before comparing to ground truth.
+- **`late_peak` candidate** (added by the H.2C.2A provenance/schema
+  correction, targeting the exactness/terminal-coverage gap that
+  correction fixed): allocates a small baseline amount, sleeps briefly,
+  then — as close as controllable to the candidate process's own exit —
+  allocates a second, larger, distinctly-sized spike immediately before
+  returning. Ground truth: the true peak must reflect the *late* spike,
+  not the earlier baseline. This is the synthetic workload specifically
+  designed to probe the teardown race `CgroupPeakFileCollector`'s
+  `confirm_terminal_state` check now guards against: run once with the
+  real confirmation wired in (expect `EXACT`, value including the late
+  spike) and once with a deliberately-broken/always-false confirmation
+  callable substituted (expect a forced `BOUNDARY_ONLY` downgrade per
+  the schema correction's own hard invariant) — both legs must still
+  report the *same* underlying value; only the quality/terminal-coverage
+  classification may differ.
 
-None of these candidates touch canonical HumanEval+ content; all three
+None of these candidates touch canonical HumanEval+ content; all four
 get their own distinct, synthetic identity constants (mirroring
 `G4_EVALUATOR_VERSION` etc.), never colliding with any real profile/
 evaluator/dataset identity, verified the same way G.4's own synthetic

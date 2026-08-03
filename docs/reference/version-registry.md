@@ -67,6 +67,7 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` | `megb-03g4-workload-checksum-algorithm-v1` | `g4_qualification_report.py` | Identifies how the workload content checksum below is canonicalized/hashed — a separate field from the checksum value itself |
 | `H5_PROMOTION_MANIFEST_SCHEMA_VERSION` | `megb-03h5-promotion-manifest-v1` | `h5_promotion_manifest.py` | `H5PromotionManifest` field shape and `PromotionState`/`EntryPromotionState` state-machine semantics (the transition table in `advance_manifest` is versioned together with the manifest shape, not as a separate constant — a future state-machine change bumps this same version, per this table's own established one-version-per-persisted-shape discipline). See "MEGB-03H.2B.2 addendum" below. |
 | `PROMOTION_SUMMARY_SCHEMA_VERSION` | `megb-03h5-promotion-summary-v1` | `h5_promotion.py` | `PromotionSummary` field shape — the safe, allowlisted, committed-output-suitable promotion report. See "MEGB-03H.2B.2 addendum" below. |
+| `CALIBRATION_SCHEMA_VERSION` | `megb-03h-calibration-record-v2` | `calibration_schema.py` | `CalibrationRunContext`/`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` field shape. **v1→v2**: v1 had no persisted telemetry-collection-policy, host/runtime, or per-metric collector-method provenance — see "MEGB-03H.2C.2A addendum" below. (Introduced by MEGB-03H.2A; this row itself was missing from this registry until the H.2C.2A correction pass — a registry-currency gap, not a second schema change.) |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
 `BENCHMARK_PLAN_VERSION`, `SYNTHETIC_WORKLOAD_VERSION`,
@@ -322,6 +323,74 @@ change to `H5StagingIdentity`'s fields or to `identity_checksum()`'s
 canonicalization should not be made without first deciding whether this
 checksum needs its own explicit algorithm-version label (analogous to
 `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`) at that time.
+
+## MEGB-03H.2C.2A addendum: `CALIBRATION_SCHEMA_VERSION` v1→v2
+
+`CALIBRATION_SCHEMA_VERSION` was introduced by MEGB-03H.2A but — per this
+registry's own "point-in-time, not live" caveat above — was never added as
+a row to this table until this addendum. This addendum records both that
+registry-currency gap and the real v1→v2 schema correction, together.
+
+**Why v2 exists.** A calibration-provenance audit (MEGB-03H.2C.2A) found
+that v1's `CalibrationRunContext`/`CalibrationInvocationRecord` had no
+persisted representation of: (a) the *requested* telemetry collection
+policy (which profile/version, which metrics, preferred method order,
+configured sampling intervals) at run level; (b) a safe, allowlisted
+host/runtime description (OS family, architecture, kernel release, Docker
+server version, cgroup version/mode, etc.) at run level; or (c) the
+*actual* per-metric collector method that was selected for each
+invocation (which collector implementation/version, which method,
+interface family, actual sample count, measurement quality, fallback
+disposition, terminal-read coverage). A run-level policy alone cannot
+substitute for per-metric provenance, since different metrics and hosts
+may select different fallbacks — both had to be added, at their own
+appropriate scope, not conflated into one.
+
+**What v2 adds**, all in `calibration_schema.py`:
+
+- `HostRuntimeContext` and `TelemetryCollectionPolicy` — both new,
+  self-checksummed, immutable dataclasses, embedded as two new required
+  fields (`host_runtime_context`, `telemetry_collection_policy`) on
+  `CalibrationRunContext`. Because they are embedded directly in the run
+  context, they participate in `context_checksum` automatically — no
+  separate reconciliation logic was needed to reject contributors with
+  incompatible telemetry/host provenance; `reconcile_task_evaluation`'s
+  pre-existing requirement that every contributor share one
+  `context_checksum` already covers it.
+- `CollectorMethodProvenance` — a new, self-checksummed, immutable
+  dataclass, embedded twice (`peak_memory_provenance`,
+  `peak_process_provenance`) as new required fields on
+  `CalibrationInvocationRecord`, one per collector-based metric. A new
+  validation helper (`_require_consistent_metric_provenance`) rejects a
+  provenance object whose `measurement_quality`/
+  `unavailability_or_failure_reason` disagrees with the record's own
+  sibling `peak_memory_quality`/`peak_memory_unavailable_reason` (or the
+  process-count equivalents).
+- Corrected exactness/terminal-coverage invariants, enforced independently
+  at both the execution layer (`TelemetryObservation`) and this persisted
+  layer (`CollectorMethodProvenance`): `quality=EXACT` requires
+  `terminal_coverage=TERMINAL_READ_CONFIRMED` (scoped to collector-derived
+  metrics only — `candidate_wall_time`/`observed_response_bytes` have no
+  collector or terminal-read concept and are unaffected); a sampled method
+  (`SAMPLED_DOCKER_STATS_MEMORY`, `SAMPLED_DOCKER_TOP_PROCESS_COUNT`) can
+  never report EXACT even with a confirmed terminal read; `SAMPLED_WITH_KNOWN_ERROR`
+  is rejected outright pending a real quantitative error model.
+  `CgroupPeakFileCollector` now confirms container termination via an
+  independent signal (`docker inspect`'s own recorded exit code) rather
+  than trusting call-site ordering or file existence alone, closing a
+  lifecycle race that could otherwise let a late memory peak escape an
+  EXACT reading.
+
+**No migration performed.** A targeted search of
+`artifacts/privileged/reference/` (the only location any real, persisted
+`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` could
+exist, gitignored-but-locally-present) found no `calibration/`
+subdirectory and no real calibration artifacts anywhere in the repository
+or local working tree. Per this project's established discipline (do not
+invent a migration when no real artifact exists), none was written; v1
+readers simply reject v1-stamped input going forward via the normal
+`UnsupportedCalibrationSchemaVersionError` path, same as any other schema
+version bump in this registry.
 
 ## Cache key: complete field list
 
