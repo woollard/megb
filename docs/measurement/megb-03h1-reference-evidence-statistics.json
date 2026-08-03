@@ -1,0 +1,1989 @@
+{
+  "output_type_histogram": {
+    "bool": 21771,
+    "dict": 620,
+    "float": 4887,
+    "int": 33580,
+    "list": 30057,
+    "none": 158,
+    "str": 21747,
+    "tuple": 5141
+  },
+  "overall_output_size_stats_bytes": {
+    "count": 117961,
+    "max": 40426656,
+    "mean": 3296.7976534617374,
+    "min": 27,
+    "p50": 32,
+    "p90": 300,
+    "p99": 977
+  },
+  "per_task": {
+    "HumanEval/0": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 32,
+        "mean": 31.196687370600415,
+        "min": 31,
+        "p50": 31,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/1": {
+      "case_count": 47,
+      "output_size_stats_bytes": {
+        "count": 47,
+        "max": 1143,
+        "mean": 177.51063829787233,
+        "min": 29,
+        "p50": 143,
+        "p90": 243,
+        "p99": 1143
+      }
+    },
+    "HumanEval/10": {
+      "case_count": 744,
+      "output_size_stats_bytes": {
+        "count": 744,
+        "max": 1075,
+        "mean": 134.9018817204301,
+        "min": 28,
+        "p50": 93,
+        "p90": 261,
+        "p99": 665
+      }
+    },
+    "HumanEval/100": {
+      "case_count": 72,
+      "output_size_stats_bytes": {
+        "count": 72,
+        "max": 3468,
+        "mean": 1915.0,
+        "min": 56,
+        "p50": 1993,
+        "p90": 3189,
+        "p99": 3468
+      }
+    },
+    "HumanEval/101": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 1649,
+        "mean": 241.93886010362695,
+        "min": 29,
+        "p50": 129,
+        "p90": 546,
+        "p99": 1161
+      }
+    },
+    "HumanEval/102": {
+      "case_count": 910,
+      "output_size_stats_bytes": {
+        "count": 910,
+        "max": 33,
+        "mean": 28.31098901098901,
+        "min": 27,
+        "p50": 28,
+        "p90": 30,
+        "p99": 30
+      }
+    },
+    "HumanEval/103": {
+      "case_count": 910,
+      "output_size_stats_bytes": {
+        "count": 910,
+        "max": 50,
+        "mean": 36.86593406593406,
+        "min": 28,
+        "p50": 36,
+        "p90": 47,
+        "p99": 50
+      }
+    },
+    "HumanEval/104": {
+      "case_count": 963,
+      "output_size_stats_bytes": {
+        "count": 963,
+        "max": 406,
+        "mean": 129.2097611630322,
+        "min": 29,
+        "p50": 93,
+        "p90": 342,
+        "p99": 374
+      }
+    },
+    "HumanEval/105": {
+      "case_count": 963,
+      "output_size_stats_bytes": {
+        "count": 963,
+        "max": 672,
+        "mean": 344.17860851505714,
+        "min": 29,
+        "p50": 337,
+        "p90": 537,
+        "p99": 639
+      }
+    },
+    "HumanEval/106": {
+      "case_count": 64,
+      "output_size_stats_bytes": {
+        "count": 64,
+        "max": 7210,
+        "mean": 2788.328125,
+        "min": 29,
+        "p50": 2349,
+        "p90": 6130,
+        "p99": 7210
+      }
+    },
+    "HumanEval/107": {
+      "case_count": 132,
+      "output_size_stats_bytes": {
+        "count": 132,
+        "max": 88,
+        "mean": 87.08333333333333,
+        "min": 86,
+        "p50": 87,
+        "p90": 88,
+        "p99": 88
+      }
+    },
+    "HumanEval/108": {
+      "case_count": 968,
+      "output_size_stats_bytes": {
+        "count": 968,
+        "max": 28,
+        "mean": 27.68698347107438,
+        "min": 27,
+        "p50": 28,
+        "p90": 28,
+        "p99": 28
+      }
+    },
+    "HumanEval/109": {
+      "case_count": 917,
+      "output_size_stats_bytes": {
+        "count": 917,
+        "max": 32,
+        "mean": 31.880043620501635,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/11": {
+      "case_count": 367,
+      "output_size_stats_bytes": {
+        "count": 367,
+        "max": 123,
+        "mean": 45.38964577656676,
+        "min": 28,
+        "p50": 38,
+        "p90": 69,
+        "p99": 98
+      }
+    },
+    "HumanEval/110": {
+      "case_count": 967,
+      "output_size_stats_bytes": {
+        "count": 967,
+        "max": 31,
+        "mean": 30.501551189245088,
+        "min": 30,
+        "p50": 31,
+        "p90": 31,
+        "p99": 31
+      }
+    },
+    "HumanEval/111": {
+      "case_count": 620,
+      "output_size_stats_bytes": {
+        "count": 620,
+        "max": 549,
+        "mean": 120.28064516129032,
+        "min": 31,
+        "p50": 82,
+        "p90": 237,
+        "p99": 549
+      }
+    },
+    "HumanEval/112": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 167,
+        "mean": 96.139896373057,
+        "min": 91,
+        "p50": 93,
+        "p90": 106,
+        "p99": 122
+      }
+    },
+    "HumanEval/113": {
+      "case_count": 946,
+      "output_size_stats_bytes": {
+        "count": 946,
+        "max": 1403,
+        "mean": 610.3255813953489,
+        "min": 29,
+        "p50": 551,
+        "p90": 977,
+        "p99": 1239
+      }
+    },
+    "HumanEval/114": {
+      "case_count": 972,
+      "output_size_stats_bytes": {
+        "count": 972,
+        "max": 43,
+        "mean": 29.473251028806583,
+        "min": 27,
+        "p50": 29,
+        "p90": 33,
+        "p99": 33
+      }
+    },
+    "HumanEval/115": {
+      "case_count": 766,
+      "output_size_stats_bytes": {
+        "count": 766,
+        "max": 28,
+        "mean": 27.073107049608357,
+        "min": 27,
+        "p50": 27,
+        "p90": 27,
+        "p99": 28
+      }
+    },
+    "HumanEval/116": {
+      "case_count": 688,
+      "output_size_stats_bytes": {
+        "count": 688,
+        "max": 594,
+        "mean": 324.0450581395349,
+        "min": 29,
+        "p50": 335,
+        "p90": 460,
+        "p99": 527
+      }
+    },
+    "HumanEval/117": {
+      "case_count": 967,
+      "output_size_stats_bytes": {
+        "count": 967,
+        "max": 259,
+        "mean": 41.8976215098242,
+        "min": 29,
+        "p50": 29,
+        "p90": 71,
+        "p99": 182
+      }
+    },
+    "HumanEval/118": {
+      "case_count": 973,
+      "output_size_stats_bytes": {
+        "count": 973,
+        "max": 29,
+        "mean": 28.90853031860226,
+        "min": 28,
+        "p50": 29,
+        "p90": 29,
+        "p99": 29
+      }
+    },
+    "HumanEval/119": {
+      "case_count": 620,
+      "output_size_stats_bytes": {
+        "count": 620,
+        "max": 31,
+        "mean": 30.059677419354838,
+        "min": 30,
+        "p50": 30,
+        "p90": 30,
+        "p99": 31
+      }
+    },
+    "HumanEval/12": {
+      "case_count": 895,
+      "output_size_stats_bytes": {
+        "count": 895,
+        "max": 188,
+        "mean": 52.76759776536313,
+        "min": 29,
+        "p50": 41,
+        "p90": 118,
+        "p99": 160
+      }
+    },
+    "HumanEval/120": {
+      "case_count": 971,
+      "output_size_stats_bytes": {
+        "count": 971,
+        "max": 348,
+        "mean": 127.93717816683831,
+        "min": 29,
+        "p50": 116,
+        "p90": 237,
+        "p99": 318
+      }
+    },
+    "HumanEval/121": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 29,
+        "mean": 27.92020725388601,
+        "min": 27,
+        "p50": 28,
+        "p90": 29,
+        "p99": 29
+      }
+    },
+    "HumanEval/122": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 30,
+        "mean": 28.140932642487048,
+        "min": 27,
+        "p50": 28,
+        "p90": 30,
+        "p99": 30
+      }
+    },
+    "HumanEval/123": {
+      "case_count": 99,
+      "output_size_stats_bytes": {
+        "count": 99,
+        "max": 16036,
+        "mean": 1966.3535353535353,
+        "min": 56,
+        "p50": 1236,
+        "p90": 4914,
+        "p99": 16036
+      }
+    },
+    "HumanEval/124": {
+      "case_count": 960,
+      "output_size_stats_bytes": {
+        "count": 960,
+        "max": 32,
+        "mean": 31.991666666666667,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/125": {
+      "case_count": 771,
+      "output_size_stats_bytes": {
+        "count": 771,
+        "max": 2256,
+        "mean": 226.86381322957197,
+        "min": 27,
+        "p50": 119,
+        "p90": 517,
+        "p99": 1108
+      }
+    },
+    "HumanEval/126": {
+      "case_count": 971,
+      "output_size_stats_bytes": {
+        "count": 971,
+        "max": 32,
+        "mean": 31.960865087538618,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/127": {
+      "case_count": 547,
+      "output_size_stats_bytes": {
+        "count": 547,
+        "max": 31,
+        "mean": 30.206581352833638,
+        "min": 30,
+        "p50": 30,
+        "p90": 31,
+        "p99": 31
+      }
+    },
+    "HumanEval/128": {
+      "case_count": 962,
+      "output_size_stats_bytes": {
+        "count": 962,
+        "max": 31,
+        "mean": 27.503118503118504,
+        "min": 27,
+        "p50": 27,
+        "p90": 29,
+        "p99": 29
+      }
+    },
+    "HumanEval/129": {
+      "case_count": 157,
+      "output_size_stats_bytes": {
+        "count": 157,
+        "max": 752,
+        "mean": 374.28025477707007,
+        "min": 56,
+        "p50": 375,
+        "p90": 665,
+        "p99": 723
+      }
+    },
+    "HumanEval/13": {
+      "case_count": 950,
+      "output_size_stats_bytes": {
+        "count": 950,
+        "max": 39,
+        "mean": 27.69684210526316,
+        "min": 27,
+        "p50": 27,
+        "p90": 28,
+        "p99": 39
+      }
+    },
+    "HumanEval/130": {
+      "case_count": 75,
+      "output_size_stats_bytes": {
+        "count": 75,
+        "max": 40426656,
+        "mean": 3235985.973333333,
+        "min": 56,
+        "p50": 2243,
+        "p90": 3853,
+        "p99": 40426656
+      }
+    },
+    "HumanEval/131": {
+      "case_count": 195,
+      "output_size_stats_bytes": {
+        "count": 195,
+        "max": 68,
+        "mean": 35.16410256410256,
+        "min": 27,
+        "p50": 28,
+        "p90": 58,
+        "p99": 68
+      }
+    },
+    "HumanEval/132": {
+      "case_count": 970,
+      "output_size_stats_bytes": {
+        "count": 970,
+        "max": 32,
+        "mean": 31.077319587628867,
+        "min": 31,
+        "p50": 31,
+        "p90": 31,
+        "p99": 32
+      }
+    },
+    "HumanEval/133": {
+      "case_count": 970,
+      "output_size_stats_bytes": {
+        "count": 970,
+        "max": 35,
+        "mean": 28.798969072164947,
+        "min": 27,
+        "p50": 29,
+        "p90": 29,
+        "p99": 30
+      }
+    },
+    "HumanEval/134": {
+      "case_count": 959,
+      "output_size_stats_bytes": {
+        "count": 959,
+        "max": 32,
+        "mean": 31.979144942648592,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/135": {
+      "case_count": 934,
+      "output_size_stats_bytes": {
+        "count": 934,
+        "max": 28,
+        "mean": 27.095289079229122,
+        "min": 27,
+        "p50": 27,
+        "p90": 27,
+        "p99": 28
+      }
+    },
+    "HumanEval/136": {
+      "case_count": 969,
+      "output_size_stats_bytes": {
+        "count": 969,
+        "max": 99,
+        "mean": 87.36842105263158,
+        "min": 87,
+        "p50": 87,
+        "p90": 88,
+        "p99": 91
+      }
+    },
+    "HumanEval/137": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 125,
+        "mean": 34.7712215320911,
+        "min": 27,
+        "p50": 32,
+        "p90": 46,
+        "p99": 47
+      }
+    },
+    "HumanEval/138": {
+      "case_count": 73,
+      "output_size_stats_bytes": {
+        "count": 73,
+        "max": 32,
+        "mean": 31.71232876712329,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/139": {
+      "case_count": 87,
+      "output_size_stats_bytes": {
+        "count": 87,
+        "max": 261864,
+        "mean": 38897.0,
+        "min": 27,
+        "p50": 2417,
+        "p90": 251657,
+        "p99": 261864
+      }
+    },
+    "HumanEval/14": {
+      "case_count": 865,
+      "output_size_stats_bytes": {
+        "count": 865,
+        "max": 210130,
+        "mean": 6265.491329479769,
+        "min": 29,
+        "p50": 1840,
+        "p90": 15852,
+        "p99": 72487
+      }
+    },
+    "HumanEval/140": {
+      "case_count": 964,
+      "output_size_stats_bytes": {
+        "count": 964,
+        "max": 322,
+        "mean": 53.030082987551864,
+        "min": 28,
+        "p50": 45,
+        "p90": 81,
+        "p99": 160
+      }
+    },
+    "HumanEval/141": {
+      "case_count": 986,
+      "output_size_stats_bytes": {
+        "count": 986,
+        "max": 31,
+        "mean": 30.018255578093306,
+        "min": 30,
+        "p50": 30,
+        "p90": 30,
+        "p99": 31
+      }
+    },
+    "HumanEval/142": {
+      "case_count": 968,
+      "output_size_stats_bytes": {
+        "count": 968,
+        "max": 55,
+        "mean": 30.234504132231404,
+        "min": 27,
+        "p50": 30,
+        "p90": 32,
+        "p99": 33
+      }
+    },
+    "HumanEval/143": {
+      "case_count": 967,
+      "output_size_stats_bytes": {
+        "count": 967,
+        "max": 95,
+        "mean": 38.95553257497415,
+        "min": 28,
+        "p50": 33,
+        "p90": 58,
+        "p99": 85
+      }
+    },
+    "HumanEval/144": {
+      "case_count": 970,
+      "output_size_stats_bytes": {
+        "count": 970,
+        "max": 32,
+        "mean": 31.96082474226804,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/145": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 1689,
+        "mean": 488.435817805383,
+        "min": 29,
+        "p50": 435,
+        "p90": 614,
+        "p99": 1631
+      }
+    },
+    "HumanEval/146": {
+      "case_count": 953,
+      "output_size_stats_bytes": {
+        "count": 953,
+        "max": 28,
+        "mean": 27.004197271773347,
+        "min": 27,
+        "p50": 27,
+        "p90": 27,
+        "p99": 27
+      }
+    },
+    "HumanEval/147": {
+      "case_count": 75,
+      "output_size_stats_bytes": {
+        "count": 75,
+        "max": 32,
+        "mean": 30.14666666666667,
+        "min": 27,
+        "p50": 31,
+        "p90": 31,
+        "p99": 32
+      }
+    },
+    "HumanEval/148": {
+      "case_count": 935,
+      "output_size_stats_bytes": {
+        "count": 935,
+        "max": 241,
+        "mean": 31.789304812834224,
+        "min": 30,
+        "p50": 30,
+        "p90": 30,
+        "p99": 100
+      }
+    },
+    "HumanEval/149": {
+      "case_count": 946,
+      "output_size_stats_bytes": {
+        "count": 946,
+        "max": 359,
+        "mean": 151.16067653276954,
+        "min": 29,
+        "p50": 157,
+        "p90": 233,
+        "p99": 299
+      }
+    },
+    "HumanEval/15": {
+      "case_count": 95,
+      "output_size_stats_bytes": {
+        "count": 95,
+        "max": 6889013,
+        "mean": 1254566.0210526315,
+        "min": 29,
+        "p50": 302,
+        "p90": 6888933,
+        "p99": 6889013
+      }
+    },
+    "HumanEval/150": {
+      "case_count": 968,
+      "output_size_stats_bytes": {
+        "count": 968,
+        "max": 30,
+        "mean": 28.18595041322314,
+        "min": 27,
+        "p50": 28,
+        "p90": 30,
+        "p99": 30
+      }
+    },
+    "HumanEval/151": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 36,
+        "mean": 28.901554404145077,
+        "min": 27,
+        "p50": 29,
+        "p90": 30,
+        "p99": 30
+      }
+    },
+    "HumanEval/152": {
+      "case_count": 963,
+      "output_size_stats_bytes": {
+        "count": 963,
+        "max": 491,
+        "mean": 203.45794392523365,
+        "min": 29,
+        "p50": 201,
+        "p90": 288,
+        "p99": 404
+      }
+    },
+    "HumanEval/153": {
+      "case_count": 163,
+      "output_size_stats_bytes": {
+        "count": 163,
+        "max": 107,
+        "mean": 46.43558282208589,
+        "min": 32,
+        "p50": 45,
+        "p90": 56,
+        "p99": 74
+      }
+    },
+    "HumanEval/154": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 32,
+        "mean": 31.814699792960663,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/155": {
+      "case_count": 215,
+      "output_size_stats_bytes": {
+        "count": 215,
+        "max": 88,
+        "mean": 86.12558139534883,
+        "min": 86,
+        "p50": 86,
+        "p90": 86,
+        "p99": 88
+      }
+    },
+    "HumanEval/156": {
+      "case_count": 172,
+      "output_size_stats_bytes": {
+        "count": 172,
+        "max": 40,
+        "mean": 33.593023255813954,
+        "min": 29,
+        "p50": 33,
+        "p90": 37,
+        "p99": 39
+      }
+    },
+    "HumanEval/157": {
+      "case_count": 969,
+      "output_size_stats_bytes": {
+        "count": 969,
+        "max": 32,
+        "mean": 31.984520123839008,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/158": {
+      "case_count": 867,
+      "output_size_stats_bytes": {
+        "count": 867,
+        "max": 54,
+        "mean": 36.779700115340255,
+        "min": 28,
+        "p50": 37,
+        "p90": 41,
+        "p99": 49
+      }
+    },
+    "HumanEval/159": {
+      "case_count": 942,
+      "output_size_stats_bytes": {
+        "count": 942,
+        "max": 91,
+        "mean": 87.88747346072186,
+        "min": 85,
+        "p50": 88,
+        "p90": 90,
+        "p99": 90
+      }
+    },
+    "HumanEval/16": {
+      "case_count": 964,
+      "output_size_stats_bytes": {
+        "count": 964,
+        "max": 28,
+        "mean": 27.612033195020746,
+        "min": 27,
+        "p50": 28,
+        "p90": 28,
+        "p99": 28
+      }
+    },
+    "HumanEval/160": {
+      "case_count": 412,
+      "output_size_stats_bytes": {
+        "count": 412,
+        "max": 2368,
+        "mean": 36.62378640776699,
+        "min": 27,
+        "p50": 28,
+        "p90": 33,
+        "p99": 87
+      }
+    },
+    "HumanEval/161": {
+      "case_count": 950,
+      "output_size_stats_bytes": {
+        "count": 950,
+        "max": 797,
+        "mean": 134.1157894736842,
+        "min": 28,
+        "p50": 106,
+        "p90": 257,
+        "p99": 519
+      }
+    },
+    "HumanEval/162": {
+      "case_count": 963,
+      "output_size_stats_bytes": {
+        "count": 963,
+        "max": 60,
+        "mean": 59.96988577362409,
+        "min": 31,
+        "p50": 60,
+        "p90": 60,
+        "p99": 60
+      }
+    },
+    "HumanEval/163": {
+      "case_count": 946,
+      "output_size_stats_bytes": {
+        "count": 946,
+        "max": 143,
+        "mean": 40.76321353065539,
+        "min": 29,
+        "p50": 29,
+        "p90": 85,
+        "p99": 143
+      }
+    },
+    "HumanEval/17": {
+      "case_count": 178,
+      "output_size_stats_bytes": {
+        "count": 178,
+        "max": 8205,
+        "mean": 661.1011235955057,
+        "min": 29,
+        "p50": 317,
+        "p90": 1332,
+        "p99": 4203
+      }
+    },
+    "HumanEval/18": {
+      "case_count": 964,
+      "output_size_stats_bytes": {
+        "count": 964,
+        "max": 28,
+        "mean": 27.00311203319502,
+        "min": 27,
+        "p50": 27,
+        "p90": 27,
+        "p99": 27
+      }
+    },
+    "HumanEval/19": {
+      "case_count": 91,
+      "output_size_stats_bytes": {
+        "count": 91,
+        "max": 96,
+        "mean": 51.956043956043956,
+        "min": 28,
+        "p50": 49,
+        "p90": 77,
+        "p99": 96
+      }
+    },
+    "HumanEval/2": {
+      "case_count": 934,
+      "output_size_stats_bytes": {
+        "count": 934,
+        "max": 50,
+        "mean": 46.143468950749465,
+        "min": 31,
+        "p50": 46,
+        "p90": 47,
+        "p99": 49
+      }
+    },
+    "HumanEval/20": {
+      "case_count": 960,
+      "output_size_stats_bytes": {
+        "count": 960,
+        "max": 128,
+        "mean": 97.76041666666667,
+        "min": 88,
+        "p50": 94,
+        "p90": 109,
+        "p99": 124
+      }
+    },
+    "HumanEval/21": {
+      "case_count": 964,
+      "output_size_stats_bytes": {
+        "count": 964,
+        "max": 961,
+        "mean": 417.4491701244813,
+        "min": 93,
+        "p50": 423,
+        "p90": 588,
+        "p99": 728
+      }
+    },
+    "HumanEval/22": {
+      "case_count": 916,
+      "output_size_stats_bytes": {
+        "count": 916,
+        "max": 318,
+        "mean": 89.29694323144105,
+        "min": 29,
+        "p50": 85,
+        "p90": 172,
+        "p99": 231
+      }
+    },
+    "HumanEval/23": {
+      "case_count": 926,
+      "output_size_stats_bytes": {
+        "count": 926,
+        "max": 29,
+        "mean": 27.751619870410366,
+        "min": 27,
+        "p50": 28,
+        "p90": 28,
+        "p99": 29
+      }
+    },
+    "HumanEval/24": {
+      "case_count": 129,
+      "output_size_stats_bytes": {
+        "count": 129,
+        "max": 32,
+        "mean": 28.65891472868217,
+        "min": 27,
+        "p50": 28,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/25": {
+      "case_count": 105,
+      "output_size_stats_bytes": {
+        "count": 105,
+        "max": 322,
+        "mean": 123.62857142857143,
+        "min": 56,
+        "p50": 115,
+        "p90": 180,
+        "p99": 317
+      }
+    },
+    "HumanEval/26": {
+      "case_count": 825,
+      "output_size_stats_bytes": {
+        "count": 825,
+        "max": 384,
+        "mean": 158.17939393939395,
+        "min": 29,
+        "p50": 117,
+        "p90": 322,
+        "p99": 355
+      }
+    },
+    "HumanEval/27": {
+      "case_count": 935,
+      "output_size_stats_bytes": {
+        "count": 935,
+        "max": 1149,
+        "mean": 148.3005347593583,
+        "min": 28,
+        "p50": 94,
+        "p90": 340,
+        "p99": 620
+      }
+    },
+    "HumanEval/28": {
+      "case_count": 823,
+      "output_size_stats_bytes": {
+        "count": 823,
+        "max": 297,
+        "mean": 99.30255164034021,
+        "min": 28,
+        "p50": 81,
+        "p90": 185,
+        "p99": 267
+      }
+    },
+    "HumanEval/29": {
+      "case_count": 958,
+      "output_size_stats_bytes": {
+        "count": 958,
+        "max": 999,
+        "mean": 47.70250521920668,
+        "min": 29,
+        "p50": 29,
+        "p90": 63,
+        "p99": 497
+      }
+    },
+    "HumanEval/3": {
+      "case_count": 863,
+      "output_size_stats_bytes": {
+        "count": 863,
+        "max": 32,
+        "mean": 31.27346465816918,
+        "min": 31,
+        "p50": 31,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/30": {
+      "case_count": 962,
+      "output_size_stats_bytes": {
+        "count": 962,
+        "max": 433,
+        "mean": 147.3004158004158,
+        "min": 29,
+        "p50": 143,
+        "p90": 288,
+        "p99": 404
+      }
+    },
+    "HumanEval/31": {
+      "case_count": 119,
+      "output_size_stats_bytes": {
+        "count": 119,
+        "max": 32,
+        "mean": 31.81512605042017,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/32": {
+      "case_count": 846,
+      "output_size_stats_bytes": {
+        "count": 846,
+        "max": 51,
+        "mean": 42.94326241134752,
+        "min": 27,
+        "p50": 46,
+        "p90": 48,
+        "p99": 50
+      }
+    },
+    "HumanEval/33": {
+      "case_count": 922,
+      "output_size_stats_bytes": {
+        "count": 922,
+        "max": 823,
+        "mean": 460.57917570498915,
+        "min": 29,
+        "p50": 441,
+        "p90": 700,
+        "p99": 770
+      }
+    },
+    "HumanEval/34": {
+      "case_count": 864,
+      "output_size_stats_bytes": {
+        "count": 864,
+        "max": 504,
+        "mean": 270.8611111111111,
+        "min": 29,
+        "p50": 280,
+        "p90": 379,
+        "p99": 458
+      }
+    },
+    "HumanEval/35": {
+      "case_count": 900,
+      "output_size_stats_bytes": {
+        "count": 900,
+        "max": 46,
+        "mean": 30.44,
+        "min": 27,
+        "p50": 30,
+        "p90": 32,
+        "p99": 46
+      }
+    },
+    "HumanEval/36": {
+      "case_count": 112,
+      "output_size_stats_bytes": {
+        "count": 112,
+        "max": 31,
+        "mean": 27.991071428571427,
+        "min": 27,
+        "p50": 27,
+        "p90": 30,
+        "p99": 31
+      }
+    },
+    "HumanEval/37": {
+      "case_count": 937,
+      "output_size_stats_bytes": {
+        "count": 937,
+        "max": 563,
+        "mean": 322.08537886873,
+        "min": 29,
+        "p50": 320,
+        "p90": 443,
+        "p99": 524
+      }
+    },
+    "HumanEval/38": {
+      "case_count": 1059,
+      "output_size_stats_bytes": {
+        "count": 1059,
+        "max": 642,
+        "mean": 141.42776203966005,
+        "min": 28,
+        "p50": 110,
+        "p90": 291,
+        "p99": 533
+      }
+    },
+    "HumanEval/4": {
+      "case_count": 748,
+      "output_size_stats_bytes": {
+        "count": 748,
+        "max": 50,
+        "mean": 44.04679144385027,
+        "min": 31,
+        "p50": 46,
+        "p90": 46,
+        "p99": 47
+      }
+    },
+    "HumanEval/40": {
+      "case_count": 948,
+      "output_size_stats_bytes": {
+        "count": 948,
+        "max": 32,
+        "mean": 31.174050632911392,
+        "min": 31,
+        "p50": 31,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/41": {
+      "case_count": 39,
+      "output_size_stats_bytes": {
+        "count": 39,
+        "max": 45,
+        "mean": 31.358974358974358,
+        "min": 27,
+        "p50": 30,
+        "p90": 37,
+        "p99": 45
+      }
+    },
+    "HumanEval/42": {
+      "case_count": 961,
+      "output_size_stats_bytes": {
+        "count": 961,
+        "max": 630,
+        "mean": 319.24661810613946,
+        "min": 29,
+        "p50": 324,
+        "p90": 453,
+        "p99": 547
+      }
+    },
+    "HumanEval/43": {
+      "case_count": 943,
+      "output_size_stats_bytes": {
+        "count": 943,
+        "max": 32,
+        "mean": 31.20996818663839,
+        "min": 31,
+        "p50": 31,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/44": {
+      "case_count": 427,
+      "output_size_stats_bytes": {
+        "count": 427,
+        "max": 58,
+        "mean": 35.11007025761124,
+        "min": 29,
+        "p50": 34,
+        "p90": 43,
+        "p99": 55
+      }
+    },
+    "HumanEval/45": {
+      "case_count": 962,
+      "output_size_stats_bytes": {
+        "count": 962,
+        "max": 51,
+        "mean": 44.04989604989605,
+        "min": 31,
+        "p50": 46,
+        "p90": 49,
+        "p99": 50
+      }
+    },
+    "HumanEval/46": {
+      "case_count": 92,
+      "output_size_stats_bytes": {
+        "count": 92,
+        "max": 312,
+        "mean": 83.77173913043478,
+        "min": 27,
+        "p50": 45,
+        "p90": 309,
+        "p99": 312
+      }
+    },
+    "HumanEval/47": {
+      "case_count": 960,
+      "output_size_stats_bytes": {
+        "count": 960,
+        "max": 46,
+        "mean": 30.016666666666666,
+        "min": 27,
+        "p50": 31,
+        "p90": 32,
+        "p99": 46
+      }
+    },
+    "HumanEval/48": {
+      "case_count": 955,
+      "output_size_stats_bytes": {
+        "count": 955,
+        "max": 32,
+        "mean": 31.960209424083768,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/49": {
+      "case_count": 949,
+      "output_size_stats_bytes": {
+        "count": 949,
+        "max": 33,
+        "mean": 29.387776606954688,
+        "min": 27,
+        "p50": 29,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/5": {
+      "case_count": 116,
+      "output_size_stats_bytes": {
+        "count": 116,
+        "max": 644,
+        "mean": 247.19827586206895,
+        "min": 29,
+        "p50": 234,
+        "p90": 404,
+        "p99": 528
+      }
+    },
+    "HumanEval/50": {
+      "case_count": 1060,
+      "output_size_stats_bytes": {
+        "count": 1060,
+        "max": 437,
+        "mean": 80.09622641509434,
+        "min": 28,
+        "p50": 67,
+        "p90": 146,
+        "p99": 272
+      }
+    },
+    "HumanEval/51": {
+      "case_count": 963,
+      "output_size_stats_bytes": {
+        "count": 963,
+        "max": 223,
+        "mean": 55.4257528556594,
+        "min": 28,
+        "p50": 47,
+        "p90": 91,
+        "p99": 158
+      }
+    },
+    "HumanEval/52": {
+      "case_count": 385,
+      "output_size_stats_bytes": {
+        "count": 385,
+        "max": 32,
+        "mean": 31.503896103896103,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/53": {
+      "case_count": 929,
+      "output_size_stats_bytes": {
+        "count": 929,
+        "max": 57,
+        "mean": 40.079655543595265,
+        "min": 27,
+        "p50": 34,
+        "p90": 56,
+        "p99": 57
+      }
+    },
+    "HumanEval/54": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 32,
+        "mean": 31.72774327122153,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/55": {
+      "case_count": 162,
+      "output_size_stats_bytes": {
+        "count": 162,
+        "max": 68,
+        "mean": 46.73456790123457,
+        "min": 27,
+        "p50": 47,
+        "p90": 64,
+        "p99": 68
+      }
+    },
+    "HumanEval/56": {
+      "case_count": 970,
+      "output_size_stats_bytes": {
+        "count": 970,
+        "max": 32,
+        "mean": 31.98762886597938,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/57": {
+      "case_count": 939,
+      "output_size_stats_bytes": {
+        "count": 939,
+        "max": 32,
+        "mean": 31.943556975505857,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/58": {
+      "case_count": 949,
+      "output_size_stats_bytes": {
+        "count": 949,
+        "max": 410,
+        "mean": 125.90621707060063,
+        "min": 29,
+        "p50": 117,
+        "p90": 202,
+        "p99": 318
+      }
+    },
+    "HumanEval/59": {
+      "case_count": 136,
+      "output_size_stats_bytes": {
+        "count": 136,
+        "max": 32,
+        "mean": 28.36764705882353,
+        "min": 27,
+        "p50": 28,
+        "p90": 30,
+        "p99": 32
+      }
+    },
+    "HumanEval/6": {
+      "case_count": 247,
+      "output_size_stats_bytes": {
+        "count": 247,
+        "max": 143,
+        "mean": 60.449392712550605,
+        "min": 29,
+        "p50": 56,
+        "p90": 85,
+        "p99": 85
+      }
+    },
+    "HumanEval/60": {
+      "case_count": 120,
+      "output_size_stats_bytes": {
+        "count": 120,
+        "max": 38,
+        "mean": 31.95,
+        "min": 27,
+        "p50": 30,
+        "p90": 38,
+        "p99": 38
+      }
+    },
+    "HumanEval/61": {
+      "case_count": 968,
+      "output_size_stats_bytes": {
+        "count": 968,
+        "max": 32,
+        "mean": 31.954545454545453,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/62": {
+      "case_count": 913,
+      "output_size_stats_bytes": {
+        "count": 913,
+        "max": 624,
+        "mean": 297.7951807228916,
+        "min": 29,
+        "p50": 293,
+        "p90": 412,
+        "p99": 557
+      }
+    },
+    "HumanEval/63": {
+      "case_count": 162,
+      "output_size_stats_bytes": {
+        "count": 162,
+        "max": 78,
+        "mean": 51.901234567901234,
+        "min": 27,
+        "p50": 52,
+        "p90": 73,
+        "p99": 78
+      }
+    },
+    "HumanEval/64": {
+      "case_count": 959,
+      "output_size_stats_bytes": {
+        "count": 959,
+        "max": 29,
+        "mean": 27.693430656934307,
+        "min": 27,
+        "p50": 28,
+        "p90": 28,
+        "p99": 29
+      }
+    },
+    "HumanEval/65": {
+      "case_count": 947,
+      "output_size_stats_bytes": {
+        "count": 947,
+        "max": 68,
+        "mean": 35.8870116156283,
+        "min": 29,
+        "p50": 32,
+        "p90": 47,
+        "p99": 67
+      }
+    },
+    "HumanEval/66": {
+      "case_count": 967,
+      "output_size_stats_bytes": {
+        "count": 967,
+        "max": 31,
+        "mean": 29.755946225439505,
+        "min": 27,
+        "p50": 30,
+        "p90": 31,
+        "p99": 31
+      }
+    },
+    "HumanEval/67": {
+      "case_count": 307,
+      "output_size_stats_bytes": {
+        "count": 307,
+        "max": 29,
+        "mean": 27.78827361563518,
+        "min": 27,
+        "p50": 28,
+        "p90": 29,
+        "p99": 29
+      }
+    },
+    "HumanEval/68": {
+      "case_count": 967,
+      "output_size_stats_bytes": {
+        "count": 967,
+        "max": 89,
+        "mean": 80.5511892450879,
+        "min": 29,
+        "p50": 85,
+        "p90": 86,
+        "p99": 86
+      }
+    },
+    "HumanEval/69": {
+      "case_count": 985,
+      "output_size_stats_bytes": {
+        "count": 985,
+        "max": 28,
+        "mean": 27.0253807106599,
+        "min": 27,
+        "p50": 27,
+        "p90": 27,
+        "p99": 28
+      }
+    },
+    "HumanEval/7": {
+      "case_count": 142,
+      "output_size_stats_bytes": {
+        "count": 142,
+        "max": 748,
+        "mean": 88.47887323943662,
+        "min": 29,
+        "p50": 29,
+        "p90": 210,
+        "p99": 639
+      }
+    },
+    "HumanEval/70": {
+      "case_count": 943,
+      "output_size_stats_bytes": {
+        "count": 943,
+        "max": 627,
+        "mean": 296.68610816542946,
+        "min": 29,
+        "p50": 296,
+        "p90": 416,
+        "p99": 496
+      }
+    },
+    "HumanEval/71": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 49,
+        "mean": 30.664596273291924,
+        "min": 28,
+        "p50": 32,
+        "p90": 33,
+        "p99": 36
+      }
+    },
+    "HumanEval/72": {
+      "case_count": 657,
+      "output_size_stats_bytes": {
+        "count": 657,
+        "max": 32,
+        "mean": 31.948249619482496,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/73": {
+      "case_count": 930,
+      "output_size_stats_bytes": {
+        "count": 930,
+        "max": 28,
+        "mean": 27.37741935483871,
+        "min": 27,
+        "p50": 27,
+        "p90": 28,
+        "p99": 28
+      }
+    },
+    "HumanEval/74": {
+      "case_count": 945,
+      "output_size_stats_bytes": {
+        "count": 945,
+        "max": 549,
+        "mean": 230.83068783068782,
+        "min": 29,
+        "p50": 222,
+        "p90": 366,
+        "p99": 475
+      }
+    },
+    "HumanEval/75": {
+      "case_count": 55,
+      "output_size_stats_bytes": {
+        "count": 55,
+        "max": 32,
+        "mean": 31.87272727272727,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/76": {
+      "case_count": 864,
+      "output_size_stats_bytes": {
+        "count": 864,
+        "max": 32,
+        "mean": 31.877314814814813,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/77": {
+      "case_count": 124,
+      "output_size_stats_bytes": {
+        "count": 124,
+        "max": 32,
+        "mean": 31.846774193548388,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/78": {
+      "case_count": 967,
+      "output_size_stats_bytes": {
+        "count": 967,
+        "max": 29,
+        "mean": 27.880041365046537,
+        "min": 27,
+        "p50": 28,
+        "p90": 28,
+        "p99": 29
+      }
+    },
+    "HumanEval/79": {
+      "case_count": 160,
+      "output_size_stats_bytes": {
+        "count": 160,
+        "max": 135,
+        "mean": 56.29375,
+        "min": 33,
+        "p50": 43,
+        "p90": 96,
+        "p99": 135
+      }
+    },
+    "HumanEval/8": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 106,
+        "mean": 88.12435233160622,
+        "min": 86,
+        "p50": 87,
+        "p90": 92,
+        "p99": 98
+      }
+    },
+    "HumanEval/80": {
+      "case_count": 909,
+      "output_size_stats_bytes": {
+        "count": 909,
+        "max": 32,
+        "mean": 31.946094609460946,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/81": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 1327,
+        "mean": 506.2391304347826,
+        "min": 29,
+        "p50": 565,
+        "p90": 755,
+        "p99": 850
+      }
+    },
+    "HumanEval/82": {
+      "case_count": 937,
+      "output_size_stats_bytes": {
+        "count": 937,
+        "max": 32,
+        "mean": 31.71504802561366,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/83": {
+      "case_count": 69,
+      "output_size_stats_bytes": {
+        "count": 69,
+        "max": 1000028,
+        "mean": 77527.39130434782,
+        "min": 27,
+        "p50": 105,
+        "p90": 31444,
+        "p99": 1000028
+      }
+    },
+    "HumanEval/84": {
+      "case_count": 176,
+      "output_size_stats_bytes": {
+        "count": 176,
+        "max": 34,
+        "mean": 32.02272727272727,
+        "min": 29,
+        "p50": 32,
+        "p90": 33,
+        "p99": 34
+      }
+    },
+    "HumanEval/85": {
+      "case_count": 958,
+      "output_size_stats_bytes": {
+        "count": 958,
+        "max": 30,
+        "mean": 28.239039665970772,
+        "min": 27,
+        "p50": 28,
+        "p90": 29,
+        "p99": 30
+      }
+    },
+    "HumanEval/86": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 359,
+        "mean": 70.05486542443064,
+        "min": 28,
+        "p50": 55,
+        "p90": 125,
+        "p99": 225
+      }
+    },
+    "HumanEval/87": {
+      "case_count": 172,
+      "output_size_stats_bytes": {
+        "count": 172,
+        "max": 1083,
+        "mean": 125.0813953488372,
+        "min": 29,
+        "p50": 29,
+        "p90": 379,
+        "p99": 907
+      }
+    },
+    "HumanEval/88": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 667,
+        "mean": 333.7689119170984,
+        "min": 29,
+        "p50": 327,
+        "p90": 493,
+        "p99": 637
+      }
+    },
+    "HumanEval/89": {
+      "case_count": 963,
+      "output_size_stats_bytes": {
+        "count": 963,
+        "max": 390,
+        "mean": 75.6116303219107,
+        "min": 28,
+        "p50": 62,
+        "p90": 136,
+        "p99": 238
+      }
+    },
+    "HumanEval/9": {
+      "case_count": 922,
+      "output_size_stats_bytes": {
+        "count": 922,
+        "max": 1137,
+        "mean": 451.8839479392625,
+        "min": 29,
+        "p50": 386,
+        "p90": 855,
+        "p99": 1017
+      }
+    },
+    "HumanEval/90": {
+      "case_count": 787,
+      "output_size_stats_bytes": {
+        "count": 787,
+        "max": 31,
+        "mean": 28.226175349428207,
+        "min": 27,
+        "p50": 28,
+        "p90": 30,
+        "p99": 31
+      }
+    },
+    "HumanEval/91": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 27,
+        "mean": 27.0,
+        "min": 27,
+        "p50": 27,
+        "p90": 27,
+        "p99": 27
+      }
+    },
+    "HumanEval/92": {
+      "case_count": 970,
+      "output_size_stats_bytes": {
+        "count": 970,
+        "max": 32,
+        "mean": 31.94020618556701,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/93": {
+      "case_count": 965,
+      "output_size_stats_bytes": {
+        "count": 965,
+        "max": 709,
+        "mean": 109.18445595854922,
+        "min": 28,
+        "p50": 83,
+        "p90": 208,
+        "p99": 455
+      }
+    },
+    "HumanEval/94": {
+      "case_count": 969,
+      "output_size_stats_bytes": {
+        "count": 969,
+        "max": 29,
+        "mean": 27.75232198142415,
+        "min": 27,
+        "p50": 28,
+        "p90": 28,
+        "p99": 28
+      }
+    },
+    "HumanEval/95": {
+      "case_count": 476,
+      "output_size_stats_bytes": {
+        "count": 476,
+        "max": 32,
+        "mean": 31.886554621848738,
+        "min": 31,
+        "p50": 32,
+        "p90": 32,
+        "p99": 32
+      }
+    },
+    "HumanEval/96": {
+      "case_count": 140,
+      "output_size_stats_bytes": {
+        "count": 140,
+        "max": 59024,
+        "mean": 8787.407142857142,
+        "min": 29,
+        "p50": 743,
+        "p90": 39158,
+        "p99": 59024
+      }
+    },
+    "HumanEval/97": {
+      "case_count": 936,
+      "output_size_stats_bytes": {
+        "count": 936,
+        "max": 28,
+        "mean": 27.54594017094017,
+        "min": 27,
+        "p50": 28,
+        "p90": 28,
+        "p99": 28
+      }
+    },
+    "HumanEval/98": {
+      "case_count": 966,
+      "output_size_stats_bytes": {
+        "count": 966,
+        "max": 28,
+        "mean": 27.36024844720497,
+        "min": 27,
+        "p50": 27,
+        "p90": 28,
+        "p99": 28
+      }
+    },
+    "HumanEval/99": {
+      "case_count": 674,
+      "output_size_stats_bytes": {
+        "count": 674,
+        "max": 123,
+        "mean": 30.688427299703264,
+        "min": 27,
+        "p50": 29,
+        "p90": 36,
+        "p99": 47
+      }
+    }
+  },
+  "schema_version": "megb-03h1-reference-evidence-statistics-v1",
+  "source_artifact_id": "reference_only_oracle",
+  "source_lock_logical_sha256": "aca19c40e464ba1ba9c884d4fa5a2439726bea563c03c832a6d939cbd483123c",
+  "source_lock_size_bytes": 723830836,
+  "statistics_checksum": "e42f7e1b638d33a7db056634b5a4c940ac7f18f6cb7357791b014ed9f322d821",
+  "status_histogram": {
+    "success": 117961
+  },
+  "task_count": 163,
+  "total_records": 117961
+}
