@@ -75,6 +75,19 @@ class _ContainerInspectInfo:
     found: bool
     oom_killed: bool
     exit_code: int | None
+    # MEGB-03H.2C.2A terminal-state-proof correction: exit_code alone is
+    # not evidence of termination -- Docker's Go template reports
+    # State.ExitCode's zero value (0) for a still-RUNNING container just
+    # as it would for a real successful exit. These three fields let a
+    # caller (real_telemetry_collectors._confirm_container_terminal_state)
+    # independently prove the container has actually stopped. Defaulted
+    # so every pre-existing classification-only call site (which never
+    # cared about terminal-state proof, only exit_code/oom_killed) is
+    # unaffected.
+    container_full_id: str = ""
+    running: bool = False
+    status: str = ""
+    finished_at: str = ""
 
 
 @lru_cache(maxsize=1)
@@ -107,7 +120,10 @@ def _resolve_image_digest(image: str) -> str:
 
 
 def _docker_inspect(container_name: str) -> _ContainerInspectInfo:
-    inspect_format = "{{.State.OOMKilled}}\t{{.State.ExitCode}}"
+    inspect_format = (
+        "{{.Id}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t"
+        "{{.State.Running}}\t{{.State.Status}}\t{{.State.FinishedAt}}"
+    )
     result = subprocess.run(
         ["docker", "inspect", "--format", inspect_format, container_name],
         capture_output=True,
@@ -117,11 +133,17 @@ def _docker_inspect(container_name: str) -> _ContainerInspectInfo:
     )
     if result.returncode != 0:
         return _ContainerInspectInfo(found=False, oom_killed=False, exit_code=None)
-    oom_str, exit_code_str = result.stdout.strip().split("\t")
+    full_id, oom_str, exit_code_str, running_str, status, finished_at = (
+        result.stdout.strip().split("\t")
+    )
     return _ContainerInspectInfo(
         found=True,
         oom_killed=oom_str == "true",
         exit_code=int(exit_code_str) if exit_code_str else None,
+        container_full_id=full_id,
+        running=running_str == "true",
+        status=status,
+        finished_at=finished_at,
     )
 
 

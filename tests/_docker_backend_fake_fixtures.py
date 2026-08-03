@@ -91,7 +91,15 @@ def install_fake_docker(  # pylint: disable=too-many-arguments,too-many-position
     resolved_inspect_info = (
         inspect_info
         if inspect_info is not None
-        else _ContainerInspectInfo(found=True, oom_killed=False, exit_code=0)
+        else _ContainerInspectInfo(
+            found=True,
+            oom_killed=False,
+            exit_code=0,
+            container_full_id=container_id or "",
+            running=False,
+            status="exited",
+            finished_at="2026-01-01T00:00:01Z",
+        )
     )
 
     def fake_popen_factory(

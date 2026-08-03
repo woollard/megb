@@ -102,19 +102,45 @@ did not need:
   floor, subtracted from the above two before comparing to ground truth.
 - **`late_peak` candidate** (added by the H.2C.2A provenance/schema
   correction, targeting the exactness/terminal-coverage gap that
-  correction fixed): allocates a small baseline amount, sleeps briefly,
-  then — as close as controllable to the candidate process's own exit —
-  allocates a second, larger, distinctly-sized spike immediately before
-  returning. Ground truth: the true peak must reflect the *late* spike,
-  not the earlier baseline. This is the synthetic workload specifically
-  designed to probe the teardown race `CgroupPeakFileCollector`'s
-  `confirm_terminal_state` check now guards against: run once with the
-  real confirmation wired in (expect `EXACT`, value including the late
-  spike) and once with a deliberately-broken/always-false confirmation
-  callable substituted (expect a forced `BOUNDARY_ONLY` downgrade per
-  the schema correction's own hard invariant) — both legs must still
-  report the *same* underlying value; only the quality/terminal-coverage
+  correction fixed; amended by the H.2C.2A terminal-state-proof audit to
+  target the *end-of-container* race specifically, not merely "a large
+  value sometime during execution"): allocates a small baseline amount,
+  sleeps briefly, then — timed as close as controllable to the
+  candidate process's own exit, i.e. the spike must still be resident
+  when the container's main process terminates, not merely at some
+  point mid-run — allocates a second, larger, distinctly-sized spike
+  immediately before returning. Ground truth: the true peak must reflect
+  the *late* spike, not the earlier baseline. This is the synthetic
+  workload specifically designed to probe the teardown race the
+  corrected `_confirm_container_terminal_state` predicate and
+  `CgroupPeakFileCollector`'s confirm-then-read-then-fallback ordering
+  guard against: run once with the real confirmation wired in (expect
+  `EXACT`, value including the late spike, read strictly *after*
+  `State.Running=false`/`State.Status` terminal/`State.FinishedAt`
+  populated/container-identity match all independently hold) and once
+  with a deliberately-broken/always-false confirmation callable
+  substituted (expect a forced `BOUNDARY_ONLY` downgrade per the schema
+  correction's own hard invariant) — both legs must still report the
+  *same* underlying value; only the quality/terminal-coverage
   classification may differ.
+
+  **This run is also this host's own empirical determination of
+  post-terminal peak-read support, not an assumption.** The mere
+  existence of a readable `memory.peak`/`pids.peak` file *during*
+  container execution proves nothing about whether that file — or the
+  cgroup directory containing it — remains readable *after* the
+  container's main process has genuinely terminated (confirmed via the
+  predicate above) and before `docker rm` removes the container. The
+  real run must record, for this specific host/cgroup-driver/Docker
+  version combination: whether the authoritative post-confirmation read
+  in `CgroupPeakFileCollector.finalize()` actually succeeds (yielding
+  `EXACT`) or the cgroup file/directory is already gone by that point
+  (forcing `BOUNDARY_ONLY` via the pre-terminal `sample()` fallback, or
+  the typed-unavailable outcome if no fallback sample exists either). If
+  this host does not support a post-terminal read, that is a real,
+  reportable finding — not something to paper over by assuming support
+  from the collector's own successful selection during capability
+  probing.
 
 None of these candidates touch canonical HumanEval+ content; all four
 get their own distinct, synthetic identity constants (mirroring

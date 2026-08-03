@@ -244,9 +244,16 @@ def test_execute_with_telemetry_also_integrates_the_sampled_collector_path(
         if command[:2] == ["docker", "inspect"]:
             # The sampled collector's own container-existence check
             # reuses docker_backend._docker_inspect, which itself calls
-            # subprocess.run -- report "found" immediately.
+            # subprocess.run -- report "found" immediately. Six
+            # tab-separated fields, matching _docker_inspect's own
+            # {{.Id}}/{{.State.OOMKilled}}/{{.State.ExitCode}}/
+            # {{.State.Running}}/{{.State.Status}}/{{.State.FinishedAt}}
+            # format string (MEGB-03H.2C.2A terminal-state-proof audit).
             return subprocess.CompletedProcess(
-                args=command, returncode=0, stdout="false\t0", stderr=""
+                args=command,
+                returncode=0,
+                stdout=(_FAKE_CONTAINER_ID + "\tfalse\t0\tfalse\texited\t2026-01-01T00:00:01Z"),
+                stderr="",
             )
         raise AssertionError(f"unexpected docker CLI command in sampled-path test: {command}")
 

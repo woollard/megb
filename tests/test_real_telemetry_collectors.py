@@ -88,17 +88,46 @@ def test_cgroup_peak_file_collector_downgrades_to_boundary_only_when_terminal_st
     assert observation.terminal_coverage == TerminalCoverageState.TERMINAL_READ_MISSED
 
 
-def test_cgroup_peak_file_collector_raises_on_missing_file(tmp_path: Path) -> None:
-    """A path that doesn't exist raises -- callers (run_collector /
-    docker_backend's split-phase helpers) translate this into a typed
-    SAMPLER_FAILURE, never a raw exception surfaced to telemetry."""
+def test_cgroup_peak_file_collector_reports_unavailable_on_missing_file_with_no_fallback(
+    tmp_path: Path,
+) -> None:
+    """A path that doesn't exist, and no earlier sample() ever succeeded,
+    is reported as a typed HOST_TELEMETRY_UNAVAILABLE observation rather
+    than raising or silently reporting EXACT -- confirmation succeeding
+    is not enough on its own if no reading, of any kind, was ever
+    obtained (MEGB-03H.2C.2A terminal-state-proof audit)."""
     identity = _memory_identity()
     collector = rtc.CgroupPeakFileCollector(
         str(tmp_path / "does_not_exist"), identity, confirm_terminal_state=lambda: True
     )
     collector.start()
-    with pytest.raises(OSError):
-        collector.finalize()
+    observation = collector.finalize()
+    assert observation.value is None
+    assert observation.quality is None
+    assert observation.unavailable_reason == TelemetryUnavailableReason.HOST_TELEMETRY_UNAVAILABLE
+
+
+def test_cgroup_peak_file_collector_falls_back_to_earlier_sample_when_final_read_fails(
+    tmp_path: Path,
+) -> None:
+    """If an earlier, best-effort sample() succeeded but the file is gone
+    by the time finalize() attempts its authoritative post-confirmation
+    read (this host tore the cgroup down before removal), the earlier
+    value is reported as a BOUNDARY_ONLY lower bound rather than being
+    lost entirely."""
+    peak_file = tmp_path / "memory.peak"
+    peak_file.write_text("4096\n")
+    identity = _memory_identity()
+    collector = rtc.CgroupPeakFileCollector(
+        str(peak_file), identity, confirm_terminal_state=lambda: True
+    )
+    collector.start()
+    collector.sample()  # succeeds while the file still exists
+    peak_file.unlink()  # simulates the file disappearing before finalize()'s own read
+    observation = collector.finalize()
+    assert observation.value == 4096
+    assert observation.quality == TelemetryQuality.BOUNDARY_ONLY
+    assert observation.terminal_coverage == TerminalCoverageState.TERMINAL_READ_MISSED
 
 
 # ---------------------------------------------------------------------------
@@ -601,7 +630,12 @@ def test_factory_selects_cgroup_memory_peak_when_path_resolvable(
     assert isinstance(collector, rtc.CgroupPeakFileCollector)
 
     class _FakeInspectInfo:
+        found = True
         exit_code = 0
+        container_full_id = "abc123"
+        running = False
+        status = "exited"
+        finished_at = "2026-01-01T00:00:01Z"
 
     monkeypatch.setattr(rtc.docker_backend, "_docker_inspect", lambda name: _FakeInspectInfo())
     observation = collector.finalize()
@@ -655,7 +689,12 @@ def test_factory_selects_cgroup_pids_peak_when_path_resolvable(
     assert identity.method == CollectorMethod.CGROUP_V2_PIDS_PEAK
 
     class _FakeInspectInfo:
+        found = True
         exit_code = 0
+        container_full_id = "abc123"
+        running = False
+        status = "exited"
+        finished_at = "2026-01-01T00:00:01Z"
 
     monkeypatch.setattr(rtc.docker_backend, "_docker_inspect", lambda name: _FakeInspectInfo())
     observation = collector.finalize()

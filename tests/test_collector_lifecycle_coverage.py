@@ -60,6 +60,30 @@ def _response_payload(status: ExecutionStatus, **kwargs: object) -> bytes:
     return serialize_response(response, max_response_bytes=10_000_000)
 
 
+# The fake container id install_fake_docker() resolves by default --
+# matched here so a _ContainerInspectInfo claiming a genuinely terminal
+# state (below) is also recognized as belonging to *this* invocation's
+# own container by real_telemetry_collectors._confirm_container_terminal_state's
+# identity check, not just coincidentally inert.
+_FAKE_TERMINAL_CONTAINER_ID = "f" * 64
+
+
+def _terminal_inspect(*, oom_killed: bool, exit_code: int) -> _ContainerInspectInfo:
+    """A found, genuinely-terminated container's inspect info -- every
+    field the MEGB-03H.2C.2A terminal-state-proof audit requires is
+    populated, not just ``exit_code``, so scenarios built from this
+    still confirm as terminal under the corrected predicate."""
+    return _ContainerInspectInfo(
+        found=True,
+        oom_killed=oom_killed,
+        exit_code=exit_code,
+        container_full_id=_FAKE_TERMINAL_CONTAINER_ID,
+        running=False,
+        status="exited",
+        finished_at="2026-01-01T00:00:01Z",
+    )
+
+
 # Ten backend-outcome scenarios, each producing a real
 # CandidateExecutionResult via the fake Docker CLI harness.
 # (stdout_bytes, raise_timeout_first, inspect_info, expected_status)
@@ -67,7 +91,7 @@ _BACKEND_SCENARIOS = {
     "normal_completion": (
         _response_payload(ExecutionStatus.COMPLETED, return_value=1) + b"\n",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=0),
+        _terminal_inspect(oom_killed=False, exit_code=0),
         ExecutionStatus.COMPLETED,
     ),
     "syntax_error": (
@@ -76,7 +100,7 @@ _BACKEND_SCENARIOS = {
         )
         + b"\n",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=1),
+        _terminal_inspect(oom_killed=False, exit_code=1),
         ExecutionStatus.SYNTAX_ERROR,
     ),
     "candidate_exception": (
@@ -87,13 +111,13 @@ _BACKEND_SCENARIOS = {
         )
         + b"\n",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=1),
+        _terminal_inspect(oom_killed=False, exit_code=1),
         ExecutionStatus.CANDIDATE_EXCEPTION,
     ),
     "output_limit": (
         _response_payload(ExecutionStatus.OUTPUT_LIMIT) + b"\n",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=1),
+        _terminal_inspect(oom_killed=False, exit_code=1),
         ExecutionStatus.OUTPUT_LIMIT,
     ),
     "process_limit": (
@@ -104,7 +128,7 @@ _BACKEND_SCENARIOS = {
         )
         + b"\n",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=1),
+        _terminal_inspect(oom_killed=False, exit_code=1),
         ExecutionStatus.PROCESS_LIMIT,
     ),
     "protocol_error": (
@@ -115,19 +139,19 @@ _BACKEND_SCENARIOS = {
         )
         + b"\n",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=0),
+        _terminal_inspect(oom_killed=False, exit_code=0),
         ExecutionStatus.PROTOCOL_ERROR,
     ),
     "timeout": (
         b"",
         True,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=137),
+        _terminal_inspect(oom_killed=False, exit_code=137),
         ExecutionStatus.TIMEOUT,
     ),
     "oom": (
         b"",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=True, exit_code=137),
+        _terminal_inspect(oom_killed=True, exit_code=137),
         ExecutionStatus.OUT_OF_MEMORY,
     ),
     "container_never_created": (
@@ -139,7 +163,7 @@ _BACKEND_SCENARIOS = {
     "malformed_response": (
         b"not valid json",
         False,
-        _ContainerInspectInfo(found=True, oom_killed=False, exit_code=1),
+        _terminal_inspect(oom_killed=False, exit_code=1),
         ExecutionStatus.INFRASTRUCTURE_ERROR,
     ),
 }

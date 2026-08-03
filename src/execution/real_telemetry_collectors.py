@@ -74,18 +74,42 @@ SAMPLED_POLLING_COLLECTOR_VERSION = "sampled_polling_collector/v1"
 
 
 class CgroupPeakFileCollector(TelemetryCollector):
-    """Reads one cgroup v2 peak-tracking file exactly once, at
-    ``finalize()``. See the module docstring for why this is ``EXACT`` --
-    but only when ``confirm_terminal_state`` proves it (MEGB-03H.2C.2A
-    provenance/schema correction): file existence or a successful read
-    alone are not sufficient. ``confirm_terminal_state`` is a required,
-    independent, injected check (never assumed from call-site ordering
-    alone) confirming the candidate's container has actually terminated
-    before this read is trusted to cover its complete resource lifetime.
-    If it returns ``False`` -- the terminal state could not be
-    independently confirmed, e.g. a lifecycle race the caller's own
-    ordering did not anticipate -- the observation is downgraded to
-    ``BOUNDARY_ONLY`` rather than silently retaining ``EXACT``.
+    """Reads one cgroup v2 peak-tracking file, at ``finalize()``. See the
+    module docstring for why this is ``EXACT`` -- but only when
+    ``confirm_terminal_state`` proves it (MEGB-03H.2C.2A provenance/
+    schema correction, further hardened by the terminal-state-proof
+    audit): file existence or a successful read alone are not
+    sufficient. ``confirm_terminal_state`` is a required, independent,
+    injected check (never assumed from call-site ordering alone) that
+    must itself prove -- not merely observe an exit code -- that the
+    candidate's container has actually terminated (see
+    ``_confirm_container_terminal_state`` for the full predicate) before
+    a read taken *after* that confirmation is trusted to cover the
+    container's complete resource lifetime.
+
+    Event order enforced here, matching the terminal-state-proof audit:
+    1. ``confirm_terminal_state()`` is called first, always, before any
+       read this call performs is trusted;
+    2. only *then* is the peak file opened and read (never the reverse);
+    3. if that post-confirmation read succeeds, the value is ``EXACT``;
+    4. if it fails (the file disappeared in a lifecycle race after
+       confirmation, or confirmation itself failed), an earlier,
+       best-effort intermediate read captured via :meth:`sample` --
+       itself never trusted as ``EXACT``, since candidate activity may
+       have occurred after it was taken -- is used as a ``BOUNDARY_ONLY``
+       lower bound if one exists;
+    5. if no reading exists at all, the metric is reported unavailable
+       (``HOST_TELEMETRY_UNAVAILABLE``) rather than raising -- a genuine
+       runtime race, not a capability absence
+       (``UNAVAILABLE_WITHOUT_CONTAMINATION``), which is reserved for the
+       case where no method was ever selected at all.
+
+    A confirmed terminal read that later fails is never silently
+    retained as ``EXACT``, and a value read before confirmation can never
+    become ``EXACT`` merely because confirmation later succeeds
+    separately -- only a read taken strictly *after* a successful
+    ``confirm_terminal_state()`` call, within this same ``finalize()``
+    invocation, is ever reported ``EXACT``.
     """
 
     def __init__(
@@ -98,37 +122,66 @@ class CgroupPeakFileCollector(TelemetryCollector):
         self._path = path
         self._method_identity = method_identity
         self._confirm_terminal_state = confirm_terminal_state
+        self._last_observed_value: int | None = None
 
     def start(self) -> None:
         """No-op: the kernel already tracks the peak continuously; there
         is nothing this collector needs to begin."""
 
     def sample(self) -> None:
-        """No-op: no explicit sampling is needed or performed."""
+        """Best-effort, non-authoritative intermediate read, safe to call
+        any number of times (including zero) while the candidate is still
+        running. Never raises and never itself trusted as ``EXACT`` --
+        candidate activity occurring after this call is invisible to it
+        -- but its value is retained as a ``BOUNDARY_ONLY`` fallback in
+        case the authoritative post-termination read in :meth:`finalize`
+        is not obtainable (e.g. this host tears the cgroup file down
+        before the container is removed)."""
+        try:
+            self._last_observed_value = self._read_peak_value()
+        except (OSError, ValueError):
+            pass
+
+    def _read_peak_value(self) -> int:
+        with open(self._path, "r", encoding="ascii") as peak_file:
+            raw = peak_file.read().strip()
+        return int(raw)
 
     def finalize(self) -> TelemetryObservation:
         terminal_state_confirmed = self._confirm_terminal_state()
-        with open(self._path, "r", encoding="ascii") as peak_file:
-            raw = peak_file.read().strip()
-        value = int(raw)
-        if terminal_state_confirmed:
+        try:
+            final_value: int | None = self._read_peak_value()
+        except (OSError, ValueError):
+            final_value = None
+
+        if terminal_state_confirmed and final_value is not None:
             return TelemetryObservation(
-                value=value,
+                value=final_value,
                 quality=TelemetryQuality.EXACT,
                 unavailable_reason=None,
                 method_identity=self._method_identity,
                 terminal_coverage=TerminalCoverageState.TERMINAL_READ_CONFIRMED,
             )
+
+        fallback_value = final_value if final_value is not None else self._last_observed_value
+        if fallback_value is not None:
+            return TelemetryObservation(
+                value=fallback_value,
+                quality=TelemetryQuality.BOUNDARY_ONLY,
+                unavailable_reason=None,
+                method_identity=self._method_identity,
+                terminal_coverage=TerminalCoverageState.TERMINAL_READ_MISSED,
+            )
         return TelemetryObservation(
-            value=value,
-            quality=TelemetryQuality.BOUNDARY_ONLY,
-            unavailable_reason=None,
+            value=None,
+            quality=None,
+            unavailable_reason=TelemetryUnavailableReason.HOST_TELEMETRY_UNAVAILABLE,
             method_identity=self._method_identity,
             terminal_coverage=TerminalCoverageState.TERMINAL_READ_MISSED,
         )
 
     def cleanup(self) -> None:
-        """No-op: no resources were acquired beyond a single file read."""
+        """No-op: no resources were acquired beyond one or two file reads."""
 
 
 # ---------------------------------------------------------------------------
@@ -352,19 +405,63 @@ def _container_exists(container_name: str) -> bool:
     return docker_backend._docker_inspect(container_name).found  # pylint: disable=protected-access
 
 
-def _confirm_container_terminal_state(container_name: str) -> bool:
+# MEGB-03H.2C.2A terminal-state-proof audit: State.ExitCode alone is not
+# evidence of termination -- Docker's own Go template reports its zero
+# value (0) for a container that is still RUNNING, exactly as it would
+# for a genuinely successful exit, so "exit_code is not None" is true
+# almost immediately after a container is merely created and is not a
+# terminal-state proof at all. Every one of the following is required.
+_TERMINAL_CONTAINER_STATUSES = frozenset({"exited", "dead"})
+# Docker's own zero-value RFC3339 timestamp for an unset time.Time field.
+_DOCKER_ZERO_TIMESTAMP_PREFIX = "0001-01-01T00:00:00"
+
+
+def _is_populated_finished_at(finished_at: str) -> bool:
+    """``True`` only for a real, non-zero ``State.FinishedAt`` value --
+    Docker leaves this at its zero-value timestamp until the container
+    has actually finished."""
+    return bool(finished_at) and not finished_at.startswith(_DOCKER_ZERO_TIMESTAMP_PREFIX)
+
+
+def _confirm_container_terminal_state(container_name: str, *, expected_container_id: str) -> bool:
     """Independent confirmation (MEGB-03H.2C.2A provenance/schema
-    correction) that the container has actually stopped, via a signal
-    separate from mere call-site ordering: ``docker inspect`` itself
-    reports a recorded exit code only once the container's main process
-    has genuinely terminated. Read-only; never ``docker exec``. Any
-    exception (e.g. a transient inspect failure) is treated as
-    unconfirmed, never as confirmed -- the safe default for a terminal-
-    coverage proof."""
+    correction; corrected by the terminal-state-proof audit) that the
+    container has actually stopped, via signals separate from mere
+    call-site ordering or a bare exit-code value. Read-only; never
+    ``docker exec``. Any exception (e.g. a transient inspect failure) is
+    treated as unconfirmed, never as confirmed -- the safe default for a
+    terminal-coverage proof.
+
+    Every one of the following must hold, matching the audit's minimum
+    requirements exactly:
+
+    * the container is still inspectable at all (``found``);
+    * its inspected identity (``.Id``) is the *same* container this
+      collector's cgroup path was derived from -- ``expected_container_id``
+      is the id resolved once, before any candidate execution began, and
+      threaded through by the caller; a mismatch means the name was
+      reused or now resolves to a different container than the one whose
+      cgroup we are about to trust, and must never be treated as this
+      invocation's own terminal state;
+    * ``State.Running`` is explicitly ``false`` -- not inferred from the
+      exit code's mere presence;
+    * ``State.Status`` is a real terminal status (``exited``/``dead``),
+      not e.g. ``created``/``running``/``restarting``/``paused``;
+    * ``State.FinishedAt`` is populated with a real, non-zero timestamp.
+    """
     try:
-        return docker_backend._docker_inspect(container_name).exit_code is not None  # pylint: disable=protected-access
+        info = docker_backend._docker_inspect(container_name)  # pylint: disable=protected-access
     except Exception:  # pylint: disable=broad-exception-caught
         return False
+    if not info.found:
+        return False
+    if info.container_full_id != expected_container_id:
+        return False
+    if info.running:
+        return False
+    if info.status not in _TERMINAL_CONTAINER_STATUSES:
+        return False
+    return _is_populated_finished_at(info.finished_at)
 
 
 # ---------------------------------------------------------------------------
@@ -530,7 +627,9 @@ class TelemetryCollectorFactory:
             collector: TelemetryCollector = CgroupPeakFileCollector(
                 peak_path,
                 identity,
-                confirm_terminal_state=lambda: _confirm_container_terminal_state(container_name),
+                confirm_terminal_state=lambda: _confirm_container_terminal_state(
+                    container_name, expected_container_id=container_id
+                ),
             )
             return collector, identity
         if self._capability_probe.docker_stats_sampling_available():
@@ -580,7 +679,9 @@ class TelemetryCollectorFactory:
             collector: TelemetryCollector = CgroupPeakFileCollector(
                 peak_path,
                 identity,
-                confirm_terminal_state=lambda: _confirm_container_terminal_state(container_name),
+                confirm_terminal_state=lambda: _confirm_container_terminal_state(
+                    container_name, expected_container_id=container_id
+                ),
             )
             return collector, identity
         if self._capability_probe.docker_top_sampling_available():
