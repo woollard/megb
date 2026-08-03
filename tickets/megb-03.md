@@ -1852,6 +1852,14 @@ Zero disagreement across every repeat actually run is the only hard gate. **H.1 
 
 Readiness is named as one of `READY_FOR_MEGB_03I`, `BLOCKED_RESOURCE_PROFILE`, `BLOCKED_DETERMINISM`, `BLOCKED_RUNTIME_OR_COST`, `BLOCKED_MEASUREMENT_VALIDITY` — never MEGB-06A-readiness directly, which remains MEGB-03I's and MEGB-06A's own determination.
 
+#### Internal Checkpoint Log (MEGB-03H.1–H.7)
+
+Tracks each H checkpoint's own execution, mirroring MEGB-03G's own internal-checkpoint-log pattern. Updated only for checkpoints actually authorized and executed.
+
+| Checkpoint | Status | Artifacts | Deviations |
+| --- | --- | --- | --- |
+| MEGB-03H.1 — Design, metadata inventory, preregistration | **Executed, pending your acceptance.** No canonical/candidate code executed, no Docker run, no `src`/`tests`/execution-profile/schema/cache/workflow file modified. | `docs/reference/megb-03h1-calibration-design.md` (design/preregistration; frozen decisions 1–10); `docs/measurement/megb-03h1-reference-evidence-statistics.json` (safe aggregate statistics, schema `megb-03h1-reference-evidence-statistics-v1`, checksum `e42f7e1b638d33a7db056634b5a4c940ac7f18f6cb7357791b014ed9f322d821`) | `partition_cli verify`/`oracle_cli verify` both PASSED (read-only, printed only checksums/booleans); `parity_cli verify` was not completed — its own accepted design requires real Docker candidate execution, which H.1 must not perform; MEGB-03D's own prior Docker-based verification is relied on instead (see design doc §1). One scoped privileged read performed (`reference_only_oracle.json`, located via the committed lock's own `privileged_path`), restricted to per-task case counts, output-type tags, and serialized output-size aggregates — no case identity, expected value, or canonical solution read, printed, or persisted beyond those aggregates. Real measured aggregate (164-task corpus: 117,973 total case invocations, output sizes ranging 27 bytes to 40,426,656 bytes) revised the diagnostic envelope's response/stdout/stderr ceiling upward from the earlier planning addenda's placeholder figures. H.3–H.6 task sets, invocation counts, and budgets frozen from this real data (see design doc §§4–8) rather than the addenda's earlier illustrative placeholders. |
+
 ### Objective
 
 Calibrate and freeze the evaluator's execution profile using corrected canonical solutions, then demonstrate stable classifications under repeated execution.
