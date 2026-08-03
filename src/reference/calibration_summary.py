@@ -25,6 +25,7 @@ from src.reference.calibration_schema import (
     CalibrationStage,
     CalibrationTaskEvaluationRecord,
     InvalidCalibrationRecordError,
+    TelemetryUnavailableReason,
     UnsupportedCalibrationSchemaVersionError,
     checksum_of,
 )
@@ -230,3 +231,41 @@ def incomplete_task_evaluations(
         for record in task_evaluations
         if not record.superseded and record.measurement_status == MeasurementStatus.INCOMPLETE
     )
+
+
+# ---------------------------------------------------------------------------
+# Release-readiness (NOT_YET_INSTRUMENTED must never appear in a real trace)
+# ---------------------------------------------------------------------------
+
+
+class CalibrationRecordNotReleaseReadyError(InvalidCalibrationRecordError):
+    """Raised when a stage's trace is claimed release-ready (i.e. a real
+    H.3-H.6 execution, as opposed to H.2A/H.2B schema/placeholder work) but
+    contains at least one :attr:`TelemetryUnavailableReason.NOT_YET_INSTRUMENTED`
+    reason -- that value only ever describes records produced before H.2C's
+    telemetry collection exists and must never appear once it does."""
+
+
+_NOT_YET_INSTRUMENTED_FIELDS = (
+    "candidate_wall_time_unavailable_reason",
+    "observed_response_unavailable_reason",
+    "peak_memory_unavailable_reason",
+    "peak_process_unavailable_reason",
+)
+
+
+def require_release_ready_stage(invocations: Sequence[CalibrationInvocationRecord]) -> None:
+    """Raise :class:`CalibrationRecordNotReleaseReadyError` if any
+    invocation record (superseded or not) carries
+    :attr:`TelemetryUnavailableReason.NOT_YET_INSTRUMENTED` in any of its
+    four telemetry-unavailability fields. Call this before treating a
+    stage's trace as a genuine, release-ready H.3-H.6 result -- H.2C must
+    have replaced every such placeholder with a real reason first."""
+    for invocation in invocations:
+        for field_name in _NOT_YET_INSTRUMENTED_FIELDS:
+            if getattr(invocation, field_name) == TelemetryUnavailableReason.NOT_YET_INSTRUMENTED:
+                raise CalibrationRecordNotReleaseReadyError(
+                    f"invocation {invocation.invocation_id!r} has {field_name}="
+                    f"NOT_YET_INSTRUMENTED -- not permitted in a release-ready H.3-H.6 trace; "
+                    f"H.2C must supply a real reason (or a real telemetry value) first"
+                )

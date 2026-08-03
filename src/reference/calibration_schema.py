@@ -119,11 +119,28 @@ class MeasurementQuality(str, Enum):
 
 class TelemetryUnavailableReason(str, Enum):
     """Why a nullable telemetry field is ``None``, populated only in that
-    case (see the module docstring for why one shared enum is used)."""
+    case (see the module docstring for why one shared enum is used).
+
+    Audited against the H.2C measurement design
+    (``docs/reference/megb-03h1-calibration-design.md`` §§11-12): covers
+    execution never starting, being killed before measurement completed,
+    producing no completed response, the host telemetry interface itself
+    being unavailable or unsupported on the current host/kernel, a metric
+    being deliberately uncollected because collecting it would contaminate
+    the very execution being measured, a sampler that ran but failed, and a
+    metric that simply does not apply to a given invocation.
+    ``NOT_YET_INSTRUMENTED`` is a placeholder for records produced before
+    H.2C's own telemetry collection exists (i.e. by H.2A/H.2B) -- see
+    :func:`require_release_ready_stage`, which rejects it in any trace
+    claimed release-ready for real H.3-H.6 execution."""
 
     NEVER_STARTED = "NEVER_STARTED"
     KILLED_BEFORE_COMPLETION = "KILLED_BEFORE_COMPLETION"
     NO_RESPONSE_PRODUCED = "NO_RESPONSE_PRODUCED"
+    HOST_TELEMETRY_UNAVAILABLE = "HOST_TELEMETRY_UNAVAILABLE"
+    UNAVAILABLE_WITHOUT_CONTAMINATION = "UNAVAILABLE_WITHOUT_CONTAMINATION"
+    SAMPLER_FAILURE = "SAMPLER_FAILURE"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
     NOT_YET_INSTRUMENTED = "NOT_YET_INSTRUMENTED"
 
 
@@ -194,8 +211,16 @@ def _enum_value(value: Any) -> Any:
 class CalibrationRunContext:
     """Immutable identity shared across every calibration record produced
     within one stage/run: the exact profile, evaluator, protocol, dataset,
-    partition, oracle, and comparison identities in force, plus the stage
-    and calibration-run identifiers themselves.
+    partition, oracle, comparison, and task-manifest identities in force,
+    plus the stage and calibration-run identifiers themselves.
+
+    ``task_manifest_checksum`` (schema-provenance-audit correction) pins
+    exactly which frozen task manifest's content this run was evaluated
+    against -- mirroring
+    :class:`~src.reference.result_schema.ReferenceRunContext`'s own
+    ``task_manifest_checksum`` field -- so two contexts that share every
+    other label but differ in *which manifest instance* they were bound to
+    are never treated as the same context (``context_checksum`` differs).
 
     ``context_checksum`` is always recomputed from this object's own
     canonical contents at construction time -- never accepted as an
@@ -214,6 +239,7 @@ class CalibrationRunContext:
     partition_version: str
     oracle_version: str
     comparison_profile_version: str
+    task_manifest_checksum: str
     context_checksum: str = ""
 
     def __post_init__(self) -> None:
@@ -238,6 +264,7 @@ class CalibrationRunContext:
             "comparison_profile_version",
         ):
             _require_nonempty_str(self, field_name)
+        _require_sha256_hex(self, "task_manifest_checksum")
 
         payload = _calibration_run_context_payload(self)
         expected_checksum = _sha256_of(payload)
@@ -263,6 +290,7 @@ def _calibration_run_context_payload(context: CalibrationRunContext) -> dict[str
         "partition_version": context.partition_version,
         "oracle_version": context.oracle_version,
         "comparison_profile_version": context.comparison_profile_version,
+        "task_manifest_checksum": context.task_manifest_checksum,
     }
 
 
@@ -289,6 +317,7 @@ def calibration_run_context_from_dict(data: Mapping[str, Any]) -> CalibrationRun
             partition_version=data["partition_version"],
             oracle_version=data["oracle_version"],
             comparison_profile_version=data["comparison_profile_version"],
+            task_manifest_checksum=data["task_manifest_checksum"],
             context_checksum=data["context_checksum"],
         )
     except KeyError as exc:
@@ -351,12 +380,20 @@ class CalibrationInvocationRecord:  # pylint: disable=too-many-instance-attribut
     ``peak_process_count`` are always ``None``/``NOT_YET_INSTRUMENTED``
     until H.2C's own telemetry collection exists; this module only defines
     the schema they will eventually populate.
+
+    ``reference_case_checksum`` (schema-provenance-audit correction) pins
+    exactly which frozen reference-case set (the same concept as
+    :class:`~src.reference.result_schema.ReferenceTaskResult`'s own
+    ``reference_case_checksum``) ``case_ordinal`` is a position *within* --
+    ``case_ordinal`` alone is never meaningful without this pin; see
+    :func:`require_consistent_case_scope`.
     """
 
     calibration_schema_version: str
     context: CalibrationRunContext
     task_id: str
     candidate_sha256: str
+    reference_case_checksum: str
     case_ordinal: int
     task_evaluation_replicate_id: int
     attempt_id: int
@@ -407,6 +444,7 @@ class CalibrationInvocationRecord:  # pylint: disable=too-many-instance-attribut
         ):
             _require_nonempty_str(self, field_name)
         _require_sha256_hex(self, "candidate_sha256")
+        _require_sha256_hex(self, "reference_case_checksum")
         _require_non_negative_int(self, "case_ordinal")
         _require_non_negative_int(self, "task_evaluation_replicate_id")
         if (
@@ -484,6 +522,7 @@ def _calibration_invocation_record_payload(record: CalibrationInvocationRecord) 
         "context": calibration_run_context_to_dict(record.context),
         "task_id": record.task_id,
         "candidate_sha256": record.candidate_sha256,
+        "reference_case_checksum": record.reference_case_checksum,
         "case_ordinal": record.case_ordinal,
         "task_evaluation_replicate_id": record.task_evaluation_replicate_id,
         "attempt_id": record.attempt_id,
@@ -539,6 +578,7 @@ def calibration_invocation_record_from_dict(data: Mapping[str, Any]) -> Calibrat
             context=calibration_run_context_from_dict(data["context"]),
             task_id=data["task_id"],
             candidate_sha256=data["candidate_sha256"],
+            reference_case_checksum=data["reference_case_checksum"],
             case_ordinal=data["case_ordinal"],
             task_evaluation_replicate_id=data["task_evaluation_replicate_id"],
             attempt_id=data["attempt_id"],
@@ -605,12 +645,25 @@ class CalibrationTaskEvaluationRecord:  # pylint: disable=too-many-instance-attr
     task_evaluation_replicate_id)`` -- every field of that tuple is present
     directly on this record via the embedded ``context`` plus its own
     fields, so identity can be read off one record with no external lookup.
+
+    ``reference_case_checksum`` (schema-provenance-audit correction) pins
+    the same frozen reference-case set every contributing invocation must
+    share -- checked by :func:`reconcile_task_evaluation`.
+    ``contributing_invocation_content_checksums`` (schema-provenance-audit
+    correction) is the parallel tuple of each contributor's own
+    ``record_checksum`` at binding time, so
+    ``contributing_invocations_checksum`` below binds contributor *content*,
+    not merely their display ``invocation_id``\\ s: reordering is
+    normalized (both tuples are zipped and sorted by id before hashing),
+    but changing any contributing record's own content changes its
+    ``record_checksum`` and therefore invalidates this checksum.
     """
 
     calibration_schema_version: str
     context: CalibrationRunContext
     task_id: str
     candidate_sha256: str
+    reference_case_checksum: str
     task_evaluation_replicate_id: int
     measurement_status: MeasurementStatus
     q_ref_task: float | None
@@ -619,6 +672,7 @@ class CalibrationTaskEvaluationRecord:  # pylint: disable=too-many-instance-attr
     reference_case_pass_count: int
     work_item_disposition: WorkItemDisposition
     contributing_invocation_ids: tuple[str, ...]
+    contributing_invocation_content_checksums: tuple[str, ...]
     evaluated_at: str
     superseded: bool = False
     contributing_invocations_checksum: str = ""
@@ -636,6 +690,7 @@ class CalibrationTaskEvaluationRecord:  # pylint: disable=too-many-instance-attr
             )
         _require_nonempty_str(self, "task_id")
         _require_sha256_hex(self, "candidate_sha256")
+        _require_sha256_hex(self, "reference_case_checksum")
         _require_non_negative_int(self, "task_evaluation_replicate_id")
         if not isinstance(self.measurement_status, MeasurementStatus):
             raise InvalidCalibrationRecordError(
@@ -663,7 +718,9 @@ class CalibrationTaskEvaluationRecord:  # pylint: disable=too-many-instance-attr
         self._validate_q_ref_task()
         self._validate_contributing_invocation_ids()
 
-        contributing_checksum = _contributing_invocations_checksum(self.contributing_invocation_ids)
+        contributing_checksum = _contributing_invocations_checksum(
+            self.contributing_invocation_ids, self.contributing_invocation_content_checksums
+        )
         if (
             self.contributing_invocations_checksum
             and self.contributing_invocations_checksum != contributing_checksum
@@ -671,7 +728,8 @@ class CalibrationTaskEvaluationRecord:  # pylint: disable=too-many-instance-attr
             raise InvalidCalibrationRecordError(
                 f"contributing_invocations_checksum {self.contributing_invocations_checksum!r} "
                 f"does not match the recomputed checksum {contributing_checksum!r} over its "
-                f"own (sorted) contributing_invocation_ids -- tampered contributor set"
+                f"own (sorted) contributing (id, content-checksum) pairs -- tampered "
+                f"contributor set"
             )
         object.__setattr__(self, "contributing_invocations_checksum", contributing_checksum)
 
@@ -715,10 +773,40 @@ class CalibrationTaskEvaluationRecord:  # pylint: disable=too-many-instance-attr
             raise InvalidCalibrationRecordError(
                 "contributing_invocation_ids contains duplicate invocation ids"
             )
+        if not isinstance(self.contributing_invocation_content_checksums, tuple):
+            raise InvalidCalibrationRecordError(
+                f"contributing_invocation_content_checksums must be a tuple, got "
+                f"{type(self.contributing_invocation_content_checksums).__name__}"
+            )
+        if len(self.contributing_invocation_content_checksums) != len(
+            self.contributing_invocation_ids
+        ):
+            raise InvalidCalibrationRecordError(
+                f"contributing_invocation_content_checksums must have exactly one entry per "
+                f"contributing_invocation_ids entry (got "
+                f"{len(self.contributing_invocation_content_checksums)} checksums for "
+                f"{len(self.contributing_invocation_ids)} ids)"
+            )
+        for content_checksum in self.contributing_invocation_content_checksums:
+            if not isinstance(content_checksum, str) or not _SHA256_HEX_PATTERN.match(
+                content_checksum
+            ):
+                raise InvalidCalibrationRecordError(
+                    f"contributing_invocation_content_checksums entries must each be a "
+                    f"64-character lowercase hex sha256 digest, got {content_checksum!r}"
+                )
 
 
-def _contributing_invocations_checksum(invocation_ids: Sequence[str]) -> str:
-    return _sha256_of({"contributing_invocation_ids": sorted(invocation_ids)})
+def _contributing_invocations_checksum(
+    invocation_ids: Sequence[str], content_checksums: Sequence[str]
+) -> str:
+    """Hash the *content-bound* contributor set: sorted ``(id,
+    content_checksum)`` pairs, so reordering is normalized but changing any
+    contributor's own content (which changes its ``record_checksum``)
+    changes this checksum too -- see the schema-provenance-audit
+    correction in :class:`CalibrationTaskEvaluationRecord`'s docstring."""
+    pairs = sorted(zip(invocation_ids, content_checksums))
+    return _sha256_of({"contributing_invocation_pairs": [list(pair) for pair in pairs]})
 
 
 def _calibration_task_evaluation_record_payload(
@@ -729,6 +817,7 @@ def _calibration_task_evaluation_record_payload(
         "context": calibration_run_context_to_dict(record.context),
         "task_id": record.task_id,
         "candidate_sha256": record.candidate_sha256,
+        "reference_case_checksum": record.reference_case_checksum,
         "task_evaluation_replicate_id": record.task_evaluation_replicate_id,
         "measurement_status": record.measurement_status.value,
         "q_ref_task": record.q_ref_task,
@@ -737,6 +826,9 @@ def _calibration_task_evaluation_record_payload(
         "reference_case_pass_count": record.reference_case_pass_count,
         "work_item_disposition": record.work_item_disposition.value,
         "contributing_invocation_ids": list(record.contributing_invocation_ids),
+        "contributing_invocation_content_checksums": list(
+            record.contributing_invocation_content_checksums
+        ),
         "contributing_invocations_checksum": record.contributing_invocations_checksum,
         "evaluated_at": record.evaluated_at,
         "superseded": record.superseded,
@@ -763,6 +855,7 @@ def calibration_task_evaluation_record_from_dict(
             context=calibration_run_context_from_dict(data["context"]),
             task_id=data["task_id"],
             candidate_sha256=data["candidate_sha256"],
+            reference_case_checksum=data["reference_case_checksum"],
             task_evaluation_replicate_id=data["task_evaluation_replicate_id"],
             measurement_status=MeasurementStatus(data["measurement_status"]),
             q_ref_task=data["q_ref_task"],
@@ -771,6 +864,9 @@ def calibration_task_evaluation_record_from_dict(
             reference_case_pass_count=data["reference_case_pass_count"],
             work_item_disposition=WorkItemDisposition(data["work_item_disposition"]),
             contributing_invocation_ids=tuple(data["contributing_invocation_ids"]),
+            contributing_invocation_content_checksums=tuple(
+                data["contributing_invocation_content_checksums"]
+            ),
             evaluated_at=data["evaluated_at"],
             superseded=data["superseded"],
             contributing_invocations_checksum=data["contributing_invocations_checksum"],
@@ -789,15 +885,35 @@ def calibration_task_evaluation_record_from_dict(
 # ---------------------------------------------------------------------------
 
 
+def require_consistent_case_scope(invocations: Sequence[CalibrationInvocationRecord]) -> None:
+    """Raise :class:`CalibrationReconciliationError` unless every invocation
+    shares the same ``(task_id, reference_case_checksum)`` pair --
+    ``case_ordinal`` is only ever meaningful relative to that identical
+    pair (schema-provenance-audit correction), never in isolation."""
+    scopes = {
+        (invocation.task_id, invocation.reference_case_checksum) for invocation in invocations
+    }
+    if len(scopes) > 1:
+        raise CalibrationReconciliationError(
+            f"invocations do not share a single (task_id, reference_case_checksum) scope -- "
+            f"case_ordinal is meaningless without an identical pair; found scopes: "
+            f"{sorted(scopes)!r}"
+        )
+
+
 def reconcile_task_evaluation(
     task_evaluation: CalibrationTaskEvaluationRecord,
     invocations_by_id: Mapping[str, CalibrationInvocationRecord],
 ) -> None:
     """Raise :class:`CalibrationReconciliationError` unless every one of
     ``task_evaluation``'s ``contributing_invocation_ids`` is present in
-    ``invocations_by_id`` and shares its exact context/task/candidate/
-    replicate identity -- and unless ``contributing_invocations_checksum``
-    still matches a fresh recomputation. Never mutates either input."""
+    ``invocations_by_id``, shares its exact context/task/candidate/
+    reference-case/replicate identity with ``task_evaluation`` and with
+    each other, and its *current* ``record_checksum`` still matches the
+    content checksum ``task_evaluation`` bound it under -- and unless
+    ``contributing_invocations_checksum`` still matches a fresh
+    recomputation over those bound (id, content-checksum) pairs. Never
+    mutates either input."""
     missing = [
         invocation_id
         for invocation_id in task_evaluation.contributing_invocation_ids
@@ -808,12 +924,17 @@ def reconcile_task_evaluation(
             f"task-evaluation record for {task_evaluation.task_id!r} references contributing "
             f"invocation id(s) not present in the supplied set: {missing!r}"
         )
-    for invocation_id in task_evaluation.contributing_invocation_ids:
-        invocation = invocations_by_id[invocation_id]
+    contributors = [
+        invocations_by_id[invocation_id]
+        for invocation_id in task_evaluation.contributing_invocation_ids
+    ]
+    for invocation_id, invocation in zip(task_evaluation.contributing_invocation_ids, contributors):
         if invocation.context.context_checksum != task_evaluation.context.context_checksum:
             raise CalibrationReconciliationError(
                 f"invocation {invocation_id!r} was recorded under a different calibration "
-                f"context than task-evaluation record for {task_evaluation.task_id!r}"
+                f"context than task-evaluation record for {task_evaluation.task_id!r} "
+                f"(this also catches identical labels bound to a different "
+                f"task_manifest_checksum, since that checksum is part of the context)"
             )
         if invocation.task_id != task_evaluation.task_id:
             raise CalibrationReconciliationError(
@@ -825,18 +946,41 @@ def reconcile_task_evaluation(
                 f"invocation {invocation_id!r} has candidate_sha256 "
                 f"{invocation.candidate_sha256!r}, expected {task_evaluation.candidate_sha256!r}"
             )
+        if invocation.reference_case_checksum != task_evaluation.reference_case_checksum:
+            raise CalibrationReconciliationError(
+                f"invocation {invocation_id!r} has reference_case_checksum "
+                f"{invocation.reference_case_checksum!r}, expected "
+                f"{task_evaluation.reference_case_checksum!r} -- mixed evidence sets cannot "
+                f"contribute to the same task evaluation"
+            )
         if invocation.task_evaluation_replicate_id != task_evaluation.task_evaluation_replicate_id:
             raise CalibrationReconciliationError(
                 f"invocation {invocation_id!r} has task_evaluation_replicate_id "
                 f"{invocation.task_evaluation_replicate_id!r}, expected "
                 f"{task_evaluation.task_evaluation_replicate_id!r}"
             )
-    recomputed = _contributing_invocations_checksum(task_evaluation.contributing_invocation_ids)
+    require_consistent_case_scope(contributors)
+    for invocation_id, invocation, bound_content_checksum in zip(
+        task_evaluation.contributing_invocation_ids,
+        contributors,
+        task_evaluation.contributing_invocation_content_checksums,
+    ):
+        if invocation.record_checksum != bound_content_checksum:
+            raise CalibrationReconciliationError(
+                f"invocation {invocation_id!r} has current record_checksum "
+                f"{invocation.record_checksum!r}, but task-evaluation record for "
+                f"{task_evaluation.task_id!r} bound it under {bound_content_checksum!r} -- "
+                f"contributor content changed after binding"
+            )
+    recomputed = _contributing_invocations_checksum(
+        task_evaluation.contributing_invocation_ids,
+        task_evaluation.contributing_invocation_content_checksums,
+    )
     if recomputed != task_evaluation.contributing_invocations_checksum:
         raise CalibrationReconciliationError(
             f"task-evaluation record for {task_evaluation.task_id!r} has a "
-            f"contributing_invocations_checksum inconsistent with its own contributing_"
-            f"invocation_ids -- tampered contributor set"
+            f"contributing_invocations_checksum inconsistent with its own contributing "
+            f"(id, content-checksum) pairs -- tampered contributor set"
         )
 
 

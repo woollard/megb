@@ -7,6 +7,8 @@ modules exercise the exact same baseline fixture rather than two copies
 drifting apart. No privileged content, no real task/candidate data.
 """
 
+from typing import Sequence
+
 from src.evaluators.schema import FailureCategory
 from src.execution.protocol import ExecutionStatus
 from src.reference.calibration_schema import (
@@ -24,6 +26,9 @@ from src.reference.result_schema import MeasurementStatus
 CANDIDATE_SHA256 = "b" * 64
 OTHER_CANDIDATE_SHA256 = "d" * 64
 DATASET_CHECKSUM = "a" * 64
+TASK_MANIFEST_CHECKSUM = "9" * 64
+REFERENCE_CASE_CHECKSUM = "e" * 64
+OTHER_REFERENCE_CASE_CHECKSUM = "f" * 64
 RUNNER_IMAGE_DIGEST = "sha256:" + "c" * 64
 
 
@@ -41,6 +46,7 @@ def make_context(**overrides: object) -> CalibrationRunContext:
         "partition_version": "partition-v1",
         "oracle_version": "oracle-v1",
         "comparison_profile_version": "comparison-v1",
+        "task_manifest_checksum": TASK_MANIFEST_CHECKSUM,
     }
     fields.update(overrides)
     return CalibrationRunContext(**fields)  # type: ignore[arg-type]
@@ -55,6 +61,7 @@ def make_invocation(
         "context": make_context(),
         "task_id": "HumanEval/41",
         "candidate_sha256": CANDIDATE_SHA256,
+        "reference_case_checksum": REFERENCE_CASE_CHECKSUM,
         "case_ordinal": 0,
         "task_evaluation_replicate_id": 0,
         "attempt_id": 1,
@@ -88,12 +95,21 @@ def make_invocation(
 
 
 def make_task_evaluation(**overrides: object) -> CalibrationTaskEvaluationRecord:
-    """Build a structurally valid CalibrationTaskEvaluationRecord, fields overridable."""
+    """Build a structurally valid CalibrationTaskEvaluationRecord, fields
+    overridable. The default single contributor ("inv-1") and its
+    contributing_invocation_content_checksums entry are kept consistent
+    with make_invocation()'s own default record_checksum -- callers that
+    override contributing_invocation_ids to a different arity must also
+    override contributing_invocation_content_checksums to match (see
+    make_task_evaluation_for for a helper that derives both from real
+    invocation records instead)."""
+    default_contributor_checksum = make_invocation().record_checksum
     fields: dict[str, object] = {
         "calibration_schema_version": CALIBRATION_SCHEMA_VERSION,
         "context": make_context(),
         "task_id": "HumanEval/41",
         "candidate_sha256": CANDIDATE_SHA256,
+        "reference_case_checksum": REFERENCE_CASE_CHECKSUM,
         "task_evaluation_replicate_id": 0,
         "measurement_status": MeasurementStatus.VALID,
         "q_ref_task": 1.0,
@@ -102,6 +118,39 @@ def make_task_evaluation(**overrides: object) -> CalibrationTaskEvaluationRecord
         "reference_case_pass_count": 1,
         "work_item_disposition": WorkItemDisposition.EXECUTED_VALID,
         "contributing_invocation_ids": ("inv-1",),
+        "contributing_invocation_content_checksums": (default_contributor_checksum,),
+        "evaluated_at": "2026-08-03T00:00:01Z",
+    }
+    fields.update(overrides)
+    return CalibrationTaskEvaluationRecord(**fields)  # type: ignore[arg-type]
+
+
+def make_task_evaluation_for(
+    invocations: Sequence[CalibrationInvocationRecord], **overrides: object
+) -> CalibrationTaskEvaluationRecord:
+    """Build a CalibrationTaskEvaluationRecord whose contributing_invocation_ids
+    and contributing_invocation_content_checksums are correctly derived
+    from the given (already-constructed) invocation records' own current
+    identity/content -- the realistic way to build a task-evaluation record
+    that will actually reconcile against those exact invocations."""
+    first = invocations[0]
+    fields: dict[str, object] = {
+        "calibration_schema_version": CALIBRATION_SCHEMA_VERSION,
+        "context": first.context,
+        "task_id": first.task_id,
+        "candidate_sha256": first.candidate_sha256,
+        "reference_case_checksum": first.reference_case_checksum,
+        "task_evaluation_replicate_id": first.task_evaluation_replicate_id,
+        "measurement_status": MeasurementStatus.VALID,
+        "q_ref_task": 1.0,
+        "first_failure_category": FailureCategory.NONE,
+        "reference_case_total": len(invocations),
+        "reference_case_pass_count": len(invocations),
+        "work_item_disposition": WorkItemDisposition.EXECUTED_VALID,
+        "contributing_invocation_ids": tuple(inv.invocation_id for inv in invocations),
+        "contributing_invocation_content_checksums": tuple(
+            inv.record_checksum for inv in invocations
+        ),
         "evaluated_at": "2026-08-03T00:00:01Z",
     }
     fields.update(overrides)

@@ -220,7 +220,10 @@ def test_contributing_invocations_checksum_tampering_detected() -> None:
 
 def test_reconcile_missing_contributor_raises() -> None:
     """Reconcile missing contributor raises."""
-    task_evaluation = make_task_evaluation(contributing_invocation_ids=("inv-1", "inv-missing"))
+    task_evaluation = make_task_evaluation(
+        contributing_invocation_ids=("inv-1", "inv-missing"),
+        contributing_invocation_content_checksums=("0" * 64, "1" * 64),
+    )
     invocation = make_invocation()
     with pytest.raises(CalibrationReconciliationError, match="inv-missing"):
         reconcile_task_evaluation(task_evaluation, {"inv-1": invocation})
@@ -274,7 +277,10 @@ def test_reconcile_all_succeeds_for_consistent_records() -> None:
 def test_duplicate_contributing_invocation_ids_rejected() -> None:
     """Duplicate contributing invocation ids rejected."""
     with pytest.raises(InvalidCalibrationRecordError, match="duplicate"):
-        make_task_evaluation(contributing_invocation_ids=("inv-1", "inv-1"))
+        make_task_evaluation(
+            contributing_invocation_ids=("inv-1", "inv-1"),
+            contributing_invocation_content_checksums=("0" * 64, "1" * 64),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -306,11 +312,13 @@ def test_incomplete_task_evaluations_detected_and_superseded_excluded() -> None:
         measurement_status=MeasurementStatus.INCOMPLETE,
         q_ref_task=None,
         contributing_invocation_ids=(),
+        contributing_invocation_content_checksums=(),
     )
     superseded_incomplete = make_task_evaluation(
         measurement_status=MeasurementStatus.INCOMPLETE,
         q_ref_task=None,
         contributing_invocation_ids=(),
+        contributing_invocation_content_checksums=(),
         superseded=True,
     )
     complete = make_task_evaluation()
