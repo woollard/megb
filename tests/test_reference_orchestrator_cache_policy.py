@@ -4,10 +4,11 @@ existing MEGB-03G.3 orchestrator.
 
 Synthetic evidence, temp cache/audit/trace directories, and controllable
 fake execution backends only -- no real privileged corpus access, no
-Docker. Builds its own local fixtures (evidence/context/work-item
-builders, a fake execution backend, a fake trace recorder), independent of
-test_reference_orchestrator.py's own copies, per this test suite's own
-established convention of keeping test modules self-contained.
+Docker. Shared fixtures (evidence/context/work-item builders, fake
+execution backends, a fake trace recorder) live in
+``tests/_reference_orchestrator_cache_policy_fixtures.py``, shared with
+``test_reference_orchestrator_trace_matrix.py`` (the post-acceptance-review
+correction's own outcome-path matrix), rather than duplicated between them.
 
 Required-tests coverage (per the H.2B.1 authorization):
 prepopulated-cache bypass under both fresh policies; N replicates -> N
@@ -20,19 +21,15 @@ never deduplicates distinct replicates; CACHE_FIRST is the default; fresh
 policies refuse to run without a trace_recorder.
 """
 
-# See test_reference_orchestrator.py's/test_reference_evaluator.py's own
-# note: this file intentionally builds its own local fixtures (evidence/
-# context/work-item/execution-result builders) independent of those other
-# modules' copies, rather than importing or subclassing them -- keeping
-# each test module's fixtures self-contained is preferred here over
-# coupling test files to each other's internals.
+# See _reference_orchestrator_cache_policy_fixtures.py's own note: these
+# fixtures intentionally mirror patterns already present in
+# test_reference_evaluator.py -- suppressing here rather than coupling this
+# module's fixtures to that other, unrelated test module's internals.
 # pylint: disable=duplicate-code
 
-import hashlib
 import threading
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from evalplus.data.humaneval import HUMANEVAL_PLUS_VERSION
 
@@ -40,7 +37,6 @@ from src.execution.backend import ExecutionBackend
 from src.execution.protocol import (
     CandidateExecutionRequest,
     CandidateExecutionResult,
-    ExecutionLimits,
     ExecutionStatus,
 )
 from src.reference.calibration_schema import (
@@ -55,7 +51,6 @@ from src.reference.oracle import (
     ORACLE_ALGORITHM_VERSION,
     POOL_REFERENCE_ONLY,
     comparison_profile_for_task,
-    generate_oracle_record,
 )
 from src.reference.orchestration_trace import (
     CachePolicy,
@@ -64,240 +59,36 @@ from src.reference.orchestration_trace import (
     ReplicateRequiresFreshPolicyError,
 )
 from src.reference.partition import PARTITION_ALGORITHM_VERSION
-from src.reference.reference_audit import ReferenceAuditLog
 from src.reference.reference_cache import ReferenceResultCache
 from src.reference.reference_evaluator import (
-    EVALUATOR_VERSION_FULL,
-    EXECUTION_PROFILE_ID_FULL,
     EXECUTION_PROTOCOL_VERSION,
-    FULL_EXECUTION_PROFILE,
     ReferenceCase,
     ReferenceTaskEvidence,
 )
 from src.reference.reference_orchestrator import (
-    MappingEvidenceResolver,
     OrchestrationConfig,
-    ReferenceOrchestrator,
-    RetryPolicy,
     WorkItem,
     WorkItemDisposition,
 )
-from src.reference.result_schema import ReferenceRunContext, ReferenceTaskResult
-
-_ENTRY_POINT = "double"
-_PROMPT = f"def {_ENTRY_POINT}(n):\n"
-_CANONICAL_SOLUTION = "    return n * 2\n"
-_TASK_ID = "Test/0"
-_CORRECT_CANDIDATE_CODE = "def double(n):\n    return n * 2\n"
-
-_DATASET_CHECKSUM = "fe585eb4df8c88d844eeb463ea4d0302"
-_TASK_MANIFEST_CHECKSUM = "d" * 64
-
-
-def _sha256(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _oracle_record(task_id: str, case_id: str, n: int) -> Any:
-    profile = comparison_profile_for_task(_ENTRY_POINT, atol=0.0)
-    namespace: dict[str, Any] = {}
-    exec(_PROMPT + _CANONICAL_SOLUTION, namespace)  # pylint: disable=exec-used
-    canonical_fn = namespace[_ENTRY_POINT]
-    return generate_oracle_record(
-        task_id=task_id,
-        case_id=case_id,
-        args=(n,),
-        provenance="original",
-        pool=POOL_REFERENCE_ONLY,
-        canonical_fn=canonical_fn,
-        profile=profile,
-    )
-
-
-def _evidence(task_id: str = _TASK_ID, num_cases: int = 1) -> ReferenceTaskEvidence:
-    cases = tuple(
-        ReferenceCase(
-            case_id=f"c{i}", args=(i + 1,), oracle_record=_oracle_record(task_id, f"c{i}", i + 1)
-        )
-        for i in range(num_cases)
-    )
-    return ReferenceTaskEvidence(
-        task_id=task_id,
-        entry_point=_ENTRY_POINT,
-        comparison_profile=comparison_profile_for_task(_ENTRY_POINT, atol=0.0),
-        cases=cases,
-        oracle_version=ORACLE_ALGORITHM_VERSION,
-        partition_version=PARTITION_ALGORITHM_VERSION,
-        dataset_version=HUMANEVAL_PLUS_VERSION,
-        protocol_version=EXECUTION_PROTOCOL_VERSION,
-        dataset_checksum=_DATASET_CHECKSUM,
-        task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
-    )
-
-
-def _run_context(**overrides: object) -> ReferenceRunContext:
-    fields: dict[str, object] = {
-        "experiment_run_id": "exp-1",
-        "optimization_run_id": "opt-1",
-        "optimization_config_sha256": "b" * 64,
-        "portfolio_frozen_at": "2026-08-01T00:00:00Z",
-        "portfolio_selection_rule": "best_of_run",
-        "evaluator_version": EVALUATOR_VERSION_FULL,
-        "dataset_version": HUMANEVAL_PLUS_VERSION,
-        "partition_version": PARTITION_ALGORITHM_VERSION,
-        "execution_profile_id": EXECUTION_PROFILE_ID_FULL,
-        "comparison_profile_version": COMPARISON_PROFILE_VERSION,
-        "execution_protocol_version": EXECUTION_PROTOCOL_VERSION,
-        "dataset_checksum": _DATASET_CHECKSUM,
-        "task_manifest_checksum": _TASK_MANIFEST_CHECKSUM,
-    }
-    fields.update(overrides)
-    return ReferenceRunContext(**fields)  # type: ignore[arg-type]
-
-
-def _work_item(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    work_item_id: str,
-    input_ordinal: int,
-    *,
-    task_id: str = _TASK_ID,
-    candidate_code: str = _CORRECT_CANDIDATE_CODE,
-    task_evaluation_replicate_id: int = 0,
-) -> WorkItem:
-    return WorkItem(
-        work_item_id=work_item_id,
-        input_ordinal=input_ordinal,
-        task_id=task_id,
-        candidate_id=f"cand-{work_item_id}",
-        candidate_sha256=_sha256(candidate_code),
-        candidate_code=candidate_code,
-        run_context=_run_context(),
-        task_evaluation_replicate_id=task_evaluation_replicate_id,
-    )
-
-
-def _execution_result(
-    status: ExecutionStatus, return_value: object, invocation_id: str
-) -> CandidateExecutionResult:
-    return CandidateExecutionResult(
-        invocation_id=invocation_id,
-        status=status,
-        return_value=return_value,
-        exception_type=None,
-        exception_message=None,
-        wall_time_sec=0.001,
-        candidate_wall_time_sec=0.0005 if status == ExecutionStatus.COMPLETED else None,
-        exit_code=0,
-        terminating_signal=None,
-        stdout="",
-        stderr="",
-        stdout_truncated=False,
-        stderr_truncated=False,
-        backend_id="fake",
-        backend_version="1",
-        runner_image_digest="sha256:fake",
-        protocol_version=EXECUTION_PROTOCOL_VERSION,
-        limits=ExecutionLimits(),
-        started_at="2026-08-01T00:00:00Z",
-    )
-
-
-class RecordingBackend(ExecutionBackend):
-    """Always returns the correct doubled value for COMPLETED calls."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.call_count = 0
-
-    def execute(self, request: CandidateExecutionRequest) -> CandidateExecutionResult:
-        with self._lock:
-            invocation_id = f"inv-{self.call_count}"
-            self.call_count += 1
-        n = request.args[0]
-        return _execution_result(ExecutionStatus.COMPLETED, n * 2, invocation_id)
-
-
-class WrongAnswerBackend(ExecutionBackend):
-    """Always returns a wrong value -- a VALID but q_ref_task=0.0 measurement."""
-
-    def execute(self, request: CandidateExecutionRequest) -> CandidateExecutionResult:
-        n = request.args[0]
-        return _execution_result(ExecutionStatus.COMPLETED, n * 2 + 1, "inv-wrong")
-
-
-@dataclass
-class RecordedTraceCall:
-    """One captured call to a FakeTraceRecorder."""
-
-    work_item_id: str
-    task_evaluation_replicate_id: int
-    attempts: int
-    disposition: WorkItemDisposition
-    has_result: bool
-
-
-@dataclass
-class FakeTraceRecorder:
-    """In-memory TraceRecorder: records every call, optionally raising to
-    simulate a durable-write failure."""
-
-    fail: bool = False
-    calls: list[RecordedTraceCall] = field(default_factory=list)
-
-    def record_fresh_attempt(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self,
-        *,
-        work_item: WorkItem,
-        evidence: ReferenceTaskEvidence,
-        task_evaluation_replicate_id: int,
-        attempts: int,
-        disposition: WorkItemDisposition,
-        task_result: ReferenceTaskResult | None,
-    ) -> None:
-        """Record the call, or raise if configured to simulate failure."""
-        del evidence
-        if self.fail:
-            raise RuntimeError("simulated trace-write failure")
-        self.calls.append(
-            RecordedTraceCall(
-                work_item.work_item_id,
-                task_evaluation_replicate_id,
-                attempts,
-                disposition,
-                task_result is not None,
-            )
-        )
-
-
-def _orchestrator(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    tmp_path: Path,
-    *,
-    cache_policy: CachePolicy = CachePolicy.CACHE_FIRST,
-    trace_recorder: Any = None,
-    backend_factory: Callable[[], ExecutionBackend] | None = None,
-    evidence_by_task: dict[str, ReferenceTaskEvidence] | None = None,
-    max_workers: int = 2,
-    max_in_flight: int = 2,
-    cache: ReferenceResultCache | None = None,
-) -> tuple[ReferenceOrchestrator, ReferenceResultCache, ReferenceAuditLog]:
-    resolved_cache = cache if cache is not None else ReferenceResultCache(tmp_path / "cache")
-    audit_log = ReferenceAuditLog(tmp_path / "audit.jsonl")
-    evidence_map = evidence_by_task if evidence_by_task is not None else {_TASK_ID: _evidence()}
-    orchestrator = ReferenceOrchestrator(
-        cache=resolved_cache,
-        audit_log=audit_log,
-        evidence_resolver=MappingEvidenceResolver(evidence_map),
-        backend_factory=backend_factory if backend_factory is not None else RecordingBackend,
-        config=OrchestrationConfig(
-            max_workers=max_workers,
-            max_in_flight=max_in_flight,
-            retry_policy=RetryPolicy(max_attempts=3),
-            profile=FULL_EXECUTION_PROFILE,
-            cache_policy=cache_policy,
-            trace_recorder=trace_recorder,
-        ),
-    )
-    return orchestrator, resolved_cache, audit_log
-
+from src.reference.result_schema import ReferenceTaskResult
+from tests._reference_orchestrator_cache_policy_fixtures import (
+    FakeTraceRecorder,
+    RecordingBackend,
+    WrongAnswerBackend,
+)
+from tests._reference_orchestrator_cache_policy_fixtures import (
+    DATASET_CHECKSUM as _DATASET_CHECKSUM,
+)
+from tests._reference_orchestrator_cache_policy_fixtures import ENTRY_POINT as _ENTRY_POINT
+from tests._reference_orchestrator_cache_policy_fixtures import TASK_ID as _TASK_ID
+from tests._reference_orchestrator_cache_policy_fixtures import (
+    TASK_MANIFEST_CHECKSUM as _TASK_MANIFEST_CHECKSUM,
+)
+from tests._reference_orchestrator_cache_policy_fixtures import (
+    execution_result as _execution_result,
+)
+from tests._reference_orchestrator_cache_policy_fixtures import orchestrator as _orchestrator
+from tests._reference_orchestrator_cache_policy_fixtures import work_item as _work_item
 
 # ---------------------------------------------------------------------------
 # CachePolicy defaults and configuration validation
@@ -720,6 +511,10 @@ def test_non_cacheable_invalid_result_never_touches_cache_under_fresh_policy(
 
     assert summary.outcomes[0].disposition == WorkItemDisposition.EXECUTED_INVALID
     assert not list(cache.cache_dir.glob("*.json"))
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0].disposition == WorkItemDisposition.EXECUTED_INVALID
+    assert recorder.calls[0].attempts == 1
+    assert recorder.calls[0].has_result is True
 
 
 def test_conflicting_write_classification_preserved_under_fresh_policy(tmp_path: Path) -> None:

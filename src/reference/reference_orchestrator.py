@@ -490,8 +490,8 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                 valid_items.append(item)
         return valid_items
 
-    @staticmethod
     def _fill_outcomes_from_keys(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self,
         key_groups: dict[str, KeyGroup],
         ordered_admission_keys: list[str],
         key_results: dict[str, KeyExecutionResult],
@@ -504,6 +504,7 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
             # also folds in the replicate id for bookkeeping only).
             cache_key_digest = group.key.key_digest
             if admission_key in unstarted_admission_keys:
+                self._trace_not_started(group)
                 for item in group.members:
                     outcomes_by_id[item.work_item_id] = WorkItemOutcome(
                         work_item_id=item.work_item_id,
@@ -528,6 +529,25 @@ class ReferenceOrchestrator:  # pylint: disable=too-few-public-methods
                     attempts=exec_result.attempts,
                     detail=exec_result.detail,
                 )
+
+    def _trace_not_started(self, group: KeyGroup) -> None:
+        """Represent a cancelled/never-admitted calibration coordinate in
+        the durable calibration trace under a fresh :class:`CachePolicy` --
+        cancellation/not-started coordinates must be represented at
+        task-evaluation level even when no invocation record exists.
+        ``CACHE_FIRST`` never touches ``trace_recorder``, unchanged
+        (requirement 8)."""
+        if self._config.cache_policy == CachePolicy.CACHE_FIRST:
+            return
+        assert (trace_recorder := self._config.trace_recorder) is not None
+        trace_recorder.record_fresh_attempt(
+            work_item=group.representative,
+            evidence=group.evidence,
+            task_evaluation_replicate_id=group.task_evaluation_replicate_id,
+            attempts=0,
+            disposition=WorkItemDisposition.NOT_STARTED,
+            task_result=None,
+        )
 
     def _group_by_cache_key(
         self, valid_items: list[WorkItem]
