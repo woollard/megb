@@ -260,3 +260,34 @@ def test_on_cleanup_failure_is_not_called_when_cleanup_succeeds() -> None:
     collector = FakeTelemetryCollector(observation=_exact(1))
     run_collector(collector, on_cleanup_failure=lambda: calls.append(None))
     assert not calls
+
+
+def _raising_callback() -> None:
+    raise RuntimeError("simulated on_cleanup_failure failure")
+
+
+def test_a_raising_on_cleanup_failure_callback_does_not_replace_a_propagating_cancellation() -> (
+    None
+):
+    """MEGB-03H.2C.1 correction, round 2: on_cleanup_failure is invoked
+    from inside a `finally` block, where any exception it raises would
+    otherwise (per Python's own finally semantics) replace whatever was
+    already propagating -- here, a genuine KeyboardInterrupt from
+    finalize(). The callback's own exception must never win that race;
+    the original KeyboardInterrupt must still be what actually
+    propagates out of run_collector."""
+    collector = _RaisingAt(stage="finalize", cleanup_raises=True)
+    with pytest.raises(KeyboardInterrupt):
+        run_collector(collector, on_cleanup_failure=_raising_callback)
+    assert collector.cleanup_call_count == 1
+
+
+def test_a_raising_on_cleanup_failure_callback_does_not_block_the_return() -> None:
+    """On the normal-return path (no BaseException in flight), a broken
+    callback must not turn into a new exception out of run_collector
+    either -- the already-determined observation, with cleanup_failed
+    added, must still be returned."""
+    collector = FakeTelemetryCollector(observation=_exact(4096), cleanup_raises=True)
+    result = run_collector(collector, on_cleanup_failure=_raising_callback)
+    assert result.value == 4096
+    assert result.cleanup_failed is True

@@ -97,9 +97,19 @@ def run_collector(
       observable, and the original exception continues propagating
       completely unchanged (never replaced by the cleanup failure).
 
+    ``on_cleanup_failure`` itself is called from inside a ``finally``
+    block, where *any* exception it raises would otherwise replace
+    whatever was already propagating (per Python's own ``finally``
+    semantics) -- including a genuine ``KeyboardInterrupt``/cancellation
+    from ``start``/``sample``/``finalize``. To prevent a broken callback
+    from masking real cancellation, its call is itself guarded and any
+    exception it raises is discarded unconditionally (MEGB-03H.2C.1
+    cleanup-failure-observability correction, round 2).
+
     ``cleanup_failed`` is a plain, typed boolean, never a raw exception
     message -- this function never inspects, stores, or forwards the
-    cleanup exception's own text or type.
+    cleanup exception's own text or type (nor the callback's, if it
+    raises).
     """
     observation: TelemetryObservation
     cleanup_failed = False
@@ -125,7 +135,10 @@ def run_collector(
         except Exception:  # pylint: disable=broad-exception-caught
             cleanup_failed = True
             if on_cleanup_failure is not None:
-                on_cleanup_failure()
+                try:
+                    on_cleanup_failure()
+                except BaseException:  # pylint: disable=broad-exception-caught
+                    pass
 
     if cleanup_failed:
         return dataclasses.replace(observation, cleanup_failed=True)
