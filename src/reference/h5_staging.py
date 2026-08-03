@@ -37,6 +37,9 @@ authorizing scope.
 # documented precedent for the same situation).
 # pylint: disable=duplicate-code
 
+import dataclasses
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -143,16 +146,38 @@ class H5StagingIdentity:
                 f"(never a silently different denominator), got {self.expected_task_count}"
             )
 
+    def identity_checksum(self) -> str:
+        """A content-addressed sha256-hex digest over every field of this
+        identity -- the sole component ever used to name this identity's
+        staging directory (see :meth:`staging_dir`'s own path-safety note).
+        Two identities differing in *any* field (even if they share the
+        same human-readable ``calibration_run_id``) never collide."""
+        canonical = json.dumps(dataclasses.asdict(self), sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
     def staging_dir(self, root: Path | None = None) -> Path:
         """The privileged directory this identity's staging area is rooted
-        at: ``<root>/<calibration_run_id>/`` -- a sibling directory per
-        ``calibration_run_id``, per the accepted design. Manifest-level
-        identity comparison (not directory naming alone) is what actually
-        prevents one identity's staging area from satisfying another's
-        gate/promotion -- see :func:`~src.reference.h5_promotion_manifest.load_promotion_manifest`.
+        at: ``<root>/<identity_checksum>/``.
+
+        Deliberately named from :meth:`identity_checksum` rather than the
+        raw, operator-supplied ``calibration_run_id`` -- a free-form string
+        that may contain path separators, ``..`` traversal components, an
+        absolute-path prefix, control characters, or other platform-
+        specific path escapes. A 64-character lowercase hex digest can
+        never contain any of those, so this directory (and everything
+        derived from it: the staging cache, the promotion manifest) is
+        always a direct child of ``root`` for *every* identity, regardless
+        of what ``calibration_run_id`` happens to contain. The
+        human-readable ``calibration_run_id`` remains available -- inside
+        the promotion manifest's own ``identity`` field -- for operators;
+        it is simply never interpolated into a filesystem path. Manifest-
+        level identity comparison (not directory naming alone) is what
+        actually prevents one identity's staging area from satisfying
+        another's gate/promotion -- see
+        :func:`~src.reference.h5_promotion_manifest.load_promotion_manifest`.
         """
         base = root if root is not None else DEFAULT_H5_STAGING_ROOT
-        return base / self.calibration_run_id
+        return base / self.identity_checksum()
 
 
 def build_staging_cache(
@@ -164,6 +189,15 @@ def build_staging_cache(
     code: staging execution reuses H.2B.1's orchestrator against this
     instance."""
     return ReferenceResultCache(identity.staging_dir(root) / "cache")
+
+
+def manifest_path_for(identity: H5StagingIdentity, root: Path | None = None) -> Path:
+    """The canonical promotion-manifest path for ``identity``: a sibling of
+    the staging cache under :meth:`H5StagingIdentity.staging_dir`. Deriving
+    both from the same checksum-named directory is what makes it provable
+    that every staging/cache/manifest write for a given identity is a
+    descendant of ``root`` -- see :meth:`H5StagingIdentity.staging_dir`."""
+    return identity.staging_dir(root) / "promotion_manifest.json"
 
 
 @dataclass(frozen=True)

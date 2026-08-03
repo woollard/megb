@@ -187,7 +187,7 @@ def test_full_164_run_stages_gates_preflights_and_promotes(tmp_path: Path) -> No
     reloaded = load_promotion_manifest(manifest_path)
     assert reloaded == manifest
 
-    summary = build_promotion_summary(manifest)
+    summary = build_promotion_summary(manifest, generated_at="2026-08-03T00:00:00Z")
     assert summary.state == "COMPLETED"
     assert summary.expected_task_count == REQUIRED_TASK_COUNT
     assert summary.entry_state_counts == {"PROMOTED": REQUIRED_TASK_COUNT}
@@ -460,7 +460,7 @@ def test_safe_summary_never_leaks_free_text_or_privileged_paths(tmp_path: Path) 
     manifest = run_preflight(manifest, production_cache, results_by_task_id, manifest_path)
     assert manifest.state == PromotionState.BLOCKED
 
-    summary = build_promotion_summary(manifest)
+    summary = build_promotion_summary(manifest, generated_at="2026-08-03T00:00:00Z")
     field_names = {f.name for f in dataclasses.fields(PromotionSummary)}
     assert "reason" not in field_names
     assert "detail" not in field_names

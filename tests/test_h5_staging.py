@@ -78,12 +78,14 @@ def test_staging_identity_requires_sha256_checksums() -> None:
         fx.staging_identity(manifest, task_manifest_checksum="not-a-checksum")
 
 
-def test_build_staging_cache_is_rooted_under_calibration_run_id(tmp_path: Path) -> None:
-    """The staging cache directory is rooted under the identity's calibration_run_id."""
+def test_build_staging_cache_is_rooted_under_the_identity_checksum(tmp_path: Path) -> None:
+    """The staging cache directory is rooted under the identity's own
+    checksum -- never the raw, operator-supplied calibration_run_id."""
     manifest = fx.candidate_set_manifest()
     identity = fx.staging_identity(manifest)
     cache = build_staging_cache(identity, root=tmp_path)
-    assert identity.calibration_run_id in str(cache.cache_dir)
+    assert identity.identity_checksum() in str(cache.cache_dir)
+    assert Path(cache.cache_dir).is_relative_to(tmp_path)
 
 
 # ---------------------------------------------------------------------------
