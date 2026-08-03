@@ -127,30 +127,97 @@ def test_finalize_failure_is_reported_as_sampler_failure_and_still_cleans_up() -
 
 
 def test_cleanup_runs_exactly_once_regardless_of_which_stage_failed() -> None:
-    """cleanup() always runs, no matter which lifecycle stage failed."""
+    """cleanup() runs EXACTLY once (not merely at least once), no matter
+    which lifecycle stage failed."""
     for collector in (
         FakeTelemetryCollector(start_raises=True),
         FakeTelemetryCollector(sample_raises=True),
         FakeTelemetryCollector(finalize_raises=True),
     ):
         run_collector(collector, sample_count=1)
-        assert collector.cleanup_called
+        assert collector.cleanup_call_count == 1
 
 
-class _CancelledDuringFinalizeCollector(FakeTelemetryCollector):
-    """Simulates cooperative cancellation (KeyboardInterrupt) during
-    finalize() -- a BaseException, not caught by run_collector's own
+def test_cleanup_runs_exactly_once_on_success_too() -> None:
+    """Same guarantee on the happy path, not just failure paths."""
+    collector = FakeTelemetryCollector(observation=_exact(1))
+    run_collector(collector)
+    assert collector.cleanup_call_count == 1
+
+
+class _RaisingAt(FakeTelemetryCollector):
+    """Simulates cooperative cancellation (KeyboardInterrupt) at a chosen
+    lifecycle stage -- a BaseException, not caught by run_collector's own
     `except Exception` blocks, but cleanup must still run via `finally`."""
+
+    def __init__(self, *, stage: str, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._stage = stage
+
+    def start(self) -> None:
+        self.start_called = True
+        if self._stage == "start":
+            raise KeyboardInterrupt("simulated cancellation")
+
+    def sample(self) -> None:
+        self.sample_call_count += 1
+        if self._stage == "sample":
+            raise KeyboardInterrupt("simulated cancellation")
 
     def finalize(self) -> TelemetryObservation:
         self.finalize_called = True
-        raise KeyboardInterrupt("simulated cancellation")
+        if self._stage == "finalize":
+            raise KeyboardInterrupt("simulated cancellation")
+        return _exact(1)
 
 
-def test_cancellation_during_finalize_still_cleans_up_and_propagates() -> None:
-    """A KeyboardInterrupt is not swallowed (cancellation must actually
-    cancel) but cleanup() still runs before it propagates."""
-    collector = _CancelledDuringFinalizeCollector()
+@pytest.mark.parametrize("stage", ["start", "sample", "finalize"])
+def test_cancellation_at_any_stage_still_cleans_up_and_propagates(stage: str) -> None:
+    """A KeyboardInterrupt at ANY lifecycle stage (not just finalize) is
+    never swallowed -- cancellation must actually cancel -- but cleanup()
+    still runs before it propagates."""
+    collector = _RaisingAt(stage=stage)
+    with pytest.raises(KeyboardInterrupt):
+        run_collector(collector, sample_count=1)
+    assert collector.cleanup_call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# cleanup() failure behavior: must never mask a result or cancellation
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_failure_after_successful_finalize_does_not_lose_the_observation() -> None:
+    """A cleanup() that raises after a successful finalize() must not
+    discard or replace the already-computed observation."""
+    collector = FakeTelemetryCollector(observation=_exact(4096), cleanup_raises=True)
+    result = run_collector(collector)
+    assert result.value == 4096
+    assert result.quality == TelemetryQuality.EXACT
+    assert collector.cleanup_call_count == 1
+
+
+def test_cleanup_failure_after_a_lifecycle_failure_does_not_override_the_classification() -> None:
+    """A cleanup() that also raises, on top of a start/sample/finalize
+    failure, must not override or replace the original SAMPLER_FAILURE
+    classification with an unrelated cleanup error."""
+    for collector in (
+        FakeTelemetryCollector(start_raises=True, cleanup_raises=True),
+        FakeTelemetryCollector(sample_raises=True, cleanup_raises=True),
+        FakeTelemetryCollector(finalize_raises=True, cleanup_raises=True),
+    ):
+        result = run_collector(collector, sample_count=1)
+        assert result.value is None
+        assert result.unavailable_reason == TelemetryUnavailableReason.SAMPLER_FAILURE
+        assert collector.cleanup_call_count == 1
+
+
+def test_cleanup_failure_never_replaces_an_in_flight_cancellation() -> None:
+    """cleanup() raising a DIFFERENT exception while a KeyboardInterrupt
+    is actively propagating must never mask or replace that
+    KeyboardInterrupt -- the real cancellation must still be what
+    ultimately propagates, not a misleading cleanup-generated error."""
+    collector = _RaisingAt(stage="finalize", cleanup_raises=True)
     with pytest.raises(KeyboardInterrupt):
         run_collector(collector)
-    assert collector.cleanup_called
+    assert collector.cleanup_call_count == 1

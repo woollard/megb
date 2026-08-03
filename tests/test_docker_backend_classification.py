@@ -110,7 +110,8 @@ def test_valid_runner_response_is_passed_through_with_candidate_wall_time() -> N
     assert outcome.return_value == 7
     assert outcome.candidate_wall_time_sec == 0.0123
     assert outcome.infrastructure_error_detail is None
-    assert outcome.observed_response_bytes == len(payload)
+    # Raw, untrimmed byte count -- includes the framing newline main() appends.
+    assert outcome.observed_response_bytes == len(payload) + 1
 
 
 def test_unparseable_stdout_is_infrastructure_error() -> None:
@@ -144,10 +145,10 @@ def test_observed_response_byte_count_is_none_for_timeout_oom_and_infrastructure
 
 
 def test_observed_response_byte_count_is_exact_for_every_completed_response_status() -> None:
-    """A real, parseable response yields an exact byte count for every
-    status the runner can terminally report on its own -- syntax error,
-    candidate exception, output/process limit, protocol error, and
-    ordinary completion."""
+    """A real, parseable response yields an exact, RAW (untrimmed) byte
+    count for every status the runner can terminally report on its own --
+    syntax error, candidate exception, output/process limit, protocol
+    error, and ordinary completion."""
     for status in (
         ExecutionStatus.COMPLETED,
         ExecutionStatus.SYNTAX_ERROR,
@@ -157,19 +158,27 @@ def test_observed_response_byte_count_is_exact_for_every_completed_response_stat
         ExecutionStatus.PROTOCOL_ERROR,
     ):
         stdout_bytes = f"some {status.value} payload".encode() + b"\n"
-        assert observed_response_byte_count(
-            status=status, stdout_bytes=stdout_bytes
-        ) == len(stdout_bytes) - 1  # trailing newline trimmed, matching parse_response_message
+        assert observed_response_byte_count(status=status, stdout_bytes=stdout_bytes) == len(
+            stdout_bytes
+        )
 
 
-def test_observed_response_byte_count_trims_exactly_one_trailing_newline() -> None:
-    """Matches parse_response_message's own rstrip(b"\\n") exactly."""
+def test_observed_response_byte_count_never_strips_a_trailing_newline() -> None:
+    """Deliberately does NOT mirror parse_response_message's own
+    rstrip(b"\\n") -- that trim exists only to keep the parser's size
+    check consistent with the runner's own (newline-exclusive)
+    max_response_bytes check, and must never leak into this raw
+    byte-accounting count."""
     assert observed_response_byte_count(
         status=ExecutionStatus.COMPLETED, stdout_bytes=b"abc\n"
-    ) == 3
+    ) == 4
     assert observed_response_byte_count(
         status=ExecutionStatus.COMPLETED, stdout_bytes=b"abc"
     ) == 3
+    # Even multiple/unusual trailing bytes are counted raw, never trimmed.
+    assert observed_response_byte_count(
+        status=ExecutionStatus.COMPLETED, stdout_bytes=b"abc\n\n"
+    ) == 5
 
 
 def test_syntax_error_and_candidate_exception_report_exact_observed_response_bytes() -> None:
@@ -190,7 +199,7 @@ def test_syntax_error_and_candidate_exception_report_exact_observed_response_byt
             max_response_bytes=1_000_000,
         )
         assert outcome.status == status
-        assert outcome.observed_response_bytes == len(payload)
+        assert outcome.observed_response_bytes == len(payload) + 1
 
 
 def test_protocol_error_response_reports_exact_observed_response_bytes() -> None:
@@ -210,7 +219,7 @@ def test_protocol_error_response_reports_exact_observed_response_bytes() -> None
         max_response_bytes=1_000_000,
     )
     assert outcome.status == ExecutionStatus.PROTOCOL_ERROR
-    assert outcome.observed_response_bytes == len(payload)
+    assert outcome.observed_response_bytes == len(payload) + 1
 
 
 def test_derive_terminating_signal_from_exit_code() -> None:

@@ -90,11 +90,22 @@ class CandidateExecutionResult:
     content itself, and never a wire-protocol change (both are computed
     from data the controller already exclusively holds: the serialized
     request payload it built, and the raw bytes it read back from the
-    container). ``request_bytes`` is always populated once
-    ``wire.serialize_request`` has succeeded — which happens before any
-    container is even started, so it is set for every outcome. Both
-    default to ``None`` so every existing caller/test that constructs a
-    ``CandidateExecutionResult`` without them is unaffected.
+    container).
+
+    ``request_bytes`` is set on every ``CandidateExecutionResult`` a
+    backend actually returns — not because serialization is guaranteed to
+    succeed, but because a failed ``wire.serialize_request`` call
+    terminates ``execute()`` via an uncaught ``ProtocolError`` *before*
+    any container is created and *before* any ``CandidateExecutionResult``
+    is ever constructed (see
+    ``DockerPerInvocationBackend.execute()``, which calls
+    ``serialize_request`` first, with nothing between that call and
+    container creation). There is consequently no code path that reaches
+    this constructor with a request that was never transmitted — no
+    telemetry value is ever invented for bytes that were never sent. Both
+    fields default to ``None`` so every existing caller/test that
+    constructs a ``CandidateExecutionResult`` directly (bypassing a real
+    backend) is unaffected.
     """
 
     invocation_id: str

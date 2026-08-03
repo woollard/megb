@@ -3,11 +3,15 @@ classifier (src.execution.response_overflow). Synthetic
 CandidateExecutionResult construction only -- no real Docker.
 """
 
+import pytest
+
 from src.execution.protocol import ExecutionStatus
 from src.execution.response_overflow import (
     ResponseOverflowClassification,
     classify_response_overflow,
 )
+from src.execution.runner import _protocol_error_response
+from src.execution.wire import ProtocolError, RunnerResponse, serialize_response
 from tests._h2c1_telemetry_fixtures import make_candidate_execution_result as _result
 
 
@@ -90,6 +94,91 @@ def test_protocol_error_with_a_different_exception_type_is_not_misclassified() -
         status=ExecutionStatus.PROTOCOL_ERROR,
         exception_type="SomeOtherError",
         exception_message="serialized response (1 bytes) exceeds limit (1 bytes)",
+    )
+    assert classify_response_overflow(result) == ResponseOverflowClassification.NOT_OVERFLOWED
+
+
+# ---------------------------------------------------------------------------
+# Producer/consumer contract: the runner's REAL formatter, not a copied literal
+# ---------------------------------------------------------------------------
+
+
+def test_producer_consumer_contract_via_the_real_runner_fallback_path() -> None:
+    """Drives the runner's actual, unmodified oversized-response code path
+    end to end -- wire.serialize_response's real size check raising a
+    real ProtocolError, fed through runner._protocol_error_response's real
+    fallback construction -- and confirms classify_response_overflow()
+    recognizes the resulting real message. Unlike the tests above (which
+    assert against a message the audit specified literally), this test
+    derives the message from the runner's own current formatter, so it
+    fails immediately if that formatter's wording or field order ever
+    drifts without response_overflow.py's regex being updated to match --
+    exactly the "message drift cannot silently break it" guarantee this
+    contract exists to enforce.
+    """
+    oversized_response = RunnerResponse(
+        status=ExecutionStatus.COMPLETED,
+        return_value="x" * 10_000,
+        exception_type=None,
+        exception_message=None,
+        stdout="",
+        stderr="",
+        stdout_truncated=False,
+        stderr_truncated=False,
+        candidate_wall_time_sec=0.01,
+    )
+    tiny_max_response_bytes = 10  # deliberately far smaller than the real payload
+
+    with pytest.raises(ProtocolError) as exc_info:
+        serialize_response(oversized_response, tiny_max_response_bytes)
+
+    # Exactly what runner.main() does on this exact exception.
+    fallback_response = _protocol_error_response(exc_info.value)
+    assert fallback_response.status == ExecutionStatus.PROTOCOL_ERROR
+    assert fallback_response.exception_type == "ProtocolError"
+    assert fallback_response.exception_message is not None
+    assert "serialized response" in fallback_response.exception_message
+
+    result = _result(
+        status=fallback_response.status,
+        exception_type=fallback_response.exception_type,
+        exception_message=fallback_response.exception_message,
+    )
+    assert classify_response_overflow(result) == ResponseOverflowClassification.OVERFLOWED
+
+
+def test_producer_contract_for_a_genuinely_different_protocol_error_stays_not_overflowed() -> None:
+    """The same real runner fallback path, but for an UNSUPPORTED VALUE
+    TYPE failure (a completely different ProtocolError message) -- proves
+    the contract test harness itself can distinguish message shapes, not
+    just rubber-stamp any ProtocolError as an overflow."""
+
+    class _Unsupported:  # pylint: disable=too-few-public-methods
+        """A type wire.encode_value cannot serialize."""
+
+    oversized_response = RunnerResponse(
+        status=ExecutionStatus.COMPLETED,
+        return_value=_Unsupported(),
+        exception_type=None,
+        exception_message=None,
+        stdout="",
+        stderr="",
+        stdout_truncated=False,
+        stderr_truncated=False,
+        candidate_wall_time_sec=0.01,
+    )
+
+    with pytest.raises(ProtocolError) as exc_info:
+        serialize_response(oversized_response, max_response_bytes=10_000_000)
+
+    fallback_response = _protocol_error_response(exc_info.value)
+    assert fallback_response.exception_message is not None
+    assert "serialized response" not in fallback_response.exception_message
+
+    result = _result(
+        status=fallback_response.status,
+        exception_type=fallback_response.exception_type,
+        exception_message=fallback_response.exception_message,
     )
     assert classify_response_overflow(result) == ResponseOverflowClassification.NOT_OVERFLOWED
 

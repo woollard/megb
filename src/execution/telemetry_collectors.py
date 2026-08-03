@@ -73,6 +73,14 @@ def run_collector(collector: TelemetryCollector, *, sample_count: int = 0) -> Te
     calling ``cleanup()`` exactly once regardless of outcome -- including
     when a ``BaseException`` (e.g. ``KeyboardInterrupt``, modeling
     cancellation) passes through, since ``finally`` runs unconditionally.
+
+    ``cleanup()`` itself raising is deliberately never allowed to mask
+    whatever the ``try`` block already determined: a plain ``finally:
+    collector.cleanup()`` would let a ``cleanup()`` exception silently
+    replace an already-computed observation, or replace an in-flight
+    ``BaseException`` (e.g. real cancellation) with an unrelated cleanup
+    error -- so a failing ``cleanup()`` is caught and discarded here,
+    never propagated and never allowed to override the real outcome.
     """
     try:
         try:
@@ -89,7 +97,10 @@ def run_collector(collector: TelemetryCollector, *, sample_count: int = 0) -> Te
         except Exception:  # pylint: disable=broad-exception-caught
             return collector_failure_observation(CollectorFailureStage.FINALIZE)
     finally:
-        collector.cleanup()
+        try:
+            collector.cleanup()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
 
 
 class FakeTelemetryCollector(TelemetryCollector):
@@ -98,30 +109,37 @@ class FakeTelemetryCollector(TelemetryCollector):
     peak-memory, sampled memory fallback, sampled process-count). Never
     touches a real container, cgroup, or ``docker stats`` process.
 
-    Each of ``start``/``sample``/``finalize`` independently raises
-    ``RuntimeError`` when its matching ``*_raises`` flag is set, letting a
-    test target exactly one lifecycle stage's failure. ``cleanup()`` always
-    runs (via ``run_collector``'s own ``finally``) and always records that
-    it ran, regardless of what happened before it -- tests assert on
-    ``cleanup_called``.
+    Each of ``start``/``sample``/``finalize``/``cleanup`` independently
+    raises ``RuntimeError`` when its matching ``*_raises`` flag is set,
+    letting a test target exactly one lifecycle stage's failure in
+    isolation (including combinations, e.g. ``finalize_raises`` together
+    with ``cleanup_raises``). ``cleanup_call_count`` (not just a boolean)
+    lets a test assert cleanup ran *exactly* once, never more.
     """
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         observation: TelemetryObservation | None = None,
         *,
         start_raises: bool = False,
         sample_raises: bool = False,
         finalize_raises: bool = False,
+        cleanup_raises: bool = False,
     ) -> None:
         self._observation = observation
         self._start_raises = start_raises
         self._sample_raises = sample_raises
         self._finalize_raises = finalize_raises
+        self._cleanup_raises = cleanup_raises
         self.start_called = False
         self.sample_call_count = 0
         self.finalize_called = False
-        self.cleanup_called = False
+        self.cleanup_call_count = 0
+
+    @property
+    def cleanup_called(self) -> bool:
+        """Convenience boolean view over ``cleanup_call_count``."""
+        return self.cleanup_call_count > 0
 
     def start(self) -> None:
         self.start_called = True
@@ -141,4 +159,6 @@ class FakeTelemetryCollector(TelemetryCollector):
         return self._observation
 
     def cleanup(self) -> None:
-        self.cleanup_called = True
+        self.cleanup_call_count += 1
+        if self._cleanup_raises:
+            raise RuntimeError("simulated collector cleanup failure")

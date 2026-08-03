@@ -158,16 +158,28 @@ def observed_response_byte_count(*, status: ExecutionStatus, stdout_bytes: bytes
     response — or ``None`` precisely when no completed response ever
     existed: ``TIMEOUT``/``OUT_OF_MEMORY`` (the container was killed before
     writing one) or ``INFRASTRUCTURE_ERROR`` (never started, or what was
-    written failed to parse as a valid response at all). Trims the same
-    trailing newline ``parse_response_message`` itself trims, so this
-    always matches what was actually parsed (or attempted)."""
+    written failed to parse as a valid response at all).
+
+    Deliberately measures ``stdout_bytes`` exactly as received —
+    ``len(stdout_bytes)``, with no newline stripping, UTF-8 decoding, or
+    JSON parsing first. ``parse_response_message`` (called separately, by
+    ``_classify_outcome`` below) strips exactly one trailing newline
+    *before* parsing, for its own, unrelated reason: the runner's own
+    ``max_response_bytes`` size check (``wire.serialize_response``) never
+    counted the framing newline ``main()`` appends after serialization
+    succeeds, so the parser strips it first to keep its size check
+    consistent with what the runner itself validated. That parsing-side
+    convention must not leak into this telemetry count, which reports the
+    real number of bytes this invocation put on the wire, framing byte
+    included.
+    """
     if status in (
         ExecutionStatus.TIMEOUT,
         ExecutionStatus.OUT_OF_MEMORY,
         ExecutionStatus.INFRASTRUCTURE_ERROR,
     ):
         return None
-    return len(stdout_bytes.rstrip(b"\n"))
+    return len(stdout_bytes)
 
 
 def _classify_outcome(
