@@ -84,6 +84,17 @@ class CandidateExecutionResult:
     (``TIMEOUT``, ``OUT_OF_MEMORY``, ``INFRASTRUCTURE_ERROR`` — the runner
     was killed externally or never started, so it never measured or
     reported its own duration).
+
+    ``request_bytes``/``observed_response_bytes`` (MEGB-03H.2C.1) are
+    controller-side byte counts only — never a copy of the request/response
+    content itself, and never a wire-protocol change (both are computed
+    from data the controller already exclusively holds: the serialized
+    request payload it built, and the raw bytes it read back from the
+    container). ``request_bytes`` is always populated once
+    ``wire.serialize_request`` has succeeded — which happens before any
+    container is even started, so it is set for every outcome. Both
+    default to ``None`` so every existing caller/test that constructs a
+    ``CandidateExecutionResult`` without them is unaffected.
     """
 
     invocation_id: str
@@ -106,3 +117,5 @@ class CandidateExecutionResult:
     limits: ExecutionLimits
     started_at: str
     infrastructure_error_detail: str | None = field(default=None)
+    request_bytes: int | None = field(default=None)
+    observed_response_bytes: int | None = field(default=None)

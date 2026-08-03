@@ -129,7 +129,7 @@ def _derive_terminating_signal(exit_code: int | None) -> int | None:
 
 
 @dataclass(frozen=True)
-class _ClassifiedOutcome:  # pylint: disable=duplicate-code
+class _ClassifiedOutcome:  # pylint: disable=duplicate-code,too-many-instance-attributes
     """The parts of a ``CandidateExecutionResult`` derived from one run's outcome.
 
     Structurally echoes several ``RunnerResponse`` field names (see
@@ -148,6 +148,26 @@ class _ClassifiedOutcome:  # pylint: disable=duplicate-code
     stderr_truncated: bool
     candidate_wall_time_sec: float | None
     infrastructure_error_detail: str | None
+    observed_response_bytes: int | None
+
+
+def observed_response_byte_count(*, status: ExecutionStatus, stdout_bytes: bytes) -> int | None:
+    """The exact number of raw bytes the controller received on the
+    container's stdout (wire-response) channel — never candidate stdout,
+    which the runner captures separately and reports inside the parsed
+    response — or ``None`` precisely when no completed response ever
+    existed: ``TIMEOUT``/``OUT_OF_MEMORY`` (the container was killed before
+    writing one) or ``INFRASTRUCTURE_ERROR`` (never started, or what was
+    written failed to parse as a valid response at all). Trims the same
+    trailing newline ``parse_response_message`` itself trims, so this
+    always matches what was actually parsed (or attempted)."""
+    if status in (
+        ExecutionStatus.TIMEOUT,
+        ExecutionStatus.OUT_OF_MEMORY,
+        ExecutionStatus.INFRASTRUCTURE_ERROR,
+    ):
+        return None
+    return len(stdout_bytes.rstrip(b"\n"))
 
 
 def _classify_outcome(
@@ -181,14 +201,15 @@ def _classify_outcome(
             )
             return _ClassifiedOutcome(
                 ExecutionStatus.INFRASTRUCTURE_ERROR, None, None, None, "", stderr, False, False,
-                None, detail,
+                None, detail, None,
             )
         return _ClassifiedOutcome(
-            ExecutionStatus.TIMEOUT, None, None, None, "", stderr, False, False, None, None
+            ExecutionStatus.TIMEOUT, None, None, None, "", stderr, False, False, None, None, None
         )
     if inspect_info.oom_killed:
         return _ClassifiedOutcome(
-            ExecutionStatus.OUT_OF_MEMORY, None, None, None, "", stderr, False, False, None, None
+            ExecutionStatus.OUT_OF_MEMORY, None, None, None, "", stderr, False, False, None,
+            None, None,
         )
 
     try:
@@ -200,7 +221,7 @@ def _classify_outcome(
         )
         return _ClassifiedOutcome(
             ExecutionStatus.INFRASTRUCTURE_ERROR, None, None, None, "", stderr, False, False,
-            None, detail,
+            None, detail, None,
         )
 
     return _ClassifiedOutcome(
@@ -214,6 +235,9 @@ def _classify_outcome(
         stderr_truncated=runner_response.stderr_truncated,
         candidate_wall_time_sec=runner_response.candidate_wall_time_sec,
         infrastructure_error_detail=None,
+        observed_response_bytes=observed_response_byte_count(
+            status=runner_response.status, stdout_bytes=stdout_bytes
+        ),
     )
 
 
@@ -338,6 +362,8 @@ class DockerPerInvocationBackend(ExecutionBackend):
                 limits=request.limits,
                 started_at=started_at,
                 infrastructure_error_detail=outcome.infrastructure_error_detail,
+                request_bytes=len(request_payload),
+                observed_response_bytes=outcome.observed_response_bytes,
             )
         finally:
             _docker_remove(container_name)

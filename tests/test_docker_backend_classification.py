@@ -12,6 +12,7 @@ from src.execution.docker_backend import (
     _ContainerInspectInfo,
     _classify_outcome,
     _derive_terminating_signal,
+    observed_response_byte_count,
 )
 from src.execution.protocol import ExecutionStatus
 from src.execution.wire import RunnerResponse, serialize_response
@@ -38,6 +39,7 @@ def test_timeout_with_container_found_is_candidate_timeout() -> None:
     assert outcome.status == ExecutionStatus.TIMEOUT
     assert outcome.candidate_wall_time_sec is None
     assert outcome.infrastructure_error_detail is None
+    assert outcome.observed_response_bytes is None
 
 
 def test_timeout_with_container_never_created_is_infrastructure_error() -> None:
@@ -53,6 +55,7 @@ def test_timeout_with_container_never_created_is_infrastructure_error() -> None:
     assert outcome.status == ExecutionStatus.INFRASTRUCTURE_ERROR
     assert outcome.infrastructure_error_detail is not None
     assert "never started" in outcome.infrastructure_error_detail
+    assert outcome.observed_response_bytes is None
 
 
 def test_oom_killed_takes_precedence_over_stdout_parsing() -> None:
@@ -67,22 +70,33 @@ def test_oom_killed_takes_precedence_over_stdout_parsing() -> None:
 
     assert outcome.status == ExecutionStatus.OUT_OF_MEMORY
     assert outcome.candidate_wall_time_sec is None
+    assert outcome.observed_response_bytes is None
 
 
-def test_valid_runner_response_is_passed_through_with_candidate_wall_time() -> None:
-    """A well-formed runner response's status and candidate duration pass through untouched."""
+def _response_payload(
+    status: ExecutionStatus,
+    *,
+    return_value: object = None,
+    exception_type: str | None = None,
+    exception_message: str | None = None,
+) -> bytes:
     response = RunnerResponse(
-        status=ExecutionStatus.COMPLETED,
-        return_value=7,
-        exception_type=None,
-        exception_message=None,
+        status=status,
+        return_value=return_value,
+        exception_type=exception_type,
+        exception_message=exception_message,
         stdout="hi",
         stderr="",
         stdout_truncated=False,
         stderr_truncated=False,
         candidate_wall_time_sec=0.0123,
     )
-    payload = serialize_response(response, max_response_bytes=1_000_000)
+    return serialize_response(response, max_response_bytes=1_000_000)
+
+
+def test_valid_runner_response_is_passed_through_with_candidate_wall_time() -> None:
+    """A well-formed runner response's status and candidate duration pass through untouched."""
+    payload = _response_payload(ExecutionStatus.COMPLETED, return_value=7)
 
     outcome = _classify_outcome(
         timed_out=False,
@@ -96,6 +110,7 @@ def test_valid_runner_response_is_passed_through_with_candidate_wall_time() -> N
     assert outcome.return_value == 7
     assert outcome.candidate_wall_time_sec == 0.0123
     assert outcome.infrastructure_error_detail is None
+    assert outcome.observed_response_bytes == len(payload)
 
 
 def test_unparseable_stdout_is_infrastructure_error() -> None:
@@ -110,6 +125,92 @@ def test_unparseable_stdout_is_infrastructure_error() -> None:
 
     assert outcome.status == ExecutionStatus.INFRASTRUCTURE_ERROR
     assert outcome.infrastructure_error_detail is not None
+    assert outcome.observed_response_bytes is None
+
+
+# ---------------------------------------------------------------------------
+# Controller-side byte accounting (MEGB-03H.2C.1): observed_response_bytes
+# ---------------------------------------------------------------------------
+
+
+def test_observed_response_byte_count_is_none_for_timeout_oom_and_infrastructure_error() -> None:
+    """No completed response ever existed for these three statuses."""
+    for status in (
+        ExecutionStatus.TIMEOUT,
+        ExecutionStatus.OUT_OF_MEMORY,
+        ExecutionStatus.INFRASTRUCTURE_ERROR,
+    ):
+        assert observed_response_byte_count(status=status, stdout_bytes=b"anything") is None
+
+
+def test_observed_response_byte_count_is_exact_for_every_completed_response_status() -> None:
+    """A real, parseable response yields an exact byte count for every
+    status the runner can terminally report on its own -- syntax error,
+    candidate exception, output/process limit, protocol error, and
+    ordinary completion."""
+    for status in (
+        ExecutionStatus.COMPLETED,
+        ExecutionStatus.SYNTAX_ERROR,
+        ExecutionStatus.CANDIDATE_EXCEPTION,
+        ExecutionStatus.OUTPUT_LIMIT,
+        ExecutionStatus.PROCESS_LIMIT,
+        ExecutionStatus.PROTOCOL_ERROR,
+    ):
+        stdout_bytes = f"some {status.value} payload".encode() + b"\n"
+        assert observed_response_byte_count(
+            status=status, stdout_bytes=stdout_bytes
+        ) == len(stdout_bytes) - 1  # trailing newline trimmed, matching parse_response_message
+
+
+def test_observed_response_byte_count_trims_exactly_one_trailing_newline() -> None:
+    """Matches parse_response_message's own rstrip(b"\\n") exactly."""
+    assert observed_response_byte_count(
+        status=ExecutionStatus.COMPLETED, stdout_bytes=b"abc\n"
+    ) == 3
+    assert observed_response_byte_count(
+        status=ExecutionStatus.COMPLETED, stdout_bytes=b"abc"
+    ) == 3
+
+
+def test_syntax_error_and_candidate_exception_report_exact_observed_response_bytes() -> None:
+    """Real runner responses for a syntax error and a candidate exception
+    both parse successfully and report an exact byte count."""
+    for status, exc_type, exc_message in (
+        (ExecutionStatus.SYNTAX_ERROR, "SyntaxError", "invalid syntax"),
+        (ExecutionStatus.CANDIDATE_EXCEPTION, "ValueError", "boom"),
+        (ExecutionStatus.OUTPUT_LIMIT, None, None),
+        (ExecutionStatus.PROCESS_LIMIT, "BlockingIOError", "no threads"),
+    ):
+        payload = _response_payload(status, exception_type=exc_type, exception_message=exc_message)
+        outcome = _classify_outcome(
+            timed_out=False,
+            inspect_info=_found(exit_code=1),
+            stdout_bytes=payload + b"\n",
+            stderr_bytes=b"",
+            max_response_bytes=1_000_000,
+        )
+        assert outcome.status == status
+        assert outcome.observed_response_bytes == len(payload)
+
+
+def test_protocol_error_response_reports_exact_observed_response_bytes() -> None:
+    """The runner's own oversized-response fallback (PROTOCOL_ERROR) still
+    parses successfully -- it is a real, completed response describing a
+    protocol failure, not a missing one."""
+    payload = _response_payload(
+        ExecutionStatus.PROTOCOL_ERROR,
+        exception_type="ProtocolError",
+        exception_message="serialized response (2000000 bytes) exceeds limit (1048576 bytes)",
+    )
+    outcome = _classify_outcome(
+        timed_out=False,
+        inspect_info=_found(exit_code=0),
+        stdout_bytes=payload + b"\n",
+        stderr_bytes=b"",
+        max_response_bytes=1_000_000,
+    )
+    assert outcome.status == ExecutionStatus.PROTOCOL_ERROR
+    assert outcome.observed_response_bytes == len(payload)
 
 
 def test_derive_terminating_signal_from_exit_code() -> None:
