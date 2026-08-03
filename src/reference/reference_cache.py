@@ -82,6 +82,15 @@ class CacheDisposition(str, Enum):
 
     Sufficient for MEGB-03G.3 to distinguish every outcome its orchestration
     loop needs to branch on, without raising for expected states.
+
+    ``BYPASSED_BY_POLICY`` (MEGB-03H.2B.1 correction) is never returned by
+    :meth:`ReferenceResultCache.get`/:meth:`ReferenceResultCache.put`
+    themselves -- it is constructed only by a caller (the orchestrator)
+    describing its own deliberate decision not to consult or write the
+    cache at all under a fresh :class:`~src.reference.orchestration_trace.CachePolicy`.
+    ``MISS`` remains reserved for a real, attempted lookup that found
+    nothing; conflating the two would misrepresent a fresh policy's
+    deliberate bypass as an ordinary cache miss.
     """
 
     VALID_HIT = "VALID_HIT"
@@ -91,6 +100,7 @@ class CacheDisposition(str, Enum):
     WRITE_ACCEPTED = "WRITE_ACCEPTED"
     CONFLICTING_WRITE = "CONFLICTING_WRITE"
     STORAGE_INFRASTRUCTURE_FAILURE = "STORAGE_INFRASTRUCTURE_FAILURE"
+    BYPASSED_BY_POLICY = "BYPASSED_BY_POLICY"
 
 
 @dataclass(frozen=True)

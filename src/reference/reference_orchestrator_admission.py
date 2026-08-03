@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from src.reference.cache_key import CACHE_KEY_SCHEMA_VERSION, ReferenceResultCacheKey
+from src.reference.reference_cache import CacheDisposition
 from src.reference.reference_evaluator import ReferenceTaskEvidence
 from src.reference.result_schema import ReferenceTaskResult
 
@@ -105,12 +106,24 @@ def logically_equivalent(first: ReferenceTaskResult, second: ReferenceTaskResult
 
 @dataclass(frozen=True)
 class KeyExecutionResult:
-    """The terminal (or in-flight) execution outcome for one admission group."""
+    """The terminal (or in-flight) execution outcome for one admission group.
+
+    ``cache_write_disposition`` (MEGB-03H.2B.1 correction) is the
+    independent cache-write/-bypass axis, kept deliberately separate from
+    ``disposition`` (the execution axis): ``None`` when no cache
+    interaction was ever attempted for this outcome (e.g. a non-cacheable
+    result, or a pure ``CACHE_FIRST`` read-hit that never reached
+    ``put()``); otherwise one of
+    :class:`~src.reference.reference_cache.CacheDisposition`'s
+    ``WRITE_ACCEPTED``/``CONFLICTING_WRITE``/``STORAGE_INFRASTRUCTURE_FAILURE``/
+    ``BYPASSED_BY_POLICY``.
+    """
 
     disposition: "WorkItemDisposition"
     task_result: ReferenceTaskResult | None
     attempts: int
     detail: str
+    cache_write_disposition: CacheDisposition | None = None
 
 
 @dataclass

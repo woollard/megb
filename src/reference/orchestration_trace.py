@@ -77,6 +77,64 @@ class ReplicateRequiresFreshPolicyError(ValueError):
     explicit fresh :class:`CachePolicy`."""
 
 
+class CalibrationTracePersistenceError(RuntimeError):
+    """Raised when a :class:`TraceRecorder` fails to durably persist a
+    fresh-policy attempt sequence -- always the *typed* error a caller sees
+    (see :meth:`~src.reference.reference_orchestrator.ReferenceOrchestrator._record_fresh_attempt`,
+    which wraps whatever the underlying recorder/sink actually raised via
+    ``raise ... from exc``, preserving the original cause instead of
+    letting an arbitrary exception type escape). Guarantees, by
+    construction of its only call sites: the production cache was never
+    mutated for the affected coordinate; no further work was admitted after
+    this point; every already-durable trace record written before this
+    failure is untouched; and the run this occurred in is left explicitly
+    failed (this exception propagates out of
+    :meth:`~src.reference.reference_orchestrator.ReferenceOrchestrator.run`
+    rather than being folded into an apparently complete
+    :class:`~src.reference.reference_orchestrator.OrchestrationRunSummary`).
+    """
+
+
+@dataclass(frozen=True)
+class FreshExecutionAttempt:
+    """One evaluator attempt within a fresh-policy key-group execution --
+    the orchestration/trace boundary's typed, per-attempt identity that
+    H.2C's own future work can propagate into a case-level
+    :class:`~src.reference.calibration_schema.CalibrationInvocationRecord`'s
+    own ``attempt_id`` (the same "first attempt is 1" convention that field
+    already uses).
+
+    Exactly one of ``task_result``/``exception_type_name`` is non-``None``:
+    an attempt either produced a typed measurement -- any
+    :class:`~src.reference.result_schema.MeasurementStatus`, including a
+    non-``VALID`` one -- or failed via a raised exception before producing
+    one, never both, never neither. ``exception_type_name`` is allowlisted,
+    safe data only (the exception's class name, e.g. ``"RuntimeError"``) --
+    never the exception message or traceback, mirroring this module's
+    existing convention for describing backend-setup failures.
+    """
+
+    attempt_id: int
+    task_result: ReferenceTaskResult | None
+    exception_type_name: str | None
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.attempt_id, int)
+            or isinstance(self.attempt_id, bool)
+            or self.attempt_id < 1
+        ):
+            raise ValueError(
+                f"attempt_id must be an int >= 1 (first attempt is 1), got {self.attempt_id!r}"
+            )
+        if (self.task_result is None) == (self.exception_type_name is None):
+            raise ValueError(
+                "exactly one of task_result/exception_type_name must be set, got "
+                f"task_result={self.task_result!r}, "
+                f"exception_type_name={self.exception_type_name!r}"
+            )
+
+
 class TraceSink(Protocol):
     """Durable append boundary for one
     :class:`~src.reference.calibration_schema.CalibrationTaskEvaluationRecord`.
@@ -93,13 +151,22 @@ class TaskEvaluationRecordBuilder(Protocol):
     """Builds the :class:`~src.reference.calibration_schema.CalibrationTaskEvaluationRecord`
     for one complete (post-retry) fresh execution attempt.
 
+    ``attempt_records`` is the full ordered attempt history (every retry,
+    including any that raised or came back non-``VALID``, each with its own
+    ``attempt_id``) -- the source of the ``contributing_invocation_ids``/
+    ``contributing_invocation_content_checksums`` a real implementation
+    would build one :class:`~src.reference.calibration_schema.CalibrationInvocationRecord`
+    per entry for. Only the *terminal eligible* attempt (``task_result``,
+    the same final result also carried at top level) may contribute to the
+    task's own ``measurement_status``/``q_ref_task`` -- earlier, superseded
+    attempts must never be double-counted.
+
     A pluggable boundary, not a fixed implementation: H.2C supplies the
     production implementation once real controller-side telemetry exists
     (mapping ``work_item``/``evidence`` into a real
-    :class:`~src.reference.calibration_schema.CalibrationRunContext` and
-    populating genuine ``contributing_invocation_ids``); H.2B.1's own tests
-    supply a synthetic one. This module has no opinion on how that mapping
-    is done.
+    :class:`~src.reference.calibration_schema.CalibrationRunContext`);
+    H.2B.1's own tests supply a synthetic one. This module has no opinion
+    on how that mapping is done.
     """
 
     def __call__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -108,7 +175,7 @@ class TaskEvaluationRecordBuilder(Protocol):
         work_item: "WorkItem",
         evidence: ReferenceTaskEvidence,
         task_evaluation_replicate_id: int,
-        attempts: int,
+        attempt_records: "tuple[FreshExecutionAttempt, ...]",
         disposition: "WorkItemDisposition",
         task_result: ReferenceTaskResult | None,
     ) -> "CalibrationTaskEvaluationRecord":
@@ -121,8 +188,11 @@ class TraceRecorder(Protocol):
 
     Called once per complete (post-retry) fresh execution, before any
     cache mutation is considered for that attempt -- a caller whose
-    ``record_fresh_attempt`` raises guarantees the orchestrator never
-    reaches ``ReferenceResultCache.put()`` for that attempt (see
+    ``record_fresh_attempt`` raises causes
+    :meth:`~src.reference.reference_orchestrator.ReferenceOrchestrator._record_fresh_attempt`
+    to raise :class:`CalibrationTracePersistenceError`, guaranteeing the
+    orchestrator never reaches ``ReferenceResultCache.put()`` for that
+    attempt (see
     :meth:`~src.reference.reference_orchestrator.ReferenceOrchestrator._accept_valid_result`).
     """
 
@@ -132,7 +202,7 @@ class TraceRecorder(Protocol):
         work_item: "WorkItem",
         evidence: ReferenceTaskEvidence,
         task_evaluation_replicate_id: int,
-        attempts: int,
+        attempt_records: "tuple[FreshExecutionAttempt, ...]",
         disposition: "WorkItemDisposition",
         task_result: ReferenceTaskResult | None,
     ) -> None:
@@ -162,7 +232,7 @@ class CalibrationTraceRecorder:
         work_item: "WorkItem",
         evidence: ReferenceTaskEvidence,
         task_evaluation_replicate_id: int,
-        attempts: int,
+        attempt_records: "tuple[FreshExecutionAttempt, ...]",
         disposition: "WorkItemDisposition",
         task_result: ReferenceTaskResult | None,
     ) -> None:
@@ -173,7 +243,7 @@ class CalibrationTraceRecorder:
             work_item=work_item,
             evidence=evidence,
             task_evaluation_replicate_id=task_evaluation_replicate_id,
-            attempts=attempts,
+            attempt_records=attempt_records,
             disposition=disposition,
             task_result=task_result,
         )

@@ -54,12 +54,14 @@ from src.reference.oracle import (
 )
 from src.reference.orchestration_trace import (
     CachePolicy,
+    CalibrationTracePersistenceError,
     CalibrationTraceRecorder,
     CalibrationTraceRequiredError,
+    FreshExecutionAttempt,
     ReplicateRequiresFreshPolicyError,
 )
 from src.reference.partition import PARTITION_ALGORITHM_VERSION
-from src.reference.reference_cache import ReferenceResultCache
+from src.reference.reference_cache import CacheDisposition, ReferenceResultCache
 from src.reference.reference_evaluator import (
     EXECUTION_PROTOCOL_VERSION,
     ReferenceCase,
@@ -159,9 +161,12 @@ def test_fresh_measure_and_optionally_cache_bypasses_existing_valid_entry(tmp_pa
     even when an identical valid cache entry already exists. Because this
     deterministic candidate's fresh result is *logically equivalent* to the
     already-cached entry (same content, different evaluated_at/duration),
-    the existing, unmodified equivalent-write-reconciliation logic folds it
-    into CACHE_HIT -- exactly the accepted "preserve existing cache
-    conflict behavior" requirement, not a suppressed execution."""
+    the cache-write layer reports CONFLICTING_WRITE, reconciled as
+    equivalent -- but under a fresh policy the evaluator genuinely ran, so
+    the top-level disposition must stay execution-classified
+    (EXECUTED_VALID), never CACHE_HIT (post-acceptance-review correction:
+    fresh execution must never become CACHE_HIT). The idempotent write is
+    represented on the independent cache_write_disposition axis instead."""
     cache = ReferenceResultCache(tmp_path / "cache")
     seed_backend = RecordingBackend()
     seed_orchestrator, _, _ = _orchestrator(
@@ -185,9 +190,12 @@ def test_fresh_measure_and_optionally_cache_bypasses_existing_valid_entry(tmp_pa
     assert fresh_backend.call_count == 1, (
         "a prepopulated valid cache entry must not suppress execution"
     )
-    assert summary.outcomes[0].disposition == WorkItemDisposition.CACHE_HIT
-    assert summary.outcomes[0].detail == "concurrent equivalent write reconciled as a cache hit"
+    outcome = summary.outcomes[0]
+    assert outcome.disposition == WorkItemDisposition.EXECUTED_VALID
+    assert outcome.cache_write_disposition == CacheDisposition.CONFLICTING_WRITE
+    assert "idempotent write" in outcome.detail
     assert len(recorder.calls) == 1, "the trace is recorded for the fresh attempt regardless"
+    assert recorder.calls[0].disposition == WorkItemDisposition.EXECUTED_VALID
 
 
 def test_fresh_measure_no_cache_write_bypasses_existing_valid_entry(tmp_path: Path) -> None:
@@ -345,8 +353,11 @@ def test_trace_persistence_occurs_before_any_optional_cache_write(tmp_path: Path
 
 
 def test_trace_write_failure_prevents_cache_mutation(tmp_path: Path) -> None:
-    """A raised trace-recorder failure propagates and the production cache
-    is never mutated for that attempt."""
+    """A raised trace-recorder failure is wrapped as a typed
+    CalibrationTracePersistenceError (post-acceptance-review correction:
+    typed trace-storage failure, never an arbitrary raw exception type),
+    chaining the original cause, and the production cache is never mutated
+    for that attempt."""
     cache = ReferenceResultCache(tmp_path / "cache")
     recorder = FakeTraceRecorder(fail=True)
     orchestrator, _, _ = _orchestrator(
@@ -359,10 +370,11 @@ def test_trace_write_failure_prevents_cache_mutation(tmp_path: Path) -> None:
 
     try:
         orchestrator.run([item], run_id="run-1")
-    except RuntimeError as exc:
-        assert "simulated trace-write failure" in str(exc)
+    except CalibrationTracePersistenceError as exc:
+        assert isinstance(exc.__cause__, RuntimeError)
+        assert "simulated trace-write failure" in str(exc.__cause__)
     else:
-        raise AssertionError("expected the trace-recorder failure to propagate")
+        raise AssertionError("expected a CalibrationTracePersistenceError to propagate")
 
     assert not list(cache.cache_dir.glob("*.json")), (
         "cache must never be mutated after a trace-write failure"
@@ -386,10 +398,10 @@ def test_trace_write_failure_prevents_cache_mutation_under_no_cache_write_policy
 
     try:
         orchestrator.run([item], run_id="run-1")
-    except RuntimeError:
+    except CalibrationTracePersistenceError:
         pass
     else:
-        raise AssertionError("expected the trace-recorder failure to propagate")
+        raise AssertionError("expected a CalibrationTracePersistenceError to propagate")
 
     assert not list(cache.cache_dir.glob("*.json"))
 
@@ -406,11 +418,11 @@ def test_calibration_trace_recorder_with_real_trace_store_end_to_end(tmp_path: P
         work_item: WorkItem,
         evidence: ReferenceTaskEvidence,
         task_evaluation_replicate_id: int,
-        attempts: int,
+        attempt_records: tuple[FreshExecutionAttempt, ...],
         disposition: WorkItemDisposition,
         task_result: ReferenceTaskResult | None,
     ) -> CalibrationTaskEvaluationRecord:
-        del attempts
+        del attempt_records
         context = CalibrationRunContext(
             calibration_schema_version=CALIBRATION_SCHEMA_VERSION,
             stage=CalibrationStage.H3,

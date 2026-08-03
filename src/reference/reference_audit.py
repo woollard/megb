@@ -48,6 +48,28 @@ so an audit record can be reconciled against the cache/result identity it
 accompanies without needing to inspect the privileged result itself.
 ``AUDIT_RECORD_SCHEMA_VERSION`` moves from ``reference-audit-record-v1`` to
 ``reference-audit-record-v2`` accordingly.
+
+**Resolved (v3 audit-record schema, MEGB-03H.2B.1 trace-coverage/audit-
+schema correction):** ``cache_disposition`` may now legally carry
+``CacheDisposition.BYPASSED_BY_POLICY``, recorded whenever a fresh
+:class:`~src.reference.orchestration_trace.CachePolicy` bypasses the cache
+read and/or write entirely -- previously misrecorded as ``MISS``, which
+means "a real lookup found nothing" and is factually wrong for a
+deliberate bypass. Although ``cache_disposition``'s own validation
+(``{member.value for member in CacheDisposition}``) is already computed
+dynamically against the current enum, adding a new legal value is still a
+schema-semantic expansion of what this versioned, persisted record type
+may contain, not merely an implementation detail -- so the version moves
+regardless, matching the v1-to-v2 precedent above. No field was added or
+removed. A real, locally-persisted (gitignored, non-privileged, explicitly
+"generated local operational log" per this module's own docstring)
+``reference-audit-record-v2`` artifact exists on disk from the MEGB-03G.4
+benchmark run (``artifacts/reference/g4_benchmark_audit/g4_benchmark_audit_log.jsonl``,
+66 records, none using the new value); this move makes it stale exactly as
+the v1-to-v2 move already established no migration path is provided --
+regenerable by rerunning the G.4 benchmark, not lost data.
+``AUDIT_RECORD_SCHEMA_VERSION`` moves from ``reference-audit-record-v2`` to
+``reference-audit-record-v3`` accordingly.
 """
 
 # See the note above: the field-declaration overlap with
@@ -66,7 +88,7 @@ from typing import Any, Mapping
 from src.reference.reference_cache import CacheDisposition
 from src.reference.result_schema import MeasurementStatus, ReferenceRunContext, ReferenceTaskResult
 
-AUDIT_RECORD_SCHEMA_VERSION = "reference-audit-record-v2"
+AUDIT_RECORD_SCHEMA_VERSION = "reference-audit-record-v3"
 
 DEFAULT_AUDIT_LOG_PATH = Path("artifacts/reference/audit/reference_audit_log.jsonl")
 

@@ -34,7 +34,7 @@ from src.reference.oracle import (
     comparison_profile_for_task,
     generate_oracle_record,
 )
-from src.reference.orchestration_trace import CachePolicy
+from src.reference.orchestration_trace import CachePolicy, FreshExecutionAttempt
 from src.reference.partition import PARTITION_ALGORITHM_VERSION
 from src.reference.reference_audit import ReferenceAuditLog
 from src.reference.reference_cache import ReferenceResultCache
@@ -235,13 +235,24 @@ class RaisingBackend(ExecutionBackend):
 
 @dataclass
 class RecordedTraceCall:
-    """One captured call to a FakeTraceRecorder."""
+    """One captured call to a FakeTraceRecorder.
+
+    ``attempt_records`` is the full per-attempt history handed to this
+    call; ``attempts`` (a convenience property, not its own field) is
+    simply ``len(attempt_records)``, matching the pre-existing tests that
+    only cared about the count.
+    """
 
     work_item_id: str
     task_evaluation_replicate_id: int
-    attempts: int
+    attempt_records: tuple[FreshExecutionAttempt, ...]
     disposition: WorkItemDisposition
     has_result: bool
+
+    @property
+    def attempts(self) -> int:
+        """Number of attempts this call's ``attempt_records`` carries."""
+        return len(self.attempt_records)
 
 
 @dataclass
@@ -258,7 +269,7 @@ class FakeTraceRecorder:
         work_item: WorkItem,  # pylint: disable=redefined-outer-name
         evidence: ReferenceTaskEvidence,  # pylint: disable=redefined-outer-name
         task_evaluation_replicate_id: int,
-        attempts: int,
+        attempt_records: tuple[FreshExecutionAttempt, ...],
         disposition: WorkItemDisposition,
         task_result: ReferenceTaskResult | None,
     ) -> None:
@@ -270,7 +281,7 @@ class FakeTraceRecorder:
             RecordedTraceCall(
                 work_item.work_item_id,
                 task_evaluation_replicate_id,
-                attempts,
+                attempt_records,
                 disposition,
                 task_result is not None,
             )
