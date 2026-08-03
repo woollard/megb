@@ -16,12 +16,20 @@ import hashlib
 
 from src.evaluators.schema import FailureCategory
 from src.execution.protocol import ExecutionStatus
+from src.execution.telemetry_methods import (
+    CollectorMethod,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
+)
 from src.reference.calibration_schema import (
     CALIBRATION_SCHEMA_VERSION,
     CalibrationInvocationRecord,
     CalibrationRunContext,
     CalibrationStage,
     CalibrationTaskEvaluationRecord,
+    CollectorMethodProvenance,
+    HostRuntimeContext,
+    TelemetryCollectionPolicy,
     TelemetryUnavailableReason,
 )
 from src.reference.h5_staging import H5StagingIdentity
@@ -188,6 +196,60 @@ def staging_identity(
     return H5StagingIdentity(**fields)  # type: ignore[arg-type]
 
 
+def _telemetry_collection_policy(**overrides: object) -> TelemetryCollectionPolicy:
+    fields: dict[str, object] = {
+        "telemetry_collection_profile_id": "megb-03h5-telemetry-profile",
+        "telemetry_collection_profile_version": "v1",
+        "collector_selection_policy_id": "megb-03h5-collector-selection-policy",
+        "collector_selection_policy_version": "v1",
+        "requested_metrics": ("peak_memory_bytes", "peak_process_count"),
+        "preferred_method_order": (
+            CollectorMethod.CGROUP_V2_MEMORY_PEAK,
+            CollectorMethod.SAMPLED_DOCKER_STATS_MEMORY,
+        ),
+        "configured_sampling_intervals_sec": (("peak_memory_bytes", 0.05),),
+    }
+    fields.update(overrides)
+    return TelemetryCollectionPolicy(**fields)  # type: ignore[arg-type]
+
+
+def _host_runtime_context(**overrides: object) -> HostRuntimeContext:
+    fields: dict[str, object] = {
+        "os_family": "Linux",
+        "architecture": "x86_64",
+        "kernel_release": "6.8.0-fake",
+        "docker_server_version": "27.0.0",
+        "docker_server_os": "linux",
+        "docker_server_architecture": "x86_64",
+        "cgroup_version": "v2",
+        "cgroup_mode": "systemd",
+        "docker_desktop": False,
+        "rootless": False,
+    }
+    fields.update(overrides)
+    return HostRuntimeContext(**fields)  # type: ignore[arg-type]
+
+
+def _not_applicable_provenance(metric_id: str) -> CollectorMethodProvenance:
+    """A metric that simply does not apply to this invocation -- distinct
+    from NOT_YET_INSTRUMENTED, and release-ready (see
+    require_release_ready_stage)."""
+    return CollectorMethodProvenance(
+        metric_id=metric_id,
+        collector_implementation_id="not_applicable",
+        collector_implementation_version="not_applicable/v1",
+        selected_method=CollectorMethod.UNAVAILABLE_WITHOUT_CONTAMINATION,
+        selected_method_version="not_applicable/v1",
+        interface_family="not_applicable",
+        configured_sampling_interval_sec=None,
+        actual_sample_count=0,
+        measurement_quality=None,
+        selection_disposition=MetricCollectionDisposition.NO_METHOD_AVAILABLE,
+        terminal_coverage=TerminalCoverageState.TERMINAL_READ_NOT_APPLICABLE,
+        unavailability_or_failure_reason=TelemetryUnavailableReason.NOT_APPLICABLE,
+    )
+
+
 def calibration_context(**overrides: object) -> CalibrationRunContext:
     """The H.5-stage CalibrationRunContext matching the default identity."""
     fields: dict[str, object] = {
@@ -203,6 +265,8 @@ def calibration_context(**overrides: object) -> CalibrationRunContext:
         "oracle_version": ORACLE_VERSION,
         "comparison_profile_version": COMPARISON_PROFILE_VERSION,
         "task_manifest_checksum": TASK_MANIFEST_CHECKSUM,
+        "telemetry_collection_policy": _telemetry_collection_policy(),
+        "host_runtime_context": _host_runtime_context(),
     }
     fields.update(overrides)
     return CalibrationRunContext(**fields)  # type: ignore[arg-type]
@@ -241,9 +305,11 @@ def invocation_record(
         peak_memory_bytes=None,
         peak_memory_quality=None,
         peak_memory_unavailable_reason=TelemetryUnavailableReason.NOT_APPLICABLE,
+        peak_memory_provenance=_not_applicable_provenance("peak_memory_bytes"),
         peak_process_count=None,
         peak_process_quality=None,
         peak_process_unavailable_reason=TelemetryUnavailableReason.NOT_APPLICABLE,
+        peak_process_provenance=_not_applicable_provenance("peak_process_count"),
         exit_code=0,
         terminating_signal=None,
         backend_id="fake",

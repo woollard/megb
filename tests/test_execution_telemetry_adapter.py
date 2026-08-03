@@ -17,6 +17,12 @@ from src.execution.telemetry import (
     build_execution_telemetry,
     collector_failure_observation,
 )
+from src.execution.telemetry_methods import (
+    CollectorMethod,
+    CollectorMethodIdentity,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
+)
 from src.reference.calibration_schema import MeasurementQuality
 from src.reference.calibration_schema import TelemetryUnavailableReason as CalibReason
 from src.reference.calibration_summary import (
@@ -89,9 +95,23 @@ def _result(
     )
 
 
+def _exact_method_identity() -> CollectorMethodIdentity:
+    return CollectorMethodIdentity(
+        method=CollectorMethod.CGROUP_V2_MEMORY_PEAK,
+        method_version="cgroup_peak_file_collector/v1",
+        interface="cgroupfs:/fake/memory.peak",
+        sampling_interval_sec=None,
+        selection_disposition=MetricCollectionDisposition.PRIMARY_METHOD_SELECTED,
+    )
+
+
 def _exact(value: float) -> TelemetryObservation:
     return TelemetryObservation(
-        value=value, quality=TelemetryQuality.EXACT, unavailable_reason=None
+        value=value,
+        quality=TelemetryQuality.EXACT,
+        unavailable_reason=None,
+        method_identity=_exact_method_identity(),
+        terminal_coverage=TerminalCoverageState.TERMINAL_READ_CONFIRMED,
     )
 
 
@@ -162,7 +182,12 @@ def test_adapt_execution_telemetry_maps_collector_failure_to_sampler_failure() -
 
 
 def _splat_fields(fields: CalibrationTelemetryFields) -> dict[str, object]:
-    return dataclasses.asdict(fields)
+    """Shallow field-by-field conversion -- deliberately not
+    dataclasses.asdict(), which would recursively flatten the nested
+    CollectorMethodProvenance fields (MEGB-03H.2C.2A provenance/schema
+    correction) into plain dicts, breaking CalibrationInvocationRecord's
+    own isinstance(..., CollectorMethodProvenance) validation."""
+    return {field.name: getattr(fields, field.name) for field in dataclasses.fields(fields)}
 
 
 def test_adapted_fields_build_a_real_valid_calibration_invocation_record() -> None:

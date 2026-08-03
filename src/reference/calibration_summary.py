@@ -66,6 +66,12 @@ class CalibrationSummaryReport:  # pylint: disable=too-many-instance-attributes
     observed_response_quality_counts: Mapping[str, int]
     peak_memory_quality_counts: Mapping[str, int]
     peak_process_quality_counts: Mapping[str, int]
+    peak_memory_selected_method_counts: Mapping[str, int]
+    peak_process_selected_method_counts: Mapping[str, int]
+    peak_memory_selection_disposition_counts: Mapping[str, int]
+    peak_process_selection_disposition_counts: Mapping[str, int]
+    peak_memory_terminal_coverage_counts: Mapping[str, int]
+    peak_process_terminal_coverage_counts: Mapping[str, int]
     per_task_case_counts: Mapping[str, int]
     report_checksum: str = ""
 
@@ -92,6 +98,12 @@ class CalibrationSummaryReport:  # pylint: disable=too-many-instance-attributes
             "observed_response_quality_counts",
             "peak_memory_quality_counts",
             "peak_process_quality_counts",
+            "peak_memory_selected_method_counts",
+            "peak_process_selected_method_counts",
+            "peak_memory_selection_disposition_counts",
+            "peak_process_selection_disposition_counts",
+            "peak_memory_terminal_coverage_counts",
+            "peak_process_terminal_coverage_counts",
             "per_task_case_counts",
         ):
             self._validate_count_mapping(mapping_field)
@@ -138,6 +150,18 @@ def _calibration_summary_report_payload(report: CalibrationSummaryReport) -> dic
         "observed_response_quality_counts": dict(report.observed_response_quality_counts),
         "peak_memory_quality_counts": dict(report.peak_memory_quality_counts),
         "peak_process_quality_counts": dict(report.peak_process_quality_counts),
+        "peak_memory_selected_method_counts": dict(report.peak_memory_selected_method_counts),
+        "peak_process_selected_method_counts": dict(report.peak_process_selected_method_counts),
+        "peak_memory_selection_disposition_counts": dict(
+            report.peak_memory_selection_disposition_counts
+        ),
+        "peak_process_selection_disposition_counts": dict(
+            report.peak_process_selection_disposition_counts
+        ),
+        "peak_memory_terminal_coverage_counts": dict(report.peak_memory_terminal_coverage_counts),
+        "peak_process_terminal_coverage_counts": dict(
+            report.peak_process_terminal_coverage_counts
+        ),
         "per_task_case_counts": dict(report.per_task_case_counts),
     }
 
@@ -213,6 +237,39 @@ def build_calibration_summary_report(  # pylint: disable=too-many-arguments,too-
                 record.peak_process_quality.value
                 for record in active_invocations
                 if record.peak_process_quality is not None
+            ]
+        ),
+        peak_memory_selected_method_counts=_count_by(
+            [record.peak_memory_provenance.selected_method.value for record in active_invocations]
+        ),
+        peak_process_selected_method_counts=_count_by(
+            [
+                record.peak_process_provenance.selected_method.value
+                for record in active_invocations
+            ]
+        ),
+        peak_memory_selection_disposition_counts=_count_by(
+            [
+                record.peak_memory_provenance.selection_disposition.value
+                for record in active_invocations
+            ]
+        ),
+        peak_process_selection_disposition_counts=_count_by(
+            [
+                record.peak_process_provenance.selection_disposition.value
+                for record in active_invocations
+            ]
+        ),
+        peak_memory_terminal_coverage_counts=_count_by(
+            [
+                record.peak_memory_provenance.terminal_coverage.value
+                for record in active_invocations
+            ]
+        ),
+        peak_process_terminal_coverage_counts=_count_by(
+            [
+                record.peak_process_provenance.terminal_coverage.value
+                for record in active_invocations
             ]
         ),
         per_task_case_counts=_count_by([record.task_id for record in active_invocations]),

@@ -47,6 +47,11 @@ from src.reference.reference_cache import CacheDisposition, ReferenceResultCache
 from src.reference.reference_evaluator import EXECUTION_PROTOCOL_VERSION, ReferenceTaskEvidence
 from src.reference.reference_orchestrator import WorkItem, WorkItemDisposition
 from src.reference.result_schema import MeasurementStatus, ReferenceTaskResult
+from tests._calibration_fixtures import (
+    make_collector_method_provenance,
+    make_host_runtime_context,
+    make_telemetry_collection_policy,
+)
 from tests._reference_orchestrator_cache_policy_fixtures import (
     FakeTraceRecorder,
     OverrideSequenceBackend,
@@ -363,9 +368,13 @@ def _build_invocation_record(  # pylint: disable=too-many-arguments,too-many-pos
         peak_memory_bytes=None,
         peak_memory_quality=None,
         peak_memory_unavailable_reason=TelemetryUnavailableReason.NOT_YET_INSTRUMENTED,
+        peak_memory_provenance=make_collector_method_provenance(metric_id="peak_memory_bytes"),
         peak_process_count=None,
         peak_process_quality=None,
         peak_process_unavailable_reason=TelemetryUnavailableReason.NOT_YET_INSTRUMENTED,
+        peak_process_provenance=make_collector_method_provenance(
+            metric_id="peak_process_count"
+        ),
         exit_code=None,
         terminating_signal=None,
         backend_id="fake",
@@ -388,6 +397,8 @@ def _calibration_context() -> CalibrationRunContext:
         oracle_version=ORACLE_ALGORITHM_VERSION,
         comparison_profile_version=COMPARISON_PROFILE_VERSION,
         task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
+        telemetry_collection_policy=make_telemetry_collection_policy(),
+        host_runtime_context=make_host_runtime_context(),
     )
 
 

@@ -21,8 +21,23 @@ from dataclasses import dataclass
 from src.execution.telemetry import ExecutionTelemetry, TelemetryObservation
 from src.execution.telemetry import TelemetryQuality as ExecQuality
 from src.execution.telemetry import TelemetryUnavailableReason as ExecReason
-from src.reference.calibration_schema import MeasurementQuality
+from src.execution.telemetry_methods import (
+    CollectorMethod,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
+)
+from src.reference.calibration_schema import CollectorMethodProvenance, MeasurementQuality
 from src.reference.calibration_schema import TelemetryUnavailableReason as CalibReason
+
+# MEGB-03H.2C.2A provenance/schema correction: identity/version stamped
+# on the placeholder CollectorMethodProvenance built for any observation
+# with no method_identity at all -- either a pre-H.2C
+# NOT_YET_INSTRUMENTED placeholder, or docker_backend.py's own
+# container-id-never-resolved path (collector_failure_observation() with
+# no method_identity, since no method was ever actually selected). Both
+# are conservatively recorded as "no method available", never a guess at
+# which real method might have run.
+_PLACEHOLDER_PROVENANCE_VERSION = "not_yet_instrumented/v1"
 
 # Exhaustive, order-independent 1:1 correspondence between the execution
 # layer's own taxonomy and H.2A's accepted one -- both enums share the
@@ -115,6 +130,60 @@ def _adapt_int_observation(
     return value, quality, reason
 
 
+def _adapt_method_provenance(
+    observation: TelemetryObservation,
+    *,
+    metric_id: str,
+    quality: MeasurementQuality | None,
+    reason: CalibReason | None,
+) -> CollectorMethodProvenance:
+    """Build the persisted :class:`CollectorMethodProvenance` for one
+    collector-derived metric (MEGB-03H.2C.2A provenance/schema
+    correction). ``quality``/``reason`` must be the *already-adapted*
+    values from :func:`_adapt_int_observation` (not re-derived from
+    ``observation`` directly) so this provenance always agrees exactly
+    with the sibling ``peak_*_quality``/``peak_*_unavailable_reason``
+    fields the caller stamps onto the same :class:`CalibrationInvocationRecord`
+    -- required by that record's own cross-validation.
+
+    When ``observation.method_identity`` is ``None`` (a pre-H.2C
+    ``NOT_YET_INSTRUMENTED`` placeholder, or ``docker_backend.py``'s own
+    container-id-never-resolved path, where no method was ever actually
+    selected), a conservative "no method available" placeholder is built
+    instead of guessing.
+    """
+    identity = observation.method_identity
+    if identity is None:
+        return CollectorMethodProvenance(
+            metric_id=metric_id,
+            collector_implementation_id="not_yet_instrumented",
+            collector_implementation_version=_PLACEHOLDER_PROVENANCE_VERSION,
+            selected_method=CollectorMethod.UNAVAILABLE_WITHOUT_CONTAMINATION,
+            selected_method_version=_PLACEHOLDER_PROVENANCE_VERSION,
+            interface_family="not_yet_instrumented",
+            configured_sampling_interval_sec=None,
+            actual_sample_count=0,
+            measurement_quality=quality,
+            selection_disposition=MetricCollectionDisposition.NO_METHOD_AVAILABLE,
+            terminal_coverage=TerminalCoverageState.TERMINAL_READ_NOT_APPLICABLE,
+            unavailability_or_failure_reason=reason,
+        )
+    return CollectorMethodProvenance(
+        metric_id=metric_id,
+        collector_implementation_id=identity.method.value,
+        collector_implementation_version=identity.method_version,
+        selected_method=identity.method,
+        selected_method_version=identity.method_version,
+        interface_family=identity.interface,
+        configured_sampling_interval_sec=identity.sampling_interval_sec,
+        actual_sample_count=observation.actual_sample_count,
+        measurement_quality=quality,
+        selection_disposition=identity.selection_disposition,
+        terminal_coverage=observation.terminal_coverage,
+        unavailability_or_failure_reason=reason,
+    )
+
+
 @dataclass(frozen=True)
 class CalibrationTelemetryFields:
     """The subset of :class:`~src.reference.calibration_schema.CalibrationInvocationRecord`'s
@@ -134,9 +203,11 @@ class CalibrationTelemetryFields:
     peak_memory_bytes: int | None
     peak_memory_quality: MeasurementQuality | None
     peak_memory_unavailable_reason: CalibReason | None
+    peak_memory_provenance: CollectorMethodProvenance
     peak_process_count: int | None
     peak_process_quality: MeasurementQuality | None
     peak_process_unavailable_reason: CalibReason | None
+    peak_process_provenance: CollectorMethodProvenance
 
 
 def adapt_execution_telemetry(telemetry: ExecutionTelemetry) -> CalibrationTelemetryFields:
@@ -160,6 +231,18 @@ def adapt_execution_telemetry(telemetry: ExecutionTelemetry) -> CalibrationTelem
     peak_process_value, peak_process_quality, peak_process_reason = _adapt_int_observation(
         telemetry.peak_process_count
     )
+    peak_memory_provenance = _adapt_method_provenance(
+        telemetry.peak_memory,
+        metric_id="peak_memory_bytes",
+        quality=peak_memory_quality,
+        reason=peak_memory_reason,
+    )
+    peak_process_provenance = _adapt_method_provenance(
+        telemetry.peak_process_count,
+        metric_id="peak_process_count",
+        quality=peak_process_quality,
+        reason=peak_process_reason,
+    )
     return CalibrationTelemetryFields(
         controller_wall_time_sec=telemetry.controller_wall_time_sec,
         request_bytes=telemetry.request_bytes,
@@ -172,9 +255,11 @@ def adapt_execution_telemetry(telemetry: ExecutionTelemetry) -> CalibrationTelem
         peak_memory_bytes=peak_memory_value,
         peak_memory_quality=peak_memory_quality,
         peak_memory_unavailable_reason=peak_memory_reason,
+        peak_memory_provenance=peak_memory_provenance,
         peak_process_count=peak_process_value,
         peak_process_quality=peak_process_quality,
         peak_process_unavailable_reason=peak_process_reason,
+        peak_process_provenance=peak_process_provenance,
     )
 
 

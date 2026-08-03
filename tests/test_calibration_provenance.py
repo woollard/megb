@@ -25,6 +25,7 @@ from src.reference.calibration_summary import (
 from tests._calibration_fixtures import (
     OTHER_REFERENCE_CASE_CHECKSUM,
     REFERENCE_CASE_CHECKSUM,
+    make_collector_method_provenance,
     make_context,
     make_invocation,
     make_task_evaluation_for,
@@ -157,7 +158,15 @@ def test_release_ready_accepts_fully_instrumented_invocation() -> None:
     """Release ready accepts fully instrumented invocation."""
     invocation = make_invocation(
         peak_memory_unavailable_reason=TelemetryUnavailableReason.HOST_TELEMETRY_UNAVAILABLE,
+        peak_memory_provenance=make_collector_method_provenance(
+            metric_id="peak_memory_bytes",
+            unavailability_or_failure_reason=TelemetryUnavailableReason.HOST_TELEMETRY_UNAVAILABLE,
+        ),
         peak_process_unavailable_reason=TelemetryUnavailableReason.HOST_TELEMETRY_UNAVAILABLE,
+        peak_process_provenance=make_collector_method_provenance(
+            metric_id="peak_process_count",
+            unavailability_or_failure_reason=TelemetryUnavailableReason.HOST_TELEMETRY_UNAVAILABLE,
+        ),
     )
     require_release_ready_stage([invocation])  # must not raise
 

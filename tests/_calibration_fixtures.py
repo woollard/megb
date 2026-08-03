@@ -11,13 +11,21 @@ from typing import Sequence
 
 from src.evaluators.schema import FailureCategory
 from src.execution.protocol import ExecutionStatus
+from src.execution.telemetry_methods import (
+    CollectorMethod,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
+)
 from src.reference.calibration_schema import (
     CALIBRATION_SCHEMA_VERSION,
     CalibrationInvocationRecord,
     CalibrationRunContext,
     CalibrationStage,
     CalibrationTaskEvaluationRecord,
+    CollectorMethodProvenance,
+    HostRuntimeContext,
     MeasurementQuality,
+    TelemetryCollectionPolicy,
     TelemetryUnavailableReason,
 )
 from src.reference.reference_orchestrator import WorkItemDisposition
@@ -30,6 +38,65 @@ TASK_MANIFEST_CHECKSUM = "9" * 64
 REFERENCE_CASE_CHECKSUM = "e" * 64
 OTHER_REFERENCE_CASE_CHECKSUM = "f" * 64
 RUNNER_IMAGE_DIGEST = "sha256:" + "c" * 64
+
+
+def make_telemetry_collection_policy(**overrides: object) -> TelemetryCollectionPolicy:
+    """Build a structurally valid TelemetryCollectionPolicy, fields overridable."""
+    fields: dict[str, object] = {
+        "telemetry_collection_profile_id": "megb-03h-telemetry-profile",
+        "telemetry_collection_profile_version": "v1",
+        "collector_selection_policy_id": "megb-03h-collector-selection-policy",
+        "collector_selection_policy_version": "v1",
+        "requested_metrics": ("peak_memory_bytes", "peak_process_count"),
+        "preferred_method_order": (
+            CollectorMethod.CGROUP_V2_MEMORY_PEAK,
+            CollectorMethod.SAMPLED_DOCKER_STATS_MEMORY,
+        ),
+        "configured_sampling_intervals_sec": (("peak_memory_bytes", 0.05),),
+    }
+    fields.update(overrides)
+    return TelemetryCollectionPolicy(**fields)  # type: ignore[arg-type]
+
+
+def make_host_runtime_context(**overrides: object) -> HostRuntimeContext:
+    """Build a structurally valid HostRuntimeContext, fields overridable."""
+    fields: dict[str, object] = {
+        "os_family": "Linux",
+        "architecture": "x86_64",
+        "kernel_release": "6.8.0-fake",
+        "docker_server_version": "27.0.0",
+        "docker_server_os": "linux",
+        "docker_server_architecture": "x86_64",
+        "cgroup_version": "v2",
+        "cgroup_mode": "systemd",
+        "docker_desktop": False,
+        "rootless": False,
+    }
+    fields.update(overrides)
+    return HostRuntimeContext(**fields)  # type: ignore[arg-type]
+
+
+def make_collector_method_provenance(**overrides: object) -> CollectorMethodProvenance:
+    """Build a structurally valid CollectorMethodProvenance, defaulting to
+    the pre-H.2C NOT_YET_INSTRUMENTED placeholder shape (matching
+    make_invocation()'s own default peak_memory/peak_process_count
+    unavailable_reason), fields overridable."""
+    fields: dict[str, object] = {
+        "metric_id": "peak_memory_bytes",
+        "collector_implementation_id": "not_yet_instrumented",
+        "collector_implementation_version": "not_yet_instrumented/v1",
+        "selected_method": CollectorMethod.UNAVAILABLE_WITHOUT_CONTAMINATION,
+        "selected_method_version": "not_yet_instrumented/v1",
+        "interface_family": "not_yet_instrumented",
+        "configured_sampling_interval_sec": None,
+        "actual_sample_count": 0,
+        "measurement_quality": None,
+        "selection_disposition": MetricCollectionDisposition.NO_METHOD_AVAILABLE,
+        "terminal_coverage": TerminalCoverageState.TERMINAL_READ_NOT_APPLICABLE,
+        "unavailability_or_failure_reason": TelemetryUnavailableReason.NOT_YET_INSTRUMENTED,
+    }
+    fields.update(overrides)
+    return CollectorMethodProvenance(**fields)  # type: ignore[arg-type]
 
 
 def make_context(**overrides: object) -> CalibrationRunContext:
@@ -47,6 +114,8 @@ def make_context(**overrides: object) -> CalibrationRunContext:
         "oracle_version": "oracle-v1",
         "comparison_profile_version": "comparison-v1",
         "task_manifest_checksum": TASK_MANIFEST_CHECKSUM,
+        "telemetry_collection_policy": make_telemetry_collection_policy(),
+        "host_runtime_context": make_host_runtime_context(),
     }
     fields.update(overrides)
     return CalibrationRunContext(**fields)  # type: ignore[arg-type]
@@ -81,9 +150,13 @@ def make_invocation(
         "peak_memory_bytes": None,
         "peak_memory_quality": None,
         "peak_memory_unavailable_reason": TelemetryUnavailableReason.NOT_YET_INSTRUMENTED,
+        "peak_memory_provenance": make_collector_method_provenance(metric_id="peak_memory_bytes"),
         "peak_process_count": None,
         "peak_process_quality": None,
         "peak_process_unavailable_reason": TelemetryUnavailableReason.NOT_YET_INSTRUMENTED,
+        "peak_process_provenance": make_collector_method_provenance(
+            metric_id="peak_process_count"
+        ),
         "exit_code": 0,
         "terminating_signal": None,
         "backend_id": "docker",

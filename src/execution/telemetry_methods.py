@@ -54,6 +54,45 @@ class CollectorMethod(str, Enum):
     UNAVAILABLE_WITHOUT_CONTAMINATION = "UNAVAILABLE_WITHOUT_CONTAMINATION"
 
 
+SAMPLED_METHODS = frozenset(
+    {CollectorMethod.SAMPLED_DOCKER_STATS_MEMORY, CollectorMethod.SAMPLED_DOCKER_TOP_PROCESS_COUNT}
+)
+
+
+class MetricCollectionDisposition(str, Enum):
+    """Typed selection/fallback disposition for one metric's actual
+    method (MEGB-03H.2C.2A provenance/schema correction) -- *why* this
+    invocation's collector ended up using the method it did, distinct
+    from the method itself: two invocations using the identical method
+    can have gotten there differently (one via its primary path, one via
+    fallback after a capability probe failed), and that difference
+    matters for interpreting a real measurement's portability."""
+
+    PRIMARY_METHOD_SELECTED = "PRIMARY_METHOD_SELECTED"
+    FALLBACK_METHOD_SELECTED = "FALLBACK_METHOD_SELECTED"
+    NO_METHOD_AVAILABLE = "NO_METHOD_AVAILABLE"
+
+
+class TerminalCoverageState(str, Enum):
+    """Whether a collector's own terminal (final) read was confirmed to
+    have happened while the underlying resource (cgroup, container) was
+    still valid and after all candidate resource activity had already
+    ended -- the exactness correction this checkpoint adds. File
+    existence or a successful *mid-execution* read is not sufficient
+    proof; only an explicit, independently-confirmed terminal-state check
+    justifies ``EXACT``.
+
+    ``TERMINAL_READ_NOT_APPLICABLE`` is the correct value for any method
+    with no single terminal-read concept at all (every sampled method,
+    and the explicit unavailable outcome) -- it is not a weaker claim of
+    coverage, it is a statement that this axis does not apply.
+    """
+
+    TERMINAL_READ_CONFIRMED = "TERMINAL_READ_CONFIRMED"
+    TERMINAL_READ_NOT_APPLICABLE = "TERMINAL_READ_NOT_APPLICABLE"
+    TERMINAL_READ_MISSED = "TERMINAL_READ_MISSED"
+
+
 @dataclass(frozen=True)
 class CollectorMethodIdentity:
     """Everything needed to reproduce or interpret one observation's
@@ -76,6 +115,7 @@ class CollectorMethodIdentity:
     method_version: str
     interface: str
     sampling_interval_sec: float | None
+    selection_disposition: MetricCollectionDisposition
     host_runtime_metadata: tuple[tuple[str, str], ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
@@ -93,6 +133,19 @@ class CollectorMethodIdentity:
             raise ValueError(
                 f"sampling_interval_sec must be a positive number or None, got "
                 f"{self.sampling_interval_sec!r}"
+            )
+        if not isinstance(self.selection_disposition, MetricCollectionDisposition):
+            raise ValueError(
+                f"selection_disposition must be a MetricCollectionDisposition, got "
+                f"{self.selection_disposition!r}"
+            )
+        if (self.method == CollectorMethod.UNAVAILABLE_WITHOUT_CONTAMINATION) != (
+            self.selection_disposition == MetricCollectionDisposition.NO_METHOD_AVAILABLE
+        ):
+            raise ValueError(
+                "selection_disposition must be NO_METHOD_AVAILABLE if and only if method is "
+                f"UNAVAILABLE_WITHOUT_CONTAMINATION, got method={self.method!r}, "
+                f"selection_disposition={self.selection_disposition!r}"
             )
         if not isinstance(self.host_runtime_metadata, tuple):
             raise ValueError(
@@ -177,4 +230,7 @@ __all__ = [
     "CollectorMethodIdentity",
     "HostCapabilityProbe",
     "FakeHostCapabilityProbe",
+    "MetricCollectionDisposition",
+    "TerminalCoverageState",
+    "SAMPLED_METHODS",
 ]

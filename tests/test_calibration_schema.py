@@ -166,6 +166,12 @@ def test_summary_report_schema_version_rejection() -> None:
             observed_response_quality_counts={},
             peak_memory_quality_counts={},
             peak_process_quality_counts={},
+            peak_memory_selected_method_counts={},
+            peak_process_selected_method_counts={},
+            peak_memory_selection_disposition_counts={},
+            peak_process_selection_disposition_counts={},
+            peak_memory_terminal_coverage_counts={},
+            peak_process_terminal_coverage_counts={},
             per_task_case_counts={},
         )
 

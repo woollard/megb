@@ -1,3 +1,13 @@
+# This module grew past pylint's default line-count threshold with the
+# MEGB-03H.2C.2A provenance/schema correction's own additions
+# (HostRuntimeContext/TelemetryCollectionPolicy/CollectorMethodProvenance
+# and their checksum/validation/serialization machinery). Kept in one
+# module rather than split out (as calibration_summary.py already was,
+# for the same size reason) because every new type here shares
+# CalibrationRunContext/CalibrationInvocationRecord's own private
+# checksum/validation helpers directly, and splitting would only move
+# that coupling across a module boundary, not remove it.
+# pylint: disable=too-many-lines
 """MEGB-03H.2A: typed, immutable, versioned calibration record schemas.
 
 Implements the approved MEGB-03H.1 design's frozen decisions 7 (calibration-
@@ -68,10 +78,22 @@ from typing import Any, Mapping, Sequence
 
 from src.evaluators.schema import FailureCategory
 from src.execution.protocol import ExecutionStatus
+from src.execution.telemetry_methods import (
+    SAMPLED_METHODS,
+    CollectorMethod,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
+)
 from src.reference.reference_orchestrator import WorkItemDisposition
 from src.reference.result_schema import MeasurementStatus
 
-CALIBRATION_SCHEMA_VERSION = "megb-03h-calibration-record-v1"
+# MEGB-03H.2C.2A provenance/schema correction: v1 -> v2, adding
+# TelemetryCollectionPolicy/HostRuntimeContext to CalibrationRunContext
+# and CollectorMethodProvenance to CalibrationInvocationRecord (see the
+# module docstring addendum below). No real persisted v1 artifact exists
+# anywhere in this repository or its gitignored local paths (confirmed by
+# search at correction time) -- no migration is performed or required.
+CALIBRATION_SCHEMA_VERSION = "megb-03h-calibration-record-v2"
 
 _SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -203,6 +225,239 @@ def _enum_value(value: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# HostRuntimeContext (MEGB-03H.2C.2A provenance/schema correction)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HostRuntimeContext:
+    """Safe, allowlisted, self-checksummed host/runtime description,
+    sufficient to interpret one calibration run's telemetry portability --
+    MEGB-03H.2C.2A provenance/schema correction (the H.2C.2A calibration-
+    provenance audit's own found gap). Deliberately excludes hostname,
+    username, filesystem paths, machine serials, container ids, daemon
+    socket paths, credentials, or any unrestricted command output -- every
+    field here is a coarse platform/version fact, never anything host-
+    identifying.
+
+    ``docker_desktop``/``rootless`` are ``bool | None`` -- ``None`` means
+    undeterminable or not applicable on this host, never a guessed
+    default.
+    """
+
+    os_family: str
+    architecture: str
+    kernel_release: str
+    docker_server_version: str
+    docker_server_os: str
+    docker_server_architecture: str
+    cgroup_version: str
+    cgroup_mode: str
+    docker_desktop: bool | None
+    rootless: bool | None
+    host_context_checksum: str = ""
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "os_family",
+            "architecture",
+            "kernel_release",
+            "docker_server_version",
+            "docker_server_os",
+            "docker_server_architecture",
+            "cgroup_version",
+            "cgroup_mode",
+        ):
+            _require_nonempty_str(self, field_name)
+        for field_name in ("docker_desktop", "rootless"):
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, bool):
+                raise InvalidCalibrationRecordError(
+                    f"{field_name!r} must be a bool or None, got {value!r}"
+                )
+        payload = _host_runtime_context_payload(self)
+        expected_checksum = _sha256_of(payload)
+        if self.host_context_checksum and self.host_context_checksum != expected_checksum:
+            raise InvalidCalibrationRecordError(
+                f"host_context_checksum {self.host_context_checksum!r} does not match the "
+                f"recomputed checksum {expected_checksum!r} over its own contents -- tampered "
+                f"or corrupted host runtime context"
+            )
+        object.__setattr__(self, "host_context_checksum", expected_checksum)
+
+
+def _host_runtime_context_payload(context: HostRuntimeContext) -> dict[str, Any]:
+    return {
+        "os_family": context.os_family,
+        "architecture": context.architecture,
+        "kernel_release": context.kernel_release,
+        "docker_server_version": context.docker_server_version,
+        "docker_server_os": context.docker_server_os,
+        "docker_server_architecture": context.docker_server_architecture,
+        "cgroup_version": context.cgroup_version,
+        "cgroup_mode": context.cgroup_mode,
+        "docker_desktop": context.docker_desktop,
+        "rootless": context.rootless,
+    }
+
+
+def host_runtime_context_to_dict(context: HostRuntimeContext) -> dict[str, Any]:
+    """Full-fidelity serialization of a :class:`HostRuntimeContext`."""
+    return {
+        **_host_runtime_context_payload(context),
+        "host_context_checksum": context.host_context_checksum,
+    }
+
+
+def host_runtime_context_from_dict(data: Mapping[str, Any]) -> HostRuntimeContext:
+    """Inverse of :func:`host_runtime_context_to_dict`."""
+    try:
+        return HostRuntimeContext(
+            os_family=data["os_family"],
+            architecture=data["architecture"],
+            kernel_release=data["kernel_release"],
+            docker_server_version=data["docker_server_version"],
+            docker_server_os=data["docker_server_os"],
+            docker_server_architecture=data["docker_server_architecture"],
+            cgroup_version=data["cgroup_version"],
+            cgroup_mode=data["cgroup_mode"],
+            docker_desktop=data["docker_desktop"],
+            rootless=data["rootless"],
+            host_context_checksum=data["host_context_checksum"],
+        )
+    except KeyError as exc:
+        raise InvalidCalibrationRecordError(f"missing required host context field: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# TelemetryCollectionPolicy (MEGB-03H.2C.2A provenance/schema correction)
+# ---------------------------------------------------------------------------
+
+
+def _is_valid_sampling_interval_pair(pair: Any) -> bool:
+    if not isinstance(pair, tuple) or len(pair) != 2:
+        return False
+    metric_id, interval = pair
+    if not isinstance(metric_id, str) or not metric_id:
+        return False
+    if isinstance(interval, bool) or not isinstance(interval, (int, float)):
+        return False
+    return interval > 0
+
+
+@dataclass(frozen=True)
+class TelemetryCollectionPolicy:
+    """Run-level *requested* telemetry collection policy -- what this run
+    asked for, not what was actually used for a given metric on a given
+    invocation (see :class:`CollectorMethodProvenance` for that): a
+    run-level policy cannot substitute for per-metric actual-method
+    provenance because different metrics and hosts may select different
+    fallbacks, per the H.2C.2A provenance/schema correction's own design.
+    """
+
+    telemetry_collection_profile_id: str
+    telemetry_collection_profile_version: str
+    collector_selection_policy_id: str
+    collector_selection_policy_version: str
+    requested_metrics: tuple[str, ...]
+    preferred_method_order: tuple[CollectorMethod, ...]
+    configured_sampling_intervals_sec: tuple[tuple[str, float], ...]
+    policy_checksum: str = ""
+
+    def __post_init__(self) -> None:  # pylint: disable=too-many-branches
+        for field_name in (
+            "telemetry_collection_profile_id",
+            "telemetry_collection_profile_version",
+            "collector_selection_policy_id",
+            "collector_selection_policy_version",
+        ):
+            _require_nonempty_str(self, field_name)
+        if not isinstance(self.requested_metrics, tuple) or not all(
+            isinstance(metric, str) and metric for metric in self.requested_metrics
+        ):
+            raise InvalidCalibrationRecordError(
+                f"requested_metrics must be a tuple of nonempty strings, got "
+                f"{self.requested_metrics!r}"
+            )
+        if not isinstance(self.preferred_method_order, tuple) or not all(
+            isinstance(method, CollectorMethod) for method in self.preferred_method_order
+        ):
+            raise InvalidCalibrationRecordError(
+                f"preferred_method_order must be a tuple of CollectorMethod, got "
+                f"{self.preferred_method_order!r}"
+            )
+        if not isinstance(self.configured_sampling_intervals_sec, tuple):
+            raise InvalidCalibrationRecordError(
+                "configured_sampling_intervals_sec must be a tuple, got "
+                f"{type(self.configured_sampling_intervals_sec).__name__}"
+            )
+        for pair in self.configured_sampling_intervals_sec:
+            if not _is_valid_sampling_interval_pair(pair):
+                raise InvalidCalibrationRecordError(
+                    "configured_sampling_intervals_sec entries must be (nonempty metric id, "
+                    f"positive interval) pairs, got {pair!r}"
+                )
+        payload = _telemetry_collection_policy_payload(self)
+        expected_checksum = _sha256_of(payload)
+        if self.policy_checksum and self.policy_checksum != expected_checksum:
+            raise InvalidCalibrationRecordError(
+                f"policy_checksum {self.policy_checksum!r} does not match the recomputed "
+                f"checksum {expected_checksum!r} over its own contents -- tampered or "
+                f"corrupted telemetry collection policy"
+            )
+        object.__setattr__(self, "policy_checksum", expected_checksum)
+
+
+def _telemetry_collection_policy_payload(policy: TelemetryCollectionPolicy) -> dict[str, Any]:
+    return {
+        "telemetry_collection_profile_id": policy.telemetry_collection_profile_id,
+        "telemetry_collection_profile_version": policy.telemetry_collection_profile_version,
+        "collector_selection_policy_id": policy.collector_selection_policy_id,
+        "collector_selection_policy_version": policy.collector_selection_policy_version,
+        "requested_metrics": list(policy.requested_metrics),
+        "preferred_method_order": [method.value for method in policy.preferred_method_order],
+        "configured_sampling_intervals_sec": [
+            list(pair) for pair in policy.configured_sampling_intervals_sec
+        ],
+    }
+
+
+def telemetry_collection_policy_to_dict(policy: TelemetryCollectionPolicy) -> dict[str, Any]:
+    """Full-fidelity serialization of a :class:`TelemetryCollectionPolicy`."""
+    return {
+        **_telemetry_collection_policy_payload(policy),
+        "policy_checksum": policy.policy_checksum,
+    }
+
+
+def telemetry_collection_policy_from_dict(data: Mapping[str, Any]) -> TelemetryCollectionPolicy:
+    """Inverse of :func:`telemetry_collection_policy_to_dict`."""
+    try:
+        return TelemetryCollectionPolicy(
+            telemetry_collection_profile_id=data["telemetry_collection_profile_id"],
+            telemetry_collection_profile_version=data["telemetry_collection_profile_version"],
+            collector_selection_policy_id=data["collector_selection_policy_id"],
+            collector_selection_policy_version=data["collector_selection_policy_version"],
+            requested_metrics=tuple(data["requested_metrics"]),
+            preferred_method_order=tuple(
+                CollectorMethod(method) for method in data["preferred_method_order"]
+            ),
+            configured_sampling_intervals_sec=tuple(
+                tuple(pair) for pair in data["configured_sampling_intervals_sec"]
+            ),
+            policy_checksum=data["policy_checksum"],
+        )
+    except KeyError as exc:
+        raise InvalidCalibrationRecordError(
+            f"missing required telemetry collection policy field: {exc}"
+        ) from exc
+    except ValueError as exc:
+        raise InvalidCalibrationRecordError(
+            f"malformed telemetry collection policy: {exc}"
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
 # CalibrationRunContext
 # ---------------------------------------------------------------------------
 
@@ -222,6 +477,16 @@ class CalibrationRunContext:
     other label but differ in *which manifest instance* they were bound to
     are never treated as the same context (``context_checksum`` differs).
 
+    ``telemetry_collection_policy``/``host_runtime_context`` (MEGB-03H.2C.2A
+    provenance/schema correction) bind the run-level requested telemetry
+    policy and the safe host/runtime description into this same identity
+    -- since both participate in ``context_checksum``, two contexts that
+    differ only in telemetry policy or host/runtime context are never
+    treated as the same context, and reconciliation (which already
+    requires every contributor to share one ``context_checksum``)
+    automatically rejects a mix of incompatible run-level telemetry
+    provenance with no additional code.
+
     ``context_checksum`` is always recomputed from this object's own
     canonical contents at construction time -- never accepted as an
     unverified caller-provided value (same auto-compute-or-reject pattern
@@ -240,6 +505,8 @@ class CalibrationRunContext:
     oracle_version: str
     comparison_profile_version: str
     task_manifest_checksum: str
+    telemetry_collection_policy: TelemetryCollectionPolicy
+    host_runtime_context: HostRuntimeContext
     context_checksum: str = ""
 
     def __post_init__(self) -> None:
@@ -265,6 +532,16 @@ class CalibrationRunContext:
         ):
             _require_nonempty_str(self, field_name)
         _require_sha256_hex(self, "task_manifest_checksum")
+        if not isinstance(self.telemetry_collection_policy, TelemetryCollectionPolicy):
+            raise InvalidCalibrationRecordError(
+                "telemetry_collection_policy must be a TelemetryCollectionPolicy, got "
+                f"{self.telemetry_collection_policy!r}"
+            )
+        if not isinstance(self.host_runtime_context, HostRuntimeContext):
+            raise InvalidCalibrationRecordError(
+                f"host_runtime_context must be a HostRuntimeContext, got "
+                f"{self.host_runtime_context!r}"
+            )
 
         payload = _calibration_run_context_payload(self)
         expected_checksum = _sha256_of(payload)
@@ -291,6 +568,10 @@ def _calibration_run_context_payload(context: CalibrationRunContext) -> dict[str
         "oracle_version": context.oracle_version,
         "comparison_profile_version": context.comparison_profile_version,
         "task_manifest_checksum": context.task_manifest_checksum,
+        "telemetry_collection_policy": telemetry_collection_policy_to_dict(
+            context.telemetry_collection_policy
+        ),
+        "host_runtime_context": host_runtime_context_to_dict(context.host_runtime_context),
     }
 
 
@@ -318,6 +599,10 @@ def calibration_run_context_from_dict(data: Mapping[str, Any]) -> CalibrationRun
             oracle_version=data["oracle_version"],
             comparison_profile_version=data["comparison_profile_version"],
             task_manifest_checksum=data["task_manifest_checksum"],
+            telemetry_collection_policy=telemetry_collection_policy_from_dict(
+                data["telemetry_collection_policy"]
+            ),
+            host_runtime_context=host_runtime_context_from_dict(data["host_runtime_context"]),
             context_checksum=data["context_checksum"],
         )
     except KeyError as exc:
@@ -357,6 +642,243 @@ def _validate_telemetry_triple(
                 f"{quality_field!r} must be a MeasurementQuality when {value_field!r} is "
                 f"present, got {quality!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# CollectorMethodProvenance (MEGB-03H.2C.2A provenance/schema correction)
+# ---------------------------------------------------------------------------
+
+_PROVENANCE_METRIC_IDS = frozenset({"peak_memory_bytes", "peak_process_count"})
+
+
+@dataclass(frozen=True)
+class CollectorMethodProvenance:  # pylint: disable=too-many-instance-attributes
+    """Actual, per-metric telemetry-collection provenance for one
+    invocation's one metric -- distinct from the run-level *requested*
+    :class:`TelemetryCollectionPolicy`, since different metrics and hosts
+    may fall back to different methods (MEGB-03H.2C.2A provenance/schema
+    correction, resolving the gap the H.2C.1-era provenance audit found).
+
+    Exactly one of ``measurement_quality``/``unavailability_or_failure_reason``
+    is set, mirroring :func:`_validate_telemetry_triple`'s own orthogonal-
+    presence contract -- but this dataclass has no ``value`` field of its
+    own to key that off of; :class:`CalibrationInvocationRecord` cross-
+    validates that this quality/reason pair agrees exactly with its own
+    ``peak_memory_quality``/``peak_memory_unavailable_reason`` (or the
+    process-count equivalents).
+
+    Two hard invariants enforced here (never left to caller discipline):
+    ``measurement_quality == EXACT`` requires ``terminal_coverage ==
+    TERMINAL_READ_CONFIRMED``, and a method in
+    :data:`~src.execution.telemetry_methods.SAMPLED_METHODS` can never
+    report ``measurement_quality == EXACT``.
+    ``measurement_quality == SAMPLED_WITH_KNOWN_ERROR`` is provisionally
+    rejected outright: no collector method this codebase implements yet
+    has a defensible quantitative error characterization to justify it.
+    """
+
+    metric_id: str
+    collector_implementation_id: str
+    collector_implementation_version: str
+    selected_method: CollectorMethod
+    selected_method_version: str
+    interface_family: str
+    configured_sampling_interval_sec: float | None
+    actual_sample_count: int
+    measurement_quality: MeasurementQuality | None
+    selection_disposition: MetricCollectionDisposition
+    terminal_coverage: TerminalCoverageState
+    unavailability_or_failure_reason: TelemetryUnavailableReason | None
+    provenance_checksum: str = ""
+
+    def __post_init__(self) -> None:  # pylint: disable=too-many-branches
+        if self.metric_id not in _PROVENANCE_METRIC_IDS:
+            raise InvalidCalibrationRecordError(
+                f"metric_id must be one of {sorted(_PROVENANCE_METRIC_IDS)!r}, got "
+                f"{self.metric_id!r}"
+            )
+        for field_name in (
+            "collector_implementation_id",
+            "collector_implementation_version",
+            "selected_method_version",
+            "interface_family",
+        ):
+            _require_nonempty_str(self, field_name)
+        if not isinstance(self.selected_method, CollectorMethod):
+            raise InvalidCalibrationRecordError(
+                f"selected_method must be a CollectorMethod, got {self.selected_method!r}"
+            )
+        if self.configured_sampling_interval_sec is not None and (
+            isinstance(self.configured_sampling_interval_sec, bool)
+            or self.configured_sampling_interval_sec <= 0
+        ):
+            raise InvalidCalibrationRecordError(
+                "configured_sampling_interval_sec must be a positive number or None, got "
+                f"{self.configured_sampling_interval_sec!r}"
+            )
+        _require_non_negative_int(self, "actual_sample_count")
+        if not isinstance(self.selection_disposition, MetricCollectionDisposition):
+            raise InvalidCalibrationRecordError(
+                f"selection_disposition must be a MetricCollectionDisposition, got "
+                f"{self.selection_disposition!r}"
+            )
+        if not isinstance(self.terminal_coverage, TerminalCoverageState):
+            raise InvalidCalibrationRecordError(
+                f"terminal_coverage must be a TerminalCoverageState, got {self.terminal_coverage!r}"
+            )
+        if (self.measurement_quality is None) == (self.unavailability_or_failure_reason is None):
+            raise InvalidCalibrationRecordError(
+                "exactly one of measurement_quality/unavailability_or_failure_reason must be "
+                f"set, got measurement_quality={self.measurement_quality!r}, "
+                f"unavailability_or_failure_reason={self.unavailability_or_failure_reason!r}"
+            )
+        if self.measurement_quality is not None and not isinstance(
+            self.measurement_quality, MeasurementQuality
+        ):
+            raise InvalidCalibrationRecordError(
+                f"measurement_quality must be a MeasurementQuality or None, got "
+                f"{self.measurement_quality!r}"
+            )
+        if self.unavailability_or_failure_reason is not None and not isinstance(
+            self.unavailability_or_failure_reason, TelemetryUnavailableReason
+        ):
+            raise InvalidCalibrationRecordError(
+                f"unavailability_or_failure_reason must be a TelemetryUnavailableReason or "
+                f"None, got {self.unavailability_or_failure_reason!r}"
+            )
+        if self.measurement_quality == MeasurementQuality.SAMPLED_WITH_KNOWN_ERROR:
+            raise InvalidCalibrationRecordError(
+                "measurement_quality=SAMPLED_WITH_KNOWN_ERROR is not yet supported by any "
+                "implemented collector method -- no defensible quantitative error model exists"
+            )
+        if (
+            self.measurement_quality == MeasurementQuality.EXACT
+            and self.terminal_coverage != TerminalCoverageState.TERMINAL_READ_CONFIRMED
+        ):
+            raise InvalidCalibrationRecordError(
+                "measurement_quality=EXACT requires terminal_coverage=TERMINAL_READ_CONFIRMED, "
+                f"got {self.terminal_coverage!r}"
+            )
+        if (
+            self.selected_method in SAMPLED_METHODS
+            and self.measurement_quality == MeasurementQuality.EXACT
+        ):
+            raise InvalidCalibrationRecordError(
+                f"selected_method {self.selected_method!r} is a sampled method and can never "
+                "report measurement_quality=EXACT"
+            )
+        if (self.selected_method == CollectorMethod.UNAVAILABLE_WITHOUT_CONTAMINATION) != (
+            self.selection_disposition == MetricCollectionDisposition.NO_METHOD_AVAILABLE
+        ):
+            raise InvalidCalibrationRecordError(
+                "selection_disposition must be NO_METHOD_AVAILABLE if and only if "
+                f"selected_method is UNAVAILABLE_WITHOUT_CONTAMINATION, got selected_method="
+                f"{self.selected_method!r}, selection_disposition={self.selection_disposition!r}"
+            )
+
+        payload = _collector_method_provenance_payload(self)
+        expected_checksum = _sha256_of(payload)
+        if self.provenance_checksum and self.provenance_checksum != expected_checksum:
+            raise InvalidCalibrationRecordError(
+                f"provenance_checksum {self.provenance_checksum!r} does not match the "
+                f"recomputed checksum {expected_checksum!r} over its own contents -- tampered "
+                f"or corrupted collector method provenance"
+            )
+        object.__setattr__(self, "provenance_checksum", expected_checksum)
+
+
+def _collector_method_provenance_payload(provenance: CollectorMethodProvenance) -> dict[str, Any]:
+    return {
+        "metric_id": provenance.metric_id,
+        "collector_implementation_id": provenance.collector_implementation_id,
+        "collector_implementation_version": provenance.collector_implementation_version,
+        "selected_method": provenance.selected_method.value,
+        "selected_method_version": provenance.selected_method_version,
+        "interface_family": provenance.interface_family,
+        "configured_sampling_interval_sec": provenance.configured_sampling_interval_sec,
+        "actual_sample_count": provenance.actual_sample_count,
+        "measurement_quality": _enum_value(provenance.measurement_quality),
+        "selection_disposition": provenance.selection_disposition.value,
+        "terminal_coverage": provenance.terminal_coverage.value,
+        "unavailability_or_failure_reason": _enum_value(
+            provenance.unavailability_or_failure_reason
+        ),
+    }
+
+
+def collector_method_provenance_to_dict(provenance: CollectorMethodProvenance) -> dict[str, Any]:
+    """Full-fidelity serialization of a :class:`CollectorMethodProvenance`."""
+    return {
+        **_collector_method_provenance_payload(provenance),
+        "provenance_checksum": provenance.provenance_checksum,
+    }
+
+
+def collector_method_provenance_from_dict(data: Mapping[str, Any]) -> CollectorMethodProvenance:
+    """Inverse of :func:`collector_method_provenance_to_dict`."""
+    try:
+        return CollectorMethodProvenance(
+            metric_id=data["metric_id"],
+            collector_implementation_id=data["collector_implementation_id"],
+            collector_implementation_version=data["collector_implementation_version"],
+            selected_method=CollectorMethod(data["selected_method"]),
+            selected_method_version=data["selected_method_version"],
+            interface_family=data["interface_family"],
+            configured_sampling_interval_sec=data["configured_sampling_interval_sec"],
+            actual_sample_count=data["actual_sample_count"],
+            measurement_quality=_optional_enum(data["measurement_quality"], MeasurementQuality),
+            selection_disposition=MetricCollectionDisposition(data["selection_disposition"]),
+            terminal_coverage=TerminalCoverageState(data["terminal_coverage"]),
+            unavailability_or_failure_reason=_optional_enum(
+                data["unavailability_or_failure_reason"], TelemetryUnavailableReason
+            ),
+            provenance_checksum=data["provenance_checksum"],
+        )
+    except KeyError as exc:
+        raise InvalidCalibrationRecordError(
+            f"missing required collector method provenance field: {exc}"
+        ) from exc
+    except ValueError as exc:
+        raise InvalidCalibrationRecordError(
+            f"malformed collector method provenance: {exc}"
+        ) from exc
+
+
+def _require_consistent_metric_provenance(
+    record: "CalibrationInvocationRecord",
+    *,
+    provenance_field: str,
+    quality_field: str,
+    reason_field: str,
+    expected_metric_id: str,
+) -> None:
+    """Cross-validate one metric's :class:`CollectorMethodProvenance`
+    against the sibling value/quality/reason triple on the same record --
+    a provenance object that disagrees with what the record itself claims
+    for that metric is rejected, never silently tolerated."""
+    provenance = getattr(record, provenance_field)
+    if not isinstance(provenance, CollectorMethodProvenance):
+        raise InvalidCalibrationRecordError(
+            f"{provenance_field!r} must be a CollectorMethodProvenance, got {provenance!r}"
+        )
+    if provenance.metric_id != expected_metric_id:
+        raise InvalidCalibrationRecordError(
+            f"{provenance_field!r}.metric_id must be {expected_metric_id!r}, got "
+            f"{provenance.metric_id!r}"
+        )
+    quality = getattr(record, quality_field)
+    reason = getattr(record, reason_field)
+    if provenance.measurement_quality != quality:
+        raise InvalidCalibrationRecordError(
+            f"{provenance_field!r}.measurement_quality ({provenance.measurement_quality!r}) "
+            f"does not match {quality_field!r} ({quality!r}) on the same record"
+        )
+    if provenance.unavailability_or_failure_reason != reason:
+        raise InvalidCalibrationRecordError(
+            f"{provenance_field!r}.unavailability_or_failure_reason "
+            f"({provenance.unavailability_or_failure_reason!r}) does not match {reason_field!r} "
+            f"({reason!r}) on the same record"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -413,9 +935,11 @@ class CalibrationInvocationRecord:  # pylint: disable=too-many-instance-attribut
     peak_memory_bytes: int | None
     peak_memory_quality: MeasurementQuality | None
     peak_memory_unavailable_reason: TelemetryUnavailableReason | None
+    peak_memory_provenance: CollectorMethodProvenance
     peak_process_count: int | None
     peak_process_quality: MeasurementQuality | None
     peak_process_unavailable_reason: TelemetryUnavailableReason | None
+    peak_process_provenance: CollectorMethodProvenance
     exit_code: int | None
     terminating_signal: int | None
     backend_id: str
@@ -488,6 +1012,20 @@ class CalibrationInvocationRecord:  # pylint: disable=too-many-instance-attribut
         _validate_telemetry_triple(
             self, "peak_process_count", "peak_process_quality", "peak_process_unavailable_reason"
         )
+        _require_consistent_metric_provenance(
+            self,
+            provenance_field="peak_memory_provenance",
+            quality_field="peak_memory_quality",
+            reason_field="peak_memory_unavailable_reason",
+            expected_metric_id="peak_memory_bytes",
+        )
+        _require_consistent_metric_provenance(
+            self,
+            provenance_field="peak_process_provenance",
+            quality_field="peak_process_quality",
+            reason_field="peak_process_unavailable_reason",
+            expected_metric_id="peak_process_count",
+        )
         if self.exit_code is not None and (
             not isinstance(self.exit_code, int) or isinstance(self.exit_code, bool)
         ):
@@ -546,9 +1084,15 @@ def _calibration_invocation_record_payload(record: CalibrationInvocationRecord) 
         "peak_memory_bytes": record.peak_memory_bytes,
         "peak_memory_quality": _enum_value(record.peak_memory_quality),
         "peak_memory_unavailable_reason": _enum_value(record.peak_memory_unavailable_reason),
+        "peak_memory_provenance": collector_method_provenance_to_dict(
+            record.peak_memory_provenance
+        ),
         "peak_process_count": record.peak_process_count,
         "peak_process_quality": _enum_value(record.peak_process_quality),
         "peak_process_unavailable_reason": _enum_value(record.peak_process_unavailable_reason),
+        "peak_process_provenance": collector_method_provenance_to_dict(
+            record.peak_process_provenance
+        ),
         "exit_code": record.exit_code,
         "terminating_signal": record.terminating_signal,
         "backend_id": record.backend_id,
@@ -608,10 +1152,16 @@ def calibration_invocation_record_from_dict(data: Mapping[str, Any]) -> Calibrat
             peak_memory_unavailable_reason=_optional_enum(
                 data["peak_memory_unavailable_reason"], TelemetryUnavailableReason
             ),
+            peak_memory_provenance=collector_method_provenance_from_dict(
+                data["peak_memory_provenance"]
+            ),
             peak_process_count=data["peak_process_count"],
             peak_process_quality=_optional_enum(data["peak_process_quality"], MeasurementQuality),
             peak_process_unavailable_reason=_optional_enum(
                 data["peak_process_unavailable_reason"], TelemetryUnavailableReason
+            ),
+            peak_process_provenance=collector_method_provenance_from_dict(
+                data["peak_process_provenance"]
             ),
             exit_code=data["exit_code"],
             terminating_signal=data["terminating_signal"],

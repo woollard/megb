@@ -30,6 +30,12 @@ from src.execution.telemetry import (
     collector_failure_observation,
 )
 from src.execution.telemetry_collectors import FakeTelemetryCollector, run_collector
+from src.execution.telemetry_methods import (
+    CollectorMethod,
+    CollectorMethodIdentity,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
+)
 from src.reference.execution_telemetry_adapter import (
     CalibrationTelemetryFields,
     adapt_execution_telemetry,
@@ -197,6 +203,16 @@ def test_cleanup_failure_on_one_collector_does_not_corrupt_sibling_telemetry_fie
     assert telemetry.observed_response_bytes.value == 77
 
 
+def _confirmed_exact_method_identity() -> CollectorMethodIdentity:
+    return CollectorMethodIdentity(
+        method=CollectorMethod.CGROUP_V2_MEMORY_PEAK,
+        method_version="cgroup_peak_file_collector/v1",
+        interface="cgroupfs:/fake/memory.peak",
+        sampling_interval_sec=None,
+        selection_disposition=MetricCollectionDisposition.PRIMARY_METHOD_SELECTED,
+    )
+
+
 def test_cleanup_failure_is_conservatively_mapped_to_sampler_failure_for_calibration() -> None:
     """Per invariant 4: even though the raw observation was a valid EXACT
     reading, the adapter conservatively reports it as unavailable/
@@ -207,7 +223,11 @@ def test_cleanup_failure_is_conservatively_mapped_to_sampler_failure_for_calibra
     peak_memory = run_collector(
         FakeTelemetryCollector(
             observation=TelemetryObservation(
-                value=999, quality=TelemetryQuality.EXACT, unavailable_reason=None
+                value=999,
+                quality=TelemetryQuality.EXACT,
+                unavailable_reason=None,
+                method_identity=_confirmed_exact_method_identity(),
+                terminal_coverage=TerminalCoverageState.TERMINAL_READ_CONFIRMED,
             ),
             cleanup_raises=True,
         )
@@ -219,7 +239,11 @@ def test_cleanup_failure_is_conservatively_mapped_to_sampler_failure_for_calibra
         result,
         peak_memory=peak_memory,
         peak_process_count=TelemetryObservation(
-            value=1, quality=TelemetryQuality.EXACT, unavailable_reason=None
+            value=1,
+            quality=TelemetryQuality.EXACT,
+            unavailable_reason=None,
+            method_identity=_confirmed_exact_method_identity(),
+            terminal_coverage=TerminalCoverageState.TERMINAL_READ_CONFIRMED,
         ),
     )
     fields = adapt_execution_telemetry(telemetry)

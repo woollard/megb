@@ -73,6 +73,7 @@ from src.reference.reference_orchestrator import (
     WorkItemDisposition,
 )
 from src.reference.result_schema import ReferenceTaskResult
+from tests._calibration_fixtures import make_host_runtime_context, make_telemetry_collection_policy
 from tests._reference_orchestrator_cache_policy_fixtures import (
     FakeTraceRecorder,
     RecordingBackend,
@@ -436,6 +437,8 @@ def test_calibration_trace_recorder_with_real_trace_store_end_to_end(tmp_path: P
             oracle_version=ORACLE_ALGORITHM_VERSION,
             comparison_profile_version=COMPARISON_PROFILE_VERSION,
             task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
+            telemetry_collection_policy=make_telemetry_collection_policy(),
+            host_runtime_context=make_host_runtime_context(),
         )
         assert task_result is not None
         return CalibrationTaskEvaluationRecord(

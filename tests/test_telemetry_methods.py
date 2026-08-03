@@ -9,6 +9,7 @@ from src.execution.telemetry_methods import (
     CollectorMethod,
     CollectorMethodIdentity,
     FakeHostCapabilityProbe,
+    MetricCollectionDisposition,
 )
 
 
@@ -18,6 +19,7 @@ def _identity(**overrides: object) -> CollectorMethodIdentity:
         "method_version": "cgroup_v2_memory_peak/v1",
         "interface": "cgroupfs:memory.peak",
         "sampling_interval_sec": None,
+        "selection_disposition": MetricCollectionDisposition.PRIMARY_METHOD_SELECTED,
     }
     defaults.update(overrides)
     return CollectorMethodIdentity(**defaults)  # type: ignore[arg-type]
@@ -44,6 +46,7 @@ def test_identity_requires_a_collector_method_enum_member() -> None:
             method_version="v1",
             interface="x",
             sampling_interval_sec=None,
+            selection_disposition=MetricCollectionDisposition.PRIMARY_METHOD_SELECTED,
         )
 
 

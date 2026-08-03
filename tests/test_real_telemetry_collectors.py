@@ -4,6 +4,14 @@ subprocess and filesystem interfaces only -- no real Docker, no real
 container, no real cgroup filesystem.
 """
 
+# test_unavailable_collector_reports_unavailable_without_contamination's
+# own CollectorMethodIdentity(...) construction intentionally mirrors
+# TelemetryCollectorFactory's own "no method available" identity literal
+# in real_telemetry_collectors.py -- the test builds the exact object the
+# factory would, to exercise _UnavailableCollector directly. Expected and
+# accepted, not a defect.
+# pylint: disable=duplicate-code
+
 import platform
 import subprocess
 import time
@@ -13,7 +21,12 @@ import pytest
 
 from src.execution import real_telemetry_collectors as rtc
 from src.execution.telemetry import TelemetryQuality, TelemetryUnavailableReason
-from src.execution.telemetry_methods import CollectorMethod, FakeHostCapabilityProbe
+from src.execution.telemetry_methods import (
+    CollectorMethod,
+    FakeHostCapabilityProbe,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -27,17 +40,21 @@ def _memory_identity(**overrides: object) -> rtc.CollectorMethodIdentity:
         "method_version": rtc.CGROUP_PEAK_FILE_COLLECTOR_VERSION,
         "interface": "cgroupfs:/fake/memory.peak",
         "sampling_interval_sec": None,
+        "selection_disposition": MetricCollectionDisposition.PRIMARY_METHOD_SELECTED,
     }
     defaults.update(overrides)
     return rtc.CollectorMethodIdentity(**defaults)  # type: ignore[arg-type]
 
 
 def test_cgroup_peak_file_collector_reads_the_exact_value(tmp_path: Path) -> None:
-    """finalize() reads the file exactly once and reports EXACT."""
+    """finalize() reads the file exactly once and reports EXACT when
+    terminal state is confirmed."""
     peak_file = tmp_path / "memory.peak"
     peak_file.write_text("104857600\n")
     identity = _memory_identity()
-    collector = rtc.CgroupPeakFileCollector(str(peak_file), identity)
+    collector = rtc.CgroupPeakFileCollector(
+        str(peak_file), identity, confirm_terminal_state=lambda: True
+    )
     collector.start()
     collector.sample()
     observation = collector.finalize()
@@ -46,6 +63,29 @@ def test_cgroup_peak_file_collector_reads_the_exact_value(tmp_path: Path) -> Non
     assert observation.quality == TelemetryQuality.EXACT
     assert observation.unavailable_reason is None
     assert observation.method_identity is identity
+    assert observation.terminal_coverage == TerminalCoverageState.TERMINAL_READ_CONFIRMED
+
+
+def test_cgroup_peak_file_collector_downgrades_to_boundary_only_when_terminal_state_unconfirmed(
+    tmp_path: Path,
+) -> None:
+    """MEGB-03H.2C.2A provenance/schema correction: a read that cannot be
+    independently confirmed to have happened after the candidate's
+    container fully terminated must never silently retain EXACT -- it is
+    downgraded to BOUNDARY_ONLY, with terminal_coverage recording the
+    miss."""
+    peak_file = tmp_path / "memory.peak"
+    peak_file.write_text("104857600\n")
+    identity = _memory_identity()
+    collector = rtc.CgroupPeakFileCollector(
+        str(peak_file), identity, confirm_terminal_state=lambda: False
+    )
+    collector.start()
+    observation = collector.finalize()
+    collector.cleanup()
+    assert observation.value == 104857600
+    assert observation.quality == TelemetryQuality.BOUNDARY_ONLY
+    assert observation.terminal_coverage == TerminalCoverageState.TERMINAL_READ_MISSED
 
 
 def test_cgroup_peak_file_collector_raises_on_missing_file(tmp_path: Path) -> None:
@@ -53,7 +93,9 @@ def test_cgroup_peak_file_collector_raises_on_missing_file(tmp_path: Path) -> No
     docker_backend's split-phase helpers) translate this into a typed
     SAMPLER_FAILURE, never a raw exception surfaced to telemetry."""
     identity = _memory_identity()
-    collector = rtc.CgroupPeakFileCollector(str(tmp_path / "does_not_exist"), identity)
+    collector = rtc.CgroupPeakFileCollector(
+        str(tmp_path / "does_not_exist"), identity, confirm_terminal_state=lambda: True
+    )
     collector.start()
     with pytest.raises(OSError):
         collector.finalize()
@@ -70,6 +112,7 @@ def _polling_identity(**overrides: object) -> rtc.CollectorMethodIdentity:
         "method_version": rtc.SAMPLED_POLLING_COLLECTOR_VERSION,
         "interface": "docker stats --no-stream --format {{.MemUsage}}",
         "sampling_interval_sec": 0.02,
+        "selection_disposition": MetricCollectionDisposition.FALLBACK_METHOD_SELECTED,
     }
     defaults.update(overrides)
     return rtc.CollectorMethodIdentity(**defaults)  # type: ignore[arg-type]
@@ -284,6 +327,7 @@ def test_unavailable_collector_reports_unavailable_without_contamination() -> No
         method_version="unavailable/v1",
         interface="none",
         sampling_interval_sec=None,
+        selection_disposition=MetricCollectionDisposition.NO_METHOD_AVAILABLE,
     )
     collector = rtc._UnavailableCollector(identity)  # pylint: disable=protected-access
     collector.start()
@@ -541,8 +585,11 @@ def test_collector_selection_config_is_disabled_by_default() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_factory_selects_cgroup_memory_peak_when_path_resolvable(tmp_path: Path) -> None:
-    """The exact method is chosen first, whenever it's available."""
+def test_factory_selects_cgroup_memory_peak_when_path_resolvable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact method is chosen first, whenever it's available, and is
+    reported EXACT once terminal state is independently confirmed."""
     peak_file = tmp_path / "memory.peak"
     peak_file.write_text("2048\n")
     probe = FakeHostCapabilityProbe(memory_peak_paths={"abc123": str(peak_file)})
@@ -552,6 +599,11 @@ def test_factory_selects_cgroup_memory_peak_when_path_resolvable(tmp_path: Path)
     )
     assert identity.method == CollectorMethod.CGROUP_V2_MEMORY_PEAK
     assert isinstance(collector, rtc.CgroupPeakFileCollector)
+
+    class _FakeInspectInfo:
+        exit_code = 0
+
+    monkeypatch.setattr(rtc.docker_backend, "_docker_inspect", lambda name: _FakeInspectInfo())
     observation = collector.finalize()
     assert observation.value == 2048
     assert observation.quality == TelemetryQuality.EXACT
@@ -587,8 +639,12 @@ def test_factory_falls_back_to_unavailable_when_neither_memory_method_works() ->
     )
 
 
-def test_factory_selects_cgroup_pids_peak_when_path_resolvable(tmp_path: Path) -> None:
-    """The exact process-count method is chosen first, when available."""
+def test_factory_selects_cgroup_pids_peak_when_path_resolvable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The exact process-count method is chosen first, when available,
+    and is reported EXACT once terminal state is independently
+    confirmed."""
     peak_file = tmp_path / "pids.peak"
     peak_file.write_text("7\n")
     probe = FakeHostCapabilityProbe(pids_peak_paths={"abc123": str(peak_file)})
@@ -597,6 +653,11 @@ def test_factory_selects_cgroup_pids_peak_when_path_resolvable(tmp_path: Path) -
         container_id="abc123", container_name="c"
     )
     assert identity.method == CollectorMethod.CGROUP_V2_PIDS_PEAK
+
+    class _FakeInspectInfo:
+        exit_code = 0
+
+    monkeypatch.setattr(rtc.docker_backend, "_docker_inspect", lambda name: _FakeInspectInfo())
     observation = collector.finalize()
     assert observation.value == 7
     assert observation.quality == TelemetryQuality.EXACT

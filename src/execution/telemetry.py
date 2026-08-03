@@ -36,7 +36,11 @@ from src.execution.response_overflow import (
     ResponseOverflowClassification,
     classify_response_overflow,
 )
-from src.execution.telemetry_methods import CollectorMethodIdentity
+from src.execution.telemetry_methods import (
+    SAMPLED_METHODS,
+    CollectorMethodIdentity,
+    TerminalCoverageState,
+)
 
 
 class TelemetryQuality(str, Enum):
@@ -111,11 +115,34 @@ class TelemetryObservation:
     (``docs/reference/megb-03h2c2a-collector-provenance-audit.md``) --
     the accepted H.2A persisted schema has no field for it, so it lives
     here, execution-layer-only, never persisted until a separately
-    authorized schema change decides how to carry it forward. It never
-    influences ``__post_init__``'s own validation -- any value/quality/
-    reason combination is valid regardless of which method (or none, for
-    every synthetic/offline-fixture observation predating H.2C.2A)
-    produced it.
+    authorized schema change decides how to carry it forward.
+
+    ``actual_sample_count``/``terminal_coverage`` (MEGB-03H.2C.2A
+    provenance/schema correction) close the exactness gap the H.2C.2A
+    provenance audit's own acceptance review found: file existence or a
+    successful *mid-execution* read is not sufficient proof of
+    completeness. Two hard invariants are enforced here, not merely
+    documented:
+
+    * whenever ``method_identity`` is present (i.e. this observation came
+      from a real collector, not the two runner-derived metrics below),
+      ``quality == EXACT`` requires ``terminal_coverage ==
+      TERMINAL_READ_CONFIRMED`` -- an ``EXACT`` claim with unconfirmed
+      (or missed) terminal coverage is rejected outright, so a lifecycle
+      race can never silently retain ``EXACT``. Observations with no
+      ``method_identity`` (``candidate_wall_time``/
+      ``observed_response_bytes``, computed directly from the runner's
+      own protocol response, with no collector or terminal-read concept
+      at all) are unaffected by this invariant.
+    * a sampled method (``method_identity.method`` in
+      :data:`~src.execution.telemetry_methods.SAMPLED_METHODS`) can never
+      report ``quality == EXACT`` -- structurally enforced, not left to
+      collector-implementation discipline.
+
+    ``actual_sample_count`` is non-negative; a sampled method reporting a
+    present ``value`` must have taken at least one real sample (a
+    ``BOUNDARY_ONLY`` sampled value with ``actual_sample_count == 0``
+    would itself be an internal inconsistency, caught here immediately).
     """
 
     value: float | int | None
@@ -124,8 +151,10 @@ class TelemetryObservation:
     collector_failure: CollectorFailureStage | None = None
     cleanup_failed: bool = False
     method_identity: CollectorMethodIdentity | None = None
+    actual_sample_count: int = 0
+    terminal_coverage: TerminalCoverageState = TerminalCoverageState.TERMINAL_READ_NOT_APPLICABLE
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> None:  # pylint: disable=too-many-branches
         if self.value is None:
             if self.quality is not None:
                 raise InvalidTelemetryObservationError(
@@ -157,6 +186,45 @@ class TelemetryObservation:
                     "collector_failure requires unavailable_reason to be SAMPLER_FAILURE, got "
                     f"{self.unavailable_reason!r}"
                 )
+        if not isinstance(self.terminal_coverage, TerminalCoverageState):
+            raise InvalidTelemetryObservationError(
+                f"terminal_coverage must be a TerminalCoverageState, got {self.terminal_coverage!r}"
+            )
+        if (
+            self.method_identity is not None
+            and self.quality == TelemetryQuality.EXACT
+            and self.terminal_coverage != TerminalCoverageState.TERMINAL_READ_CONFIRMED
+        ):
+            raise InvalidTelemetryObservationError(
+                "quality=EXACT requires terminal_coverage=TERMINAL_READ_CONFIRMED, got "
+                f"{self.terminal_coverage!r} -- an EXACT claim must never silently survive an "
+                "unconfirmed or missed terminal read"
+            )
+        if (
+            self.method_identity is not None
+            and self.method_identity.method in SAMPLED_METHODS
+            and self.quality == TelemetryQuality.EXACT
+        ):
+            raise InvalidTelemetryObservationError(
+                f"method {self.method_identity.method!r} is a sampled method and can never "
+                "report quality=EXACT"
+            )
+        if not isinstance(self.actual_sample_count, int) or isinstance(
+            self.actual_sample_count, bool
+        ) or self.actual_sample_count < 0:
+            raise InvalidTelemetryObservationError(
+                f"actual_sample_count must be a non-negative int, got {self.actual_sample_count!r}"
+            )
+        if (
+            self.value is not None
+            and self.method_identity is not None
+            and self.method_identity.method in SAMPLED_METHODS
+            and self.actual_sample_count < 1
+        ):
+            raise InvalidTelemetryObservationError(
+                "a sampled method reporting a present value must have actual_sample_count >= 1, "
+                f"got {self.actual_sample_count!r}"
+            )
 
 
 def collector_failure_observation(

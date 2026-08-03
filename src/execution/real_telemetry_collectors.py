@@ -58,6 +58,8 @@ from src.execution.telemetry_methods import (
     CollectorMethod,
     CollectorMethodIdentity,
     HostCapabilityProbe,
+    MetricCollectionDisposition,
+    TerminalCoverageState,
 )
 
 _DOCKER_CLI_TIMEOUT_SEC = 5.0
@@ -73,12 +75,29 @@ SAMPLED_POLLING_COLLECTOR_VERSION = "sampled_polling_collector/v1"
 
 class CgroupPeakFileCollector(TelemetryCollector):
     """Reads one cgroup v2 peak-tracking file exactly once, at
-    ``finalize()``. See the module docstring for why this is ``EXACT``.
+    ``finalize()``. See the module docstring for why this is ``EXACT`` --
+    but only when ``confirm_terminal_state`` proves it (MEGB-03H.2C.2A
+    provenance/schema correction): file existence or a successful read
+    alone are not sufficient. ``confirm_terminal_state`` is a required,
+    independent, injected check (never assumed from call-site ordering
+    alone) confirming the candidate's container has actually terminated
+    before this read is trusted to cover its complete resource lifetime.
+    If it returns ``False`` -- the terminal state could not be
+    independently confirmed, e.g. a lifecycle race the caller's own
+    ordering did not anticipate -- the observation is downgraded to
+    ``BOUNDARY_ONLY`` rather than silently retaining ``EXACT``.
     """
 
-    def __init__(self, path: str, method_identity: CollectorMethodIdentity) -> None:
+    def __init__(
+        self,
+        path: str,
+        method_identity: CollectorMethodIdentity,
+        *,
+        confirm_terminal_state: Callable[[], bool],
+    ) -> None:
         self._path = path
         self._method_identity = method_identity
+        self._confirm_terminal_state = confirm_terminal_state
 
     def start(self) -> None:
         """No-op: the kernel already tracks the peak continuously; there
@@ -88,14 +107,24 @@ class CgroupPeakFileCollector(TelemetryCollector):
         """No-op: no explicit sampling is needed or performed."""
 
     def finalize(self) -> TelemetryObservation:
+        terminal_state_confirmed = self._confirm_terminal_state()
         with open(self._path, "r", encoding="ascii") as peak_file:
             raw = peak_file.read().strip()
         value = int(raw)
+        if terminal_state_confirmed:
+            return TelemetryObservation(
+                value=value,
+                quality=TelemetryQuality.EXACT,
+                unavailable_reason=None,
+                method_identity=self._method_identity,
+                terminal_coverage=TerminalCoverageState.TERMINAL_READ_CONFIRMED,
+            )
         return TelemetryObservation(
             value=value,
-            quality=TelemetryQuality.EXACT,
+            quality=TelemetryQuality.BOUNDARY_ONLY,
             unavailable_reason=None,
             method_identity=self._method_identity,
+            terminal_coverage=TerminalCoverageState.TERMINAL_READ_MISSED,
         )
 
     def cleanup(self) -> None:
@@ -138,6 +167,7 @@ class SampledPollingCollector(TelemetryCollector):  # pylint: disable=too-many-i
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._observed_max: int | None = None
+        self._sample_count = 0
         self._container_never_appeared = False
 
     def start(self) -> None:
@@ -185,6 +215,7 @@ class SampledPollingCollector(TelemetryCollector):  # pylint: disable=too-many-i
         if value is None:
             return
         with self._lock:
+            self._sample_count += 1
             if self._observed_max is None or value > self._observed_max:
                 self._observed_max = value
 
@@ -195,6 +226,7 @@ class SampledPollingCollector(TelemetryCollector):  # pylint: disable=too-many-i
             raise RuntimeError("target container never appeared within the bounded wait")
         with self._lock:
             value = self._observed_max
+            sample_count = self._sample_count
         if value is None:
             # Every sample attempt raised (the callable never returned a
             # usable value even once) -- a genuine sampler failure, not
@@ -211,6 +243,7 @@ class SampledPollingCollector(TelemetryCollector):  # pylint: disable=too-many-i
             quality=TelemetryQuality.BOUNDARY_ONLY,
             unavailable_reason=None,
             method_identity=self._method_identity,
+            actual_sample_count=sample_count,
         )
 
     def cleanup(self) -> None:
@@ -317,6 +350,21 @@ def _container_exists(container_name: str) -> bool:
     # _docker_inspect (already the established fake-Docker-harness
     # pattern) takes effect here too.
     return docker_backend._docker_inspect(container_name).found  # pylint: disable=protected-access
+
+
+def _confirm_container_terminal_state(container_name: str) -> bool:
+    """Independent confirmation (MEGB-03H.2C.2A provenance/schema
+    correction) that the container has actually stopped, via a signal
+    separate from mere call-site ordering: ``docker inspect`` itself
+    reports a recorded exit code only once the container's main process
+    has genuinely terminated. Read-only; never ``docker exec``. Any
+    exception (e.g. a transient inspect failure) is treated as
+    unconfirmed, never as confirmed -- the safe default for a terminal-
+    coverage proof."""
+    try:
+        return docker_backend._docker_inspect(container_name).exit_code is not None  # pylint: disable=protected-access
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -476,18 +524,25 @@ class TelemetryCollectorFactory:
                 method_version=CGROUP_PEAK_FILE_COLLECTOR_VERSION,
                 interface=f"cgroupfs:{peak_path}",
                 sampling_interval_sec=None,
+                selection_disposition=MetricCollectionDisposition.PRIMARY_METHOD_SELECTED,
                 host_runtime_metadata=host_metadata,
             )
-            return CgroupPeakFileCollector(peak_path, identity), identity
+            collector: TelemetryCollector = CgroupPeakFileCollector(
+                peak_path,
+                identity,
+                confirm_terminal_state=lambda: _confirm_container_terminal_state(container_name),
+            )
+            return collector, identity
         if self._capability_probe.docker_stats_sampling_available():
             identity = CollectorMethodIdentity(
                 method=CollectorMethod.SAMPLED_DOCKER_STATS_MEMORY,
                 method_version=SAMPLED_POLLING_COLLECTOR_VERSION,
                 interface="docker stats --no-stream --format {{.MemUsage}}",
                 sampling_interval_sec=self._config.memory_sampling_interval_sec,
+                selection_disposition=MetricCollectionDisposition.FALLBACK_METHOD_SELECTED,
                 host_runtime_metadata=host_metadata,
             )
-            collector: TelemetryCollector = SampledPollingCollector(
+            collector = SampledPollingCollector(
                 container_exists=lambda: _container_exists(container_name),
                 sample_fn=lambda: _docker_stats_mem_usage_bytes(container_name),
                 sampling_interval_sec=self._config.memory_sampling_interval_sec,
@@ -501,6 +556,7 @@ class TelemetryCollectorFactory:
             method_version="unavailable/v1",
             interface="none",
             sampling_interval_sec=None,
+            selection_disposition=MetricCollectionDisposition.NO_METHOD_AVAILABLE,
             host_runtime_metadata=host_metadata,
         )
         return _UnavailableCollector(identity), identity
@@ -518,18 +574,25 @@ class TelemetryCollectorFactory:
                 method_version=CGROUP_PEAK_FILE_COLLECTOR_VERSION,
                 interface=f"cgroupfs:{peak_path}",
                 sampling_interval_sec=None,
+                selection_disposition=MetricCollectionDisposition.PRIMARY_METHOD_SELECTED,
                 host_runtime_metadata=host_metadata,
             )
-            return CgroupPeakFileCollector(peak_path, identity), identity
+            collector: TelemetryCollector = CgroupPeakFileCollector(
+                peak_path,
+                identity,
+                confirm_terminal_state=lambda: _confirm_container_terminal_state(container_name),
+            )
+            return collector, identity
         if self._capability_probe.docker_top_sampling_available():
             identity = CollectorMethodIdentity(
                 method=CollectorMethod.SAMPLED_DOCKER_TOP_PROCESS_COUNT,
                 method_version=SAMPLED_POLLING_COLLECTOR_VERSION,
                 interface="docker top <container> -q",
                 sampling_interval_sec=self._config.process_count_sampling_interval_sec,
+                selection_disposition=MetricCollectionDisposition.FALLBACK_METHOD_SELECTED,
                 host_runtime_metadata=host_metadata,
             )
-            collector: TelemetryCollector = SampledPollingCollector(
+            collector = SampledPollingCollector(
                 container_exists=lambda: _container_exists(container_name),
                 sample_fn=lambda: _docker_top_process_count(container_name),
                 sampling_interval_sec=self._config.process_count_sampling_interval_sec,
@@ -543,6 +606,7 @@ class TelemetryCollectorFactory:
             method_version="unavailable/v1",
             interface="none",
             sampling_interval_sec=None,
+            selection_disposition=MetricCollectionDisposition.NO_METHOD_AVAILABLE,
             host_runtime_metadata=host_metadata,
         )
         return _UnavailableCollector(identity), identity

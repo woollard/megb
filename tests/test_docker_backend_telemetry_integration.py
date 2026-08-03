@@ -85,13 +85,23 @@ def test_execute_with_telemetry_covers_every_backend_outcome(
 
     # The collector lifecycle ran successfully regardless of the backend
     # outcome -- container-id resolution succeeded (container_id fixed),
-    # so both peak files were read exactly.
+    # so both peak files were read. Quality is EXACT everywhere terminal
+    # state is independently confirmable (inspect_info.exit_code is
+    # not None); "container_never_created" has no real container to
+    # confirm exit against, so the read is correctly downgraded to
+    # BOUNDARY_ONLY rather than trusting call-site ordering alone (the
+    # MEGB-03H.2C.2A provenance/schema correction's own exactness fix).
+    expected_quality = (
+        TelemetryQuality.BOUNDARY_ONLY
+        if scenario_name == "container_never_created"
+        else TelemetryQuality.EXACT
+    )
     assert telemetry.peak_memory.value == 2048
-    assert telemetry.peak_memory.quality == TelemetryQuality.EXACT
+    assert telemetry.peak_memory.quality == expected_quality
     assert telemetry.peak_memory.method_identity is not None
     assert telemetry.peak_memory.method_identity.method == CollectorMethod.CGROUP_V2_MEMORY_PEAK
     assert telemetry.peak_process_count.value == 3
-    assert telemetry.peak_process_count.quality == TelemetryQuality.EXACT
+    assert telemetry.peak_process_count.quality == expected_quality
 
     # Cleanup/removal happened regardless of outcome.
     assert harness.remove_calls
