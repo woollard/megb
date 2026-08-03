@@ -65,6 +65,8 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `BENCHMARK_PLAN_VERSION` | `megb-03g4-benchmark-plan-v1` | `g4_qualification_report.py` | The frozen G.4 benchmark plan's own identity (fixed, module-owned constant, never a caller-supplied parameter) |
 | `SYNTHETIC_WORKLOAD_VERSION` | `megb-03g4-synthetic-workload-v1` | `g4_qualification_report.py` | The synthetic workload's own identity — **independent of `G4_EVALUATOR_VERSION`** (a prior version incorrectly set this field to the evaluator's version; fixed to be a separate, fixed, module-owned constant that cannot vary with the evaluator) |
 | `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` | `megb-03g4-workload-checksum-algorithm-v1` | `g4_qualification_report.py` | Identifies how the workload content checksum below is canonicalized/hashed — a separate field from the checksum value itself |
+| `H5_PROMOTION_MANIFEST_SCHEMA_VERSION` | `megb-03h5-promotion-manifest-v1` | `h5_promotion_manifest.py` | `H5PromotionManifest` field shape and `PromotionState`/`EntryPromotionState` state-machine semantics (the transition table in `advance_manifest` is versioned together with the manifest shape, not as a separate constant — a future state-machine change bumps this same version, per this table's own established one-version-per-persisted-shape discipline). See "MEGB-03H.2B.2 addendum" below. |
+| `PROMOTION_SUMMARY_SCHEMA_VERSION` | `megb-03h5-promotion-summary-v1` | `h5_promotion.py` | `PromotionSummary` field shape — the safe, allowlisted, committed-output-suitable promotion report. See "MEGB-03H.2B.2 addendum" below. |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
 `BENCHMARK_PLAN_VERSION`, `SYNTHETIC_WORKLOAD_VERSION`,
@@ -84,6 +86,9 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `reference_case_checksum` | (per-case, includes `oracle_record.expected_output`) | `case_serialization.py` — bound into the cache key so a corrected canonical solution with the same case IDs but a different expected output is never invisible to the cache |
 | `dataset_checksum` (real) | `DatasetProvenance.evalplus_dataset_hash` (32 chars, natively) | The real HumanEval+ corpus content |
 | `manifest_checksum` (candidate-set) | sha256-hex | `ReferenceValidationCandidateSetManifest`'s own content |
+| `manifest_checksum` (H.5 promotion manifest) | sha256-hex | `H5PromotionManifest`'s own content (`_checksum_of` in `h5_promotion_manifest.py`) — auto-recomputed/verified-or-rejected at construction, same discipline as every other self-checksummed type in this table |
+| `summary_checksum` (H.5 promotion summary) | sha256-hex | `PromotionSummary`'s own content excluding itself (`_summary_checksum_of` in `h5_promotion.py`) — auto-recomputed/verified-or-rejected at construction |
+| `identity_checksum()` (H.5 staging identity) | sha256-hex, computed on demand (not a persisted field) | `H5StagingIdentity.identity_checksum()` — sha256 of `json.dumps(dataclasses.asdict(identity), sort_keys=True)`. **No paired algorithm-version label exists for this checksum** (unlike, e.g., `synthetic_workload_checksum`'s `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`) — see the "MEGB-03H.2B.2 addendum" below for why this is a real, reported gap rather than an oversight. |
 
 **Conformance correction: a normative plan/implementation divergence, not a
 cosmetic one.** A read-only workflow audit found that `G4_DATASET_VERSION`,
@@ -200,6 +205,123 @@ the time MEGB-03H.1 was produced (before H.2B.1 existed) — that table is
 deliberately left unchanged. Rewriting a historical point-in-time snapshot
 to reflect a version that did not yet exist when it was recorded would be
 misleading, not corrective.
+
+## MEGB-03H.2B.2 addendum: H.5 staging/promotion identities
+
+This registry's own "Status" note predates this addendum, per this
+project's established convention (see the H.2B.1 addendum above) of
+appending correction notes rather than rewriting an already-accepted
+historical snapshot. Introduced by MEGB-03H.2B.2 (commits `a723d19`,
+`1087ce9`) and its recovery/path-safety correction (commits `81c9e4c`,
+`a04baaf`) — every identifier below is newly created by this checkpoint;
+none existed at any prior version, so none requires migration.
+
+### `H5_PROMOTION_MANIFEST_SCHEMA_VERSION` = `megb-03h5-promotion-manifest-v1`
+
+- **Purpose:** versions `H5PromotionManifest`'s field shape and the
+  `PromotionState`/`EntryPromotionState` state machine it embeds
+  (`PREPARED → GATE_PASSED → PREFLIGHT_PASSED → PROMOTING → COMPLETED`/
+  `BLOCKED`, enforced by `advance_manifest`'s transition table). The
+  transition table is not separately versioned — a future change to legal
+  transitions is a shape/semantics change to this same manifest and bumps
+  this one constant, matching how this table already treats every other
+  schema (e.g. `CACHE_ENTRY_SCHEMA_VERSION` covers both field shape *and*
+  the envelope logic that interprets it).
+- **Trust classification:** manually governed version label (human-chosen,
+  bumped only on a deliberate breaking change), not a content checksum.
+- **Artifact privileged or safe to commit:** the constant itself is
+  ordinary source code, safe to commit. A **persisted manifest instance**
+  (the JSON file `save_promotion_manifest`/`load_promotion_manifest`
+  read/write) is a privileged, non-committed artifact — it lives under the
+  same H.5 staging root as the staging cache it describes
+  (`artifacts/privileged/reference/h5_staging_cache/<identity_checksum>/promotion_manifest.json`,
+  per `manifest_path_for`) and is git-ignored by the same
+  `artifacts/privileged/` rule as every other privileged artifact in this
+  repository. No such file currently exists anywhere in this repository or
+  its history — confirmed by direct inspection during the H.2B.2
+  correction's own protected-data statement — so there is nothing to
+  migrate.
+- **Checksum inputs:** `manifest_checksum` is computed over every other
+  field (`identity`, `expected_task_ids`, `staged_entries`, `gate_outcome`,
+  `preflight_outcome`, `entry_states`, `state`, `interrupted`,
+  `generation`) via canonical `json.dumps(..., sort_keys=True)` + sha256
+  (`_checksum_of` in `h5_promotion_manifest.py`).
+- **Regeneration/verification:** `H5PromotionManifest.__post_init__`
+  auto-computes `manifest_checksum` on construction and rejects a
+  caller-supplied value that doesn't match its own recomputed contents
+  (tamper/corruption detection); `advance_manifest` is the only way to
+  produce a new, valid instance from an existing one (new `generation`,
+  freshly recomputed checksum); `save_promotion_manifest` writes via
+  atomic temp-file-rename with explicit `flush()`+`fsync()`;
+  `load_promotion_manifest` rejects a stray, incomplete temp file left
+  behind by a crash (proven in `tests/test_h5_promotion_manifest.py`'s
+  crash-safe-recovery test) without disturbing the real, adjacent file.
+
+### `PROMOTION_SUMMARY_SCHEMA_VERSION` = `megb-03h5-promotion-summary-v1`
+
+- **Purpose:** versions `PromotionSummary`'s field shape — the safe,
+  allowlisted projection of an `H5PromotionManifest` suitable for
+  committed output (run/checksum identities, expected/staged/promoted/
+  already-satisfied counts, gate/preflight/final states, a generation
+  timestamp, its own report checksum).
+- **Trust classification:** manually governed version label.
+- **Artifact privileged or safe to commit:** **safe to commit** — this is
+  the entire purpose of this type, structurally distinct from the manifest
+  above. No field on `PromotionSummary` is capable of carrying a task or
+  case identity, a candidate identity or source, an expected output, a
+  cache key, a per-entry (task-linked) state, a raw diagnostic, or a
+  privileged filesystem path (`candidate_set_manifest_checksum` is a safe
+  artifact checksum, not a candidate identity — regression-tested in
+  `tests/test_h5_promotion_correction.py::test_promotion_summary_field_allowlist_excludes_forbidden_content`).
+- **Checksum inputs:** `summary_checksum` is computed over every other
+  field via the same canonical `json.dumps(..., sort_keys=True)` + sha256
+  pattern (`_summary_checksum_of` in `h5_promotion.py`), mirroring
+  `CalibrationSummaryReport.report_checksum`'s own established precedent.
+- **Regeneration/verification:** `build_promotion_summary(manifest, *,
+  generated_at=...)` builds a fresh instance from a manifest and a
+  caller-supplied ISO-8601 timestamp; `PromotionSummary.__post_init__`
+  auto-computes/verifies `summary_checksum` and rejects an unrecognized
+  `summary_schema_version` or a tampered checksum
+  (`InvalidPromotionSummaryError`).
+
+### `H5StagingIdentity.identity_checksum()` — reported gap, not silently versioned
+
+`H5StagingIdentity`'s staging directory (`staging_dir()`) and the
+promotion manifest's own path (`manifest_path_for()`) are named from
+`identity_checksum()`: `sha256(json.dumps(dataclasses.asdict(identity),
+sort_keys=True))`. This **is** a genuine content checksum (reproducible
+from the identity's own field values, per this document's "two categories
+of identity" distinction above) — but, unlike every other checksum in this
+registry that pairs with a dedicated algorithm-version label (e.g.
+`synthetic_workload_checksum` ↔ `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`,
+`CACHE_KEY_SCHEMA_VERSION` covering `key_digest`'s own derivation), **no
+such paired version constant exists for `identity_checksum()`**. This was
+introduced by the H.2B.2 recovery correction (commit `81c9e4c`) as a
+narrow, targeted fix for the path-traversal finding, and no algorithm
+version was invented for it during that correction or during this
+documentation pass, per instruction.
+
+**Why this matters, concretely:** the checksum's inputs are exactly
+`H5StagingIdentity`'s current field set and Python's `json.dumps`/
+`dataclasses.asdict` canonicalization behavior. If either ever changes
+(the identity gains/loses a field, or the canonicalization scheme changes)
+without a version bump to distinguish old-checksum from new-checksum
+directory names, the *same* logical identity would silently compute a
+*different* `identity_checksum()` under old vs. new code — landing on a
+different, unrelated directory rather than continuing (or being validated
+against) whatever staging area a prior process had created for it. Nothing
+detects or announces that transition today, because nothing versions it.
+
+**Not remediated in this pass:** this documentation update records the
+gap rather than closing it, per instruction ("do not invent one silently
+during documentation. Report that gap before changing code."). No
+persisted H.5 staging directory exists anywhere in this repository today
+(confirmed above and in the H.2B.2 correction's own protected-data
+statement), so there is no live migration concern yet — but a future
+change to `H5StagingIdentity`'s fields or to `identity_checksum()`'s
+canonicalization should not be made without first deciding whether this
+checksum needs its own explicit algorithm-version label (analogous to
+`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`) at that time.
 
 ## Cache key: complete field list
 
