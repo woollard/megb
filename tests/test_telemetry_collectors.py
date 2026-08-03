@@ -11,7 +11,13 @@ from src.execution.telemetry import (
     TelemetryQuality,
     TelemetryUnavailableReason,
 )
-from src.execution.telemetry_collectors import FakeTelemetryCollector, run_collector
+from src.execution.telemetry_collectors import (
+    FakeTelemetryCollector,
+    run_collector,
+    safe_collector_cleanup,
+    safe_collector_finalize,
+    safe_collector_start,
+)
 
 
 def _exact(value: float) -> TelemetryObservation:
@@ -290,4 +296,102 @@ def test_a_raising_on_cleanup_failure_callback_does_not_block_the_return() -> No
     collector = FakeTelemetryCollector(observation=_exact(4096), cleanup_raises=True)
     result = run_collector(collector, on_cleanup_failure=_raising_callback)
     assert result.value == 4096
+    assert result.cleanup_failed is True
+
+
+# ---------------------------------------------------------------------------
+# Split-phase lifecycle helpers (MEGB-03H.2C.2A): safe_collector_start/
+# finalize/cleanup, used by DockerPerInvocationBackend.execute_with_telemetry()
+# to interleave a collector's start()/finalize() around the candidate's
+# own execution, unlike run_collector()'s all-at-once model.
+# ---------------------------------------------------------------------------
+
+
+def test_safe_collector_start_returns_none_on_success() -> None:
+    """A successful start() is invisible to the caller -- None means
+    'proceed to do your own work, then finalize'."""
+    collector = FakeTelemetryCollector(observation=_exact(1))
+    assert safe_collector_start(collector) is None
+    assert collector.start_called
+
+
+def test_safe_collector_start_returns_a_start_failure_observation() -> None:
+    """A raising start() is translated into a typed START failure, never
+    propagated."""
+    collector = FakeTelemetryCollector(start_raises=True)
+    observation = safe_collector_start(collector)
+    assert observation is not None
+    assert observation.collector_failure == CollectorFailureStage.START
+    assert observation.unavailable_reason == TelemetryUnavailableReason.SAMPLER_FAILURE
+
+
+def test_safe_collector_finalize_returns_the_real_observation_on_success() -> None:
+    """finalize()'s own observation passes through unchanged."""
+    collector = FakeTelemetryCollector(observation=_exact(2048))
+    assert safe_collector_start(collector) is None
+    observation = safe_collector_finalize(collector)
+    assert observation.value == 2048
+    assert observation.quality == TelemetryQuality.EXACT
+
+
+def test_safe_collector_finalize_returns_a_finalize_failure_observation() -> None:
+    """A raising finalize() is translated into a typed FINALIZE
+    failure, never propagated."""
+    collector = FakeTelemetryCollector(finalize_raises=True)
+    assert safe_collector_start(collector) is None
+    observation = safe_collector_finalize(collector)
+    assert observation.collector_failure == CollectorFailureStage.FINALIZE
+
+
+def test_safe_collector_cleanup_runs_and_preserves_the_observation_on_success() -> None:
+    """A successful cleanup() leaves the observation completely
+    untouched."""
+    collector = FakeTelemetryCollector(observation=_exact(1))
+    safe_collector_start(collector)
+    observation = safe_collector_finalize(collector)
+    result = safe_collector_cleanup(collector, observation)
+    assert result is observation
+    assert collector.cleanup_call_count == 1
+
+
+def test_safe_collector_cleanup_amends_cleanup_failed_without_altering_anything_else() -> None:
+    """A failing cleanup() amends cleanup_failed=True onto the
+    already-determined observation -- value/quality/collector_failure
+    are all preserved exactly, mirroring run_collector()'s own
+    invariant."""
+    collector = FakeTelemetryCollector(observation=_exact(1), cleanup_raises=True)
+    safe_collector_start(collector)
+    observation = safe_collector_finalize(collector)
+    result = safe_collector_cleanup(collector, observation)
+    assert result.value == 1
+    assert result.cleanup_failed is True
+    assert collector.cleanup_call_count == 1
+
+
+def test_safe_collector_cleanup_is_called_even_after_a_start_failure() -> None:
+    """A collector whose start() failed must still have cleanup()
+    called exactly once by the caller's own finally block -- proven here
+    using the failure observation safe_collector_start returned."""
+    collector = FakeTelemetryCollector(start_raises=True, cleanup_raises=True)
+    observation = safe_collector_start(collector)
+    assert observation is not None
+    result = safe_collector_cleanup(collector, observation)
+    assert result.collector_failure == CollectorFailureStage.START
+    assert result.cleanup_failed is True
+    assert collector.cleanup_call_count == 1
+
+
+def test_safe_collector_cleanup_guards_a_raising_on_cleanup_failure_callback() -> None:
+    """Mirrors run_collector()'s own protection: a broken
+    on_cleanup_failure callback must never mask the amended observation
+    or raise out of safe_collector_cleanup."""
+    collector = FakeTelemetryCollector(observation=_exact(1), cleanup_raises=True)
+    safe_collector_start(collector)
+    observation = safe_collector_finalize(collector)
+
+    def raising_callback() -> None:
+        raise RuntimeError("simulated on_cleanup_failure failure")
+
+    result = safe_collector_cleanup(collector, observation, on_cleanup_failure=raising_callback)
+    assert result.value == 1
     assert result.cleanup_failed is True

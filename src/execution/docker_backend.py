@@ -32,6 +32,19 @@ from src.execution.protocol import (
     ExecutionLimits,
     ExecutionStatus,
 )
+from src.execution.telemetry import (
+    CollectorFailureStage,
+    ExecutionTelemetry,
+    build_execution_telemetry,
+    collector_failure_observation,
+)
+from src.execution.telemetry_collectors import (
+    CollectorFactory,
+    TelemetryCollector,
+    safe_collector_cleanup,
+    safe_collector_finalize,
+    safe_collector_start,
+)
 from src.execution.wire import ProtocolError, parse_response_message, serialize_request
 
 DEFAULT_RUNNER_IMAGE = "megb-runner:local"
@@ -47,6 +60,14 @@ _RUNNER_UID_GID = "65532:65532"
 # --cpus/--memory/--pids-limit resource ceilings.
 _DEFAULT_STARTUP_CLEANUP_GRACE_SEC = 2.0
 _DOCKER_CLI_TIMEOUT_SEC = 15.0
+# MEGB-03H.2C.2A: bounds on how long execute_with_telemetry() waits for a
+# just-launched container's full id to become resolvable (via `docker
+# inspect`) before giving up on telemetry collection for this invocation
+# entirely -- bounded, non-busy-loop polling (a plain time.sleep between
+# attempts), never affecting the candidate's own execution or the
+# eventual CandidateExecutionResult.
+_DEFAULT_TELEMETRY_CONTAINER_ID_POLL_INTERVAL_SEC = 0.02
+_DEFAULT_TELEMETRY_CONTAINER_ID_WAIT_MAX_SEC = 2.0
 
 
 @dataclass(frozen=True)
@@ -287,13 +308,66 @@ def _build_docker_run_command(
     ]
 
 
+def _resolve_container_id(container_name: str) -> str | None:
+    """Read-only: this container's full content-addressed id, or
+    ``None`` if it is not (yet) inspectable -- never a write, never
+    ``docker exec``."""
+    result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Id}}", container_name],
+        capture_output=True,
+        text=True,
+        timeout=_DOCKER_CLI_TIMEOUT_SEC,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    container_id = result.stdout.strip()
+    return container_id or None
+
+
+def _wait_for_container_id(
+    container_name: str, *, poll_interval_sec: float, max_wait_sec: float
+) -> str | None:
+    """Bounded, non-busy-loop wait (a plain ``time.sleep`` between
+    attempts, never a tight spin) for the target container to become
+    inspectable. Returns ``None`` if it never appears within the bound --
+    a telemetry-collection-only concern, never surfaced to or affecting
+    the candidate's own execution or ``CandidateExecutionResult``."""
+    deadline = time.monotonic() + max_wait_sec
+    while True:
+        container_id = _resolve_container_id(container_name)
+        if container_id is not None:
+            return container_id
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(poll_interval_sec)
+
+
+def _best_effort_collector_cleanup(collector: TelemetryCollector) -> None:
+    """Used only when a ``BaseException`` interrupts execution before a
+    started collector's ``finalize()`` ever ran: there is no observation
+    to amend (the caller is exiting via the propagating exception
+    regardless), so ``cleanup()`` is attempted and any exception it
+    raises is discarded -- matching ``run_collector()``'s own cleanup-
+    safety behavior for this same scenario."""
+    try:
+        collector.cleanup()
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
+
+
 class DockerPerInvocationBackend(ExecutionBackend):
     """Launches one fresh, isolated Docker container per candidate invocation."""
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         runner_image: str = DEFAULT_RUNNER_IMAGE,
         startup_cleanup_grace_sec: float = _DEFAULT_STARTUP_CLEANUP_GRACE_SEC,
+        telemetry_collector_factory: CollectorFactory | None = None,
+        telemetry_container_id_poll_interval_sec: float = (
+            _DEFAULT_TELEMETRY_CONTAINER_ID_POLL_INTERVAL_SEC
+        ),
+        telemetry_container_id_wait_max_sec: float = _DEFAULT_TELEMETRY_CONTAINER_ID_WAIT_MAX_SEC,
     ) -> None:
         """Construct a per-invocation Docker backend.
 
@@ -305,17 +379,66 @@ class DockerPerInvocationBackend(ExecutionBackend):
                 Explicit and named so it is never silently folded into
                 candidate-attributed timing (see ``candidate_wall_time_sec``
                 on the result, which is measured by the runner itself).
+            telemetry_collector_factory: Optional (MEGB-03H.2C.2A),
+                ``None`` by default -- real telemetry collection is never
+                silently turned on. When supplied, enables
+                :meth:`execute_with_telemetry`; :meth:`execute` itself is
+                completely unaffected either way.
+            telemetry_container_id_poll_interval_sec/
+            telemetry_container_id_wait_max_sec: Bounds on
+                ``execute_with_telemetry()``'s bounded, non-busy-loop wait
+                for the just-launched container to become inspectable
+                before giving up on telemetry collection for that one
+                invocation (never affecting the candidate's own
+                execution). Configurable so offline tests need not wait
+                the real-world default bound.
         """
         self._runner_image = runner_image
         self._startup_cleanup_grace_sec = startup_cleanup_grace_sec
+        self._telemetry_collector_factory = telemetry_collector_factory
+        self._telemetry_container_id_poll_interval_sec = telemetry_container_id_poll_interval_sec
+        self._telemetry_container_id_wait_max_sec = telemetry_container_id_wait_max_sec
 
-    def execute(  # pylint: disable=too-many-locals
-        self, request: CandidateExecutionRequest
-    ) -> CandidateExecutionResult:
+    def execute(self, request: CandidateExecutionRequest) -> CandidateExecutionResult:
         """Execute one untrusted candidate invocation in a fresh, isolated container.
 
         Cleans up the container on every exit path (normal completion,
         timeout, OOM kill, protocol failure, or infrastructure error).
+        """
+        result, _telemetry = self._execute_impl(request, collect_telemetry=False)
+        return result
+
+    def execute_with_telemetry(
+        self, request: CandidateExecutionRequest
+    ) -> tuple[CandidateExecutionResult, ExecutionTelemetry]:
+        """Execute one invocation exactly as :meth:`execute` does,
+        additionally collecting peak-memory/peak-process-count telemetry
+        around it via the configured ``telemetry_collector_factory``
+        (MEGB-03H.2C.2A).
+
+        Raises :class:`ValueError` if no factory was configured at
+        construction -- telemetry collection must be explicitly enabled,
+        never silently skipped in a way that could be mistaken for
+        "collected but unavailable".
+        """
+        if self._telemetry_collector_factory is None:
+            raise ValueError(
+                "execute_with_telemetry() requires a telemetry_collector_factory to "
+                "be configured at construction time"
+            )
+        result, telemetry = self._execute_impl(request, collect_telemetry=True)
+        assert telemetry is not None
+        return result, telemetry
+
+    def _execute_impl(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
+        self, request: CandidateExecutionRequest, *, collect_telemetry: bool
+    ) -> tuple[CandidateExecutionResult, ExecutionTelemetry | None]:
+        """Shared implementation for :meth:`execute`/
+        :meth:`execute_with_telemetry`. When ``collect_telemetry`` is
+        ``False``, no collector code path executes at all -- this is
+        byte-for-byte and status-for-status identical to H.2C.1's own
+        ``execute()``, so telemetry-disabled behavior is provably
+        unaffected by this checkpoint's changes.
         """
         invocation_id = str(uuid.uuid4())
         started_at = datetime.now(timezone.utc).isoformat()
@@ -333,6 +456,37 @@ class DockerPerInvocationBackend(ExecutionBackend):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+        memory_collector: TelemetryCollector | None = None
+        process_collector: TelemetryCollector | None = None
+        memory_observation = None
+        process_observation = None
+
+        if collect_telemetry:
+            factory = self._telemetry_collector_factory
+            assert factory is not None
+            container_id = _wait_for_container_id(
+                container_name,
+                poll_interval_sec=self._telemetry_container_id_poll_interval_sec,
+                max_wait_sec=self._telemetry_container_id_wait_max_sec,
+            )
+            if container_id is None:
+                memory_observation = collector_failure_observation(CollectorFailureStage.START)
+                process_observation = collector_failure_observation(CollectorFailureStage.START)
+            else:
+                memory_collector, memory_identity = factory.build_memory_collector(
+                    container_id=container_id, container_name=container_name
+                )
+                process_collector, process_identity = factory.build_process_count_collector(
+                    container_id=container_id, container_name=container_name
+                )
+                memory_observation = safe_collector_start(
+                    memory_collector, method_identity=memory_identity
+                )
+                process_observation = safe_collector_start(
+                    process_collector, method_identity=process_identity
+                )
+
         try:
             try:
                 stdout_bytes, stderr_bytes = proc.communicate(
@@ -353,7 +507,12 @@ class DockerPerInvocationBackend(ExecutionBackend):
                 max_response_bytes=request.limits.max_response_bytes,
             )
 
-            return CandidateExecutionResult(
+            if memory_collector is not None and memory_observation is None:
+                memory_observation = safe_collector_finalize(memory_collector)
+            if process_collector is not None and process_observation is None:
+                process_observation = safe_collector_finalize(process_collector)
+
+            result = CandidateExecutionResult(
                 invocation_id=invocation_id,
                 status=outcome.status,
                 return_value=outcome.return_value,
@@ -378,7 +537,30 @@ class DockerPerInvocationBackend(ExecutionBackend):
                 observed_response_bytes=outcome.observed_response_bytes,
             )
         finally:
+            if memory_collector is not None:
+                if memory_observation is not None:
+                    memory_observation = safe_collector_cleanup(
+                        memory_collector, memory_observation
+                    )
+                else:
+                    _best_effort_collector_cleanup(memory_collector)
+            if process_collector is not None:
+                if process_observation is not None:
+                    process_observation = safe_collector_cleanup(
+                        process_collector, process_observation
+                    )
+                else:
+                    _best_effort_collector_cleanup(process_collector)
             _docker_remove(container_name)
+
+        if not collect_telemetry:
+            return result, None
+        assert memory_observation is not None
+        assert process_observation is not None
+        telemetry = build_execution_telemetry(
+            result, peak_memory=memory_observation, peak_process_count=process_observation
+        )
+        return result, telemetry
 
 
 def execute_candidate(

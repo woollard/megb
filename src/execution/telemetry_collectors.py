@@ -33,13 +33,14 @@ contract:
 
 import dataclasses
 from abc import ABC, abstractmethod
-from typing import Callable
+from typing import Callable, Protocol
 
 from src.execution.telemetry import (
     CollectorFailureStage,
     TelemetryObservation,
     collector_failure_observation,
 )
+from src.execution.telemetry_methods import CollectorMethodIdentity
 
 
 class TelemetryCollector(ABC):
@@ -143,6 +144,117 @@ def run_collector(
     if cleanup_failed:
         return dataclasses.replace(observation, cleanup_failed=True)
     return observation
+
+
+# ---------------------------------------------------------------------------
+# Split-phase lifecycle helpers (MEGB-03H.2C.2A)
+#
+# run_collector() above performs a collector's entire start/sample/
+# finalize/cleanup lifecycle back-to-back, in one call -- correct for
+# offline collector-only testing, but not for a real invocation, where
+# sampling (for a sampled collector) must happen *during* the candidate's
+# own container execution, not before it. These three functions expose
+# the same failure-classification and cleanup-safety invariants as
+# run_collector() split into independently callable phases, so a caller
+# like DockerPerInvocationBackend.execute_with_telemetry() can call
+# start() right after the container is created, run the candidate's own
+# execution in between, then call finalize()/cleanup() right before the
+# container is removed. run_collector() itself is intentionally left
+# unmodified -- this is new, additive surface area, not a refactor of
+# already-accepted code.
+# ---------------------------------------------------------------------------
+
+
+def safe_collector_start(
+    collector: TelemetryCollector,
+    *,
+    method_identity: CollectorMethodIdentity | None = None,
+) -> TelemetryObservation | None:
+    """Call ``collector.start()``, translating any exception into a
+    ``START`` failure observation. Returns ``None`` on success -- the
+    caller should proceed to do its own work, then call
+    :func:`safe_collector_finalize`. Returns the failure observation
+    directly if ``start()`` raised; the caller must not call
+    :func:`safe_collector_finalize` in that case, but must still call
+    :func:`safe_collector_cleanup` (from a ``finally`` block) with this
+    return value. ``method_identity``, when supplied, is attached to the
+    failure observation so which method's collector failed remains
+    visible even when ``start()`` never got far enough to determine it
+    itself."""
+    try:
+        collector.start()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return collector_failure_observation(
+            CollectorFailureStage.START, method_identity=method_identity
+        )
+    return None
+
+
+def safe_collector_finalize(
+    collector: TelemetryCollector,
+    *,
+    method_identity: CollectorMethodIdentity | None = None,
+) -> TelemetryObservation:
+    """Call ``collector.finalize()``, translating any exception into a
+    ``FINALIZE`` failure observation. Only call when
+    :func:`safe_collector_start` returned ``None`` (start succeeded).
+    ``method_identity``, when supplied, is attached to the failure
+    observation on the same basis as :func:`safe_collector_start`."""
+    try:
+        return collector.finalize()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return collector_failure_observation(
+            CollectorFailureStage.FINALIZE, method_identity=method_identity
+        )
+
+
+def safe_collector_cleanup(
+    collector: TelemetryCollector,
+    observation: TelemetryObservation,
+    *,
+    on_cleanup_failure: Callable[[], None] | None = None,
+) -> TelemetryObservation:
+    """Always call ``collector.cleanup()`` exactly once; amend
+    ``cleanup_failed`` onto ``observation`` if it raises, without
+    altering any other field -- mirroring ``run_collector()``'s own
+    cleanup-safety invariant. Must be called from a ``finally`` block by
+    the caller so it always runs, including when a ``BaseException`` is
+    propagating; ``on_cleanup_failure`` (if supplied) is itself guarded
+    so it can never mask a propagating exception (mirroring
+    ``run_collector()``'s own protection)."""
+    try:
+        collector.cleanup()
+    except Exception:  # pylint: disable=broad-exception-caught
+        if on_cleanup_failure is not None:
+            try:
+                on_cleanup_failure()
+            except BaseException:  # pylint: disable=broad-exception-caught
+                pass
+        return dataclasses.replace(observation, cleanup_failed=True)
+    return observation
+
+
+class CollectorFactory(Protocol):
+    """Structural interface for building one invocation's memory and
+    process-count collectors (MEGB-03H.2C.2A), satisfied by
+    :class:`~src.execution.real_telemetry_collectors.TelemetryCollectorFactory`
+    without this module -- or ``docker_backend.py``, its only intended
+    caller -- ever importing ``real_telemetry_collectors`` directly:
+    that module itself imports from ``docker_backend.py``
+    (``_docker_inspect``/``_docker_server_version``), so a direct import
+    the other way would be circular. A ``Protocol`` lets
+    ``docker_backend.py`` accept any conforming factory purely
+    structurally."""
+
+    def build_memory_collector(
+        self, *, container_id: str, container_name: str
+    ) -> tuple[TelemetryCollector, CollectorMethodIdentity]:
+        """Select and build this invocation's memory collector."""
+
+    def build_process_count_collector(
+        self, *, container_id: str, container_name: str
+    ) -> tuple[TelemetryCollector, CollectorMethodIdentity]:
+        """Select and build this invocation's process-count collector."""
 
 
 class FakeTelemetryCollector(TelemetryCollector):

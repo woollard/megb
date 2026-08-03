@@ -36,6 +36,7 @@ from src.execution.response_overflow import (
     ResponseOverflowClassification,
     classify_response_overflow,
 )
+from src.execution.telemetry_methods import CollectorMethodIdentity
 
 
 class TelemetryQuality(str, Enum):
@@ -103,6 +104,18 @@ class TelemetryObservation:
     primary lifecycle determined; ``cleanup_failed`` is purely additive,
     so a finalize failure and a cleanup failure are both visible at once
     rather than one silently replacing the other.
+
+    ``method_identity`` (MEGB-03H.2C.2A) is likewise purely additive and
+    orthogonal: which real collector method/version/interface produced
+    this observation, per the H.2C.2A calibration-provenance audit
+    (``docs/reference/megb-03h2c2a-collector-provenance-audit.md``) --
+    the accepted H.2A persisted schema has no field for it, so it lives
+    here, execution-layer-only, never persisted until a separately
+    authorized schema change decides how to carry it forward. It never
+    influences ``__post_init__``'s own validation -- any value/quality/
+    reason combination is valid regardless of which method (or none, for
+    every synthetic/offline-fixture observation predating H.2C.2A)
+    produced it.
     """
 
     value: float | int | None
@@ -110,6 +123,7 @@ class TelemetryObservation:
     unavailable_reason: TelemetryUnavailableReason | None
     collector_failure: CollectorFailureStage | None = None
     cleanup_failed: bool = False
+    method_identity: CollectorMethodIdentity | None = None
 
     def __post_init__(self) -> None:
         if self.value is None:
@@ -146,18 +160,25 @@ class TelemetryObservation:
 
 
 def collector_failure_observation(
-    stage: CollectorFailureStage, *, cleanup_failed: bool = False
+    stage: CollectorFailureStage,
+    *,
+    cleanup_failed: bool = False,
+    method_identity: CollectorMethodIdentity | None = None,
 ) -> TelemetryObservation:
     """Build the :class:`TelemetryObservation` for a collector that raised
     during ``stage`` of its lifecycle. ``cleanup_failed`` additionally
     records that ``cleanup()`` also raised afterward -- orthogonal to
-    ``stage``, never replacing it."""
+    ``stage``, never replacing it. ``method_identity`` (MEGB-03H.2C.2A),
+    when known, records which method the failing collector was using --
+    purely additive, never affecting the SAMPLER_FAILURE classification
+    itself."""
     return TelemetryObservation(
         value=None,
         quality=None,
         unavailable_reason=TelemetryUnavailableReason.SAMPLER_FAILURE,
         collector_failure=stage,
         cleanup_failed=cleanup_failed,
+        method_identity=method_identity,
     )
 
 
