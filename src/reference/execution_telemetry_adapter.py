@@ -83,7 +83,20 @@ def _adapt_observation(
     slot for "a sampler that ran but failed" and is not lost -- only the
     additional stage-level detail is, which is outside this schema's
     scope.
+
+    ``cleanup_failed`` (MEGB-03H.2C.1 conformance-audit correction) is
+    handled conservatively: whenever the collector's own ``cleanup()``
+    also failed, this maps to unavailable/``SAMPLER_FAILURE`` for
+    calibration-release purposes *regardless* of what ``value``/
+    ``quality`` the observation otherwise carried -- an observation whose
+    collector could not confirm its resources were released is never
+    treated as trustworthy here, even if the reading itself looked valid.
+    This never touches candidate correctness or cacheability:
+    :class:`CalibrationTelemetryFields` has no field capable of
+    representing either.
     """
+    if observation.cleanup_failed:
+        return None, None, adapt_unavailable_reason(ExecReason.SAMPLER_FAILURE)
     if observation.value is not None:
         assert observation.quality is not None
         return observation.value, adapt_quality(observation.quality), None

@@ -31,7 +31,9 @@ contract:
   with the failing stage).
 """
 
+import dataclasses
 from abc import ABC, abstractmethod
+from typing import Callable
 
 from src.execution.telemetry import (
     CollectorFailureStage,
@@ -65,7 +67,12 @@ class TelemetryCollector(ABC):
         call even if ``start``/``sample``/``finalize`` raised."""
 
 
-def run_collector(collector: TelemetryCollector, *, sample_count: int = 0) -> TelemetryObservation:
+def run_collector(
+    collector: TelemetryCollector,
+    *,
+    sample_count: int = 0,
+    on_cleanup_failure: Callable[[], None] | None = None,
+) -> TelemetryObservation:
     """Run one collector through its full lifecycle, translating any
     exception from ``start``/``sample``/``finalize`` into a
     ``SAMPLER_FAILURE`` :class:`~src.execution.telemetry.TelemetryObservation`
@@ -74,33 +81,55 @@ def run_collector(collector: TelemetryCollector, *, sample_count: int = 0) -> Te
     when a ``BaseException`` (e.g. ``KeyboardInterrupt``, modeling
     cancellation) passes through, since ``finally`` runs unconditionally.
 
-    ``cleanup()`` itself raising is deliberately never allowed to mask
-    whatever the ``try`` block already determined: a plain ``finally:
-    collector.cleanup()`` would let a ``cleanup()`` exception silently
-    replace an already-computed observation, or replace an in-flight
-    ``BaseException`` (e.g. real cancellation) with an unrelated cleanup
-    error -- so a failing ``cleanup()`` is caught and discarded here,
-    never propagated and never allowed to override the real outcome.
+    A failing ``cleanup()`` is never allowed to replace or mask whatever
+    the primary lifecycle already determined (MEGB-03H.2C.1 conformance-
+    audit correction):
+
+    * if the primary lifecycle produced a real observation (success or a
+      ``collector_failure``), the returned observation is the *same* one,
+      with only ``cleanup_failed=True`` added on top -- ``value``/
+      ``quality``/``unavailable_reason``/``collector_failure`` are
+      untouched, so a finalize failure and a cleanup failure are both
+      visible, neither overwriting the other;
+    * if a ``BaseException`` (real cancellation) is propagating instead,
+      there is no return value to amend -- ``on_cleanup_failure`` (if
+      supplied) is called as a side effect so the failure is still
+      observable, and the original exception continues propagating
+      completely unchanged (never replaced by the cleanup failure).
+
+    ``cleanup_failed`` is a plain, typed boolean, never a raw exception
+    message -- this function never inspects, stores, or forwards the
+    cleanup exception's own text or type.
     """
+    observation: TelemetryObservation
+    cleanup_failed = False
     try:
         try:
             collector.start()
         except Exception:  # pylint: disable=broad-exception-caught
-            return collector_failure_observation(CollectorFailureStage.START)
-        try:
-            for _ in range(sample_count):
-                collector.sample()
-        except Exception:  # pylint: disable=broad-exception-caught
-            return collector_failure_observation(CollectorFailureStage.SAMPLE)
-        try:
-            return collector.finalize()
-        except Exception:  # pylint: disable=broad-exception-caught
-            return collector_failure_observation(CollectorFailureStage.FINALIZE)
+            observation = collector_failure_observation(CollectorFailureStage.START)
+        else:
+            try:
+                for _ in range(sample_count):
+                    collector.sample()
+            except Exception:  # pylint: disable=broad-exception-caught
+                observation = collector_failure_observation(CollectorFailureStage.SAMPLE)
+            else:
+                try:
+                    observation = collector.finalize()
+                except Exception:  # pylint: disable=broad-exception-caught
+                    observation = collector_failure_observation(CollectorFailureStage.FINALIZE)
     finally:
         try:
             collector.cleanup()
         except Exception:  # pylint: disable=broad-exception-caught
-            pass
+            cleanup_failed = True
+            if on_cleanup_failure is not None:
+                on_cleanup_failure()
+
+    if cleanup_failed:
+        return dataclasses.replace(observation, cleanup_failed=True)
+    return observation
 
 
 class FakeTelemetryCollector(TelemetryCollector):

@@ -189,26 +189,42 @@ def test_cancellation_at_any_stage_still_cleans_up_and_propagates(stage: str) ->
 
 def test_cleanup_failure_after_successful_finalize_does_not_lose_the_observation() -> None:
     """A cleanup() that raises after a successful finalize() must not
-    discard or replace the already-computed observation."""
+    discard or replace the already-computed observation -- it is
+    returned unchanged, with cleanup_failed=True added on top (MEGB-03H.2C.1
+    conformance-audit correction: cleanup failure is now observable)."""
     collector = FakeTelemetryCollector(observation=_exact(4096), cleanup_raises=True)
     result = run_collector(collector)
     assert result.value == 4096
     assert result.quality == TelemetryQuality.EXACT
+    assert result.cleanup_failed is True
     assert collector.cleanup_call_count == 1
 
 
 def test_cleanup_failure_after_a_lifecycle_failure_does_not_override_the_classification() -> None:
     """A cleanup() that also raises, on top of a start/sample/finalize
     failure, must not override or replace the original SAMPLER_FAILURE
-    classification with an unrelated cleanup error."""
-    for collector in (
-        FakeTelemetryCollector(start_raises=True, cleanup_raises=True),
-        FakeTelemetryCollector(sample_raises=True, cleanup_raises=True),
-        FakeTelemetryCollector(finalize_raises=True, cleanup_raises=True),
+    classification/stage with an unrelated cleanup error -- both failures
+    are visible at once via collector_failure (the original stage) and
+    cleanup_failed (additive)."""
+    for collector, expected_stage in (
+        (
+            FakeTelemetryCollector(start_raises=True, cleanup_raises=True),
+            CollectorFailureStage.START,
+        ),
+        (
+            FakeTelemetryCollector(sample_raises=True, cleanup_raises=True),
+            CollectorFailureStage.SAMPLE,
+        ),
+        (
+            FakeTelemetryCollector(finalize_raises=True, cleanup_raises=True),
+            CollectorFailureStage.FINALIZE,
+        ),
     ):
         result = run_collector(collector, sample_count=1)
         assert result.value is None
         assert result.unavailable_reason == TelemetryUnavailableReason.SAMPLER_FAILURE
+        assert result.collector_failure == expected_stage
+        assert result.cleanup_failed is True
         assert collector.cleanup_call_count == 1
 
 
@@ -221,3 +237,26 @@ def test_cleanup_failure_never_replaces_an_in_flight_cancellation() -> None:
     with pytest.raises(KeyboardInterrupt):
         run_collector(collector)
     assert collector.cleanup_call_count == 1
+
+
+def test_cleanup_failure_during_cancellation_is_observable_via_the_callback() -> None:
+    """The 5th required combination: KeyboardInterrupt + cleanup failure.
+    There is no return value to amend in this path (the function exits
+    via the propagating exception), so on_cleanup_failure is the only
+    channel that can make the cleanup failure observable -- proven here
+    to actually fire, while the original KeyboardInterrupt still
+    propagates unaltered."""
+    calls: list[None] = []
+    collector = _RaisingAt(stage="finalize", cleanup_raises=True)
+    with pytest.raises(KeyboardInterrupt):
+        run_collector(collector, on_cleanup_failure=lambda: calls.append(None))
+    assert len(calls) == 1
+    assert collector.cleanup_call_count == 1
+
+
+def test_on_cleanup_failure_is_not_called_when_cleanup_succeeds() -> None:
+    """The callback fires only on an actual cleanup() failure."""
+    calls: list[None] = []
+    collector = FakeTelemetryCollector(observation=_exact(1))
+    run_collector(collector, on_cleanup_failure=lambda: calls.append(None))
+    assert not calls

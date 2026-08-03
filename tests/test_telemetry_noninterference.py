@@ -139,3 +139,97 @@ def test_collector_failure_cannot_cause_a_cacheable_result_to_be_misclassified()
     assert fields.peak_memory_unavailable_reason.value == "SAMPLER_FAILURE"
     assert fields.peak_process_unavailable_reason is not None
     assert fields.peak_process_unavailable_reason.value == "SAMPLER_FAILURE"
+
+
+# ---------------------------------------------------------------------------
+# cleanup_failed noninterference (MEGB-03H.2C.1 conformance-audit correction)
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_failure_does_not_change_the_candidate_result() -> None:
+    """A collector whose cleanup() ALSO fails (on top of a successful
+    observation) still cannot touch the candidate result -- same
+    structural guarantee as any other collector behavior."""
+    result = make_candidate_execution_result(status=ExecutionStatus.COMPLETED)
+    peak_memory = run_collector(
+        FakeTelemetryCollector(
+            observation=TelemetryObservation(
+                value=1, quality=TelemetryQuality.EXACT, unavailable_reason=None
+            ),
+            cleanup_raises=True,
+        )
+    )
+    assert peak_memory.cleanup_failed is True
+    assert result.status == ExecutionStatus.COMPLETED
+    assert result.return_value is None
+
+
+def test_cleanup_failure_on_one_collector_does_not_corrupt_sibling_telemetry_fields() -> None:
+    """A cleanup() failure on peak_memory must not affect
+    peak_process_count or any other sibling field."""
+    result = make_candidate_execution_result(
+        status=ExecutionStatus.COMPLETED,
+        candidate_wall_time_sec=0.5,
+        observed_response_bytes=77,
+        request_bytes=321,
+        wall_time_sec=1.5,
+    )
+    peak_memory = run_collector(
+        FakeTelemetryCollector(
+            observation=TelemetryObservation(
+                value=2048, quality=TelemetryQuality.EXACT, unavailable_reason=None
+            ),
+            cleanup_raises=True,
+        )
+    )
+    peak_process_count = TelemetryObservation(
+        value=4, quality=TelemetryQuality.EXACT, unavailable_reason=None
+    )
+    telemetry = build_execution_telemetry(
+        result, peak_memory=peak_memory, peak_process_count=peak_process_count
+    )
+
+    assert telemetry.peak_memory.value == 2048  # observation itself preserved
+    assert telemetry.peak_memory.cleanup_failed is True
+    assert telemetry.peak_process_count.value == 4
+    assert telemetry.peak_process_count.cleanup_failed is False
+    assert telemetry.candidate_wall_time.value == 0.5
+    assert telemetry.observed_response_bytes.value == 77
+
+
+def test_cleanup_failure_is_conservatively_mapped_to_sampler_failure_for_calibration() -> None:
+    """Per invariant 4: even though the raw observation was a valid EXACT
+    reading, the adapter conservatively reports it as unavailable/
+    SAMPLER_FAILURE for calibration-release purposes once cleanup_failed
+    is set -- and this still cannot touch candidate correctness/
+    cacheability (no such field exists on CalibrationTelemetryFields)."""
+    result = make_candidate_execution_result(status=ExecutionStatus.COMPLETED)
+    peak_memory = run_collector(
+        FakeTelemetryCollector(
+            observation=TelemetryObservation(
+                value=999, quality=TelemetryQuality.EXACT, unavailable_reason=None
+            ),
+            cleanup_raises=True,
+        )
+    )
+    assert peak_memory.value == 999  # the raw observation is untouched
+    assert peak_memory.cleanup_failed is True
+
+    telemetry = build_execution_telemetry(
+        result,
+        peak_memory=peak_memory,
+        peak_process_count=TelemetryObservation(
+            value=1, quality=TelemetryQuality.EXACT, unavailable_reason=None
+        ),
+    )
+    fields = adapt_execution_telemetry(telemetry)
+
+    assert fields.peak_memory_bytes is None
+    assert fields.peak_memory_quality is None
+    assert fields.peak_memory_unavailable_reason is not None
+    assert fields.peak_memory_unavailable_reason.value == "SAMPLER_FAILURE"
+    # Candidate correctness/cacheability remain entirely outside this
+    # adapter's output surface.
+    field_names = {f.name for f in dataclasses.fields(CalibrationTelemetryFields)}
+    assert "measurement_status" not in field_names
+    assert "cacheable" not in field_names

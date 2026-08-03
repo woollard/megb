@@ -93,12 +93,23 @@ class TelemetryObservation:
     ``unavailable_reason is SAMPLER_FAILURE`` -- it is strictly additional
     diagnostic detail (which lifecycle stage failed), never an independent
     axis of unavailability.
+
+    ``cleanup_failed`` (MEGB-03H.2C.1 conformance-audit correction) is
+    orthogonal to everything else on this observation: it records that
+    the collector's own ``cleanup()`` also raised, independent of whether
+    ``start``/``sample``/``finalize`` succeeded, failed, or was cancelled.
+    It never overwrites ``value``/``quality``/``unavailable_reason``/
+    ``collector_failure`` -- those continue to describe exactly what the
+    primary lifecycle determined; ``cleanup_failed`` is purely additive,
+    so a finalize failure and a cleanup failure are both visible at once
+    rather than one silently replacing the other.
     """
 
     value: float | int | None
     quality: TelemetryQuality | None
     unavailable_reason: TelemetryUnavailableReason | None
     collector_failure: CollectorFailureStage | None = None
+    cleanup_failed: bool = False
 
     def __post_init__(self) -> None:
         if self.value is None:
@@ -134,14 +145,19 @@ class TelemetryObservation:
                 )
 
 
-def collector_failure_observation(stage: CollectorFailureStage) -> TelemetryObservation:
+def collector_failure_observation(
+    stage: CollectorFailureStage, *, cleanup_failed: bool = False
+) -> TelemetryObservation:
     """Build the :class:`TelemetryObservation` for a collector that raised
-    during ``stage`` of its lifecycle."""
+    during ``stage`` of its lifecycle. ``cleanup_failed`` additionally
+    records that ``cleanup()`` also raised afterward -- orthogonal to
+    ``stage``, never replacing it."""
     return TelemetryObservation(
         value=None,
         quality=None,
         unavailable_reason=TelemetryUnavailableReason.SAMPLER_FAILURE,
         collector_failure=stage,
+        cleanup_failed=cleanup_failed,
     )
 
 

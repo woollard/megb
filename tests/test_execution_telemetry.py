@@ -123,6 +123,39 @@ def test_collector_failure_observation_builds_a_consistent_observation() -> None
         assert observation.quality is None
         assert observation.unavailable_reason == TelemetryUnavailableReason.SAMPLER_FAILURE
         assert observation.collector_failure == stage
+        assert observation.cleanup_failed is False
+
+
+def test_cleanup_failed_defaults_to_false_and_never_appears_uninvited() -> None:
+    """Every existing construction path (no cleanup_failed kwarg at all)
+    is unaffected -- it defaults to False."""
+    observation = TelemetryObservation(
+        value=1.0, quality=TelemetryQuality.EXACT, unavailable_reason=None
+    )
+    assert observation.cleanup_failed is False
+
+
+def test_cleanup_failed_is_orthogonal_to_a_present_value() -> None:
+    """cleanup_failed=True can coexist with a genuinely present, valid
+    observation -- it is purely additive, never forcing value to None by
+    itself (that conservative remapping happens only in the reference
+    adapter, for calibration-release purposes -- not at this layer)."""
+    observation = TelemetryObservation(
+        value=1024, quality=TelemetryQuality.EXACT, unavailable_reason=None, cleanup_failed=True
+    )
+    assert observation.value == 1024
+    assert observation.cleanup_failed is True
+
+
+def test_cleanup_failed_can_coexist_with_a_collector_failure_stage() -> None:
+    """cleanup_failed and collector_failure are independent axes -- both
+    can be set at once, one never overwriting the other."""
+    observation = collector_failure_observation(
+        CollectorFailureStage.FINALIZE, cleanup_failed=True
+    )
+    assert observation.collector_failure == CollectorFailureStage.FINALIZE
+    assert observation.unavailable_reason == TelemetryUnavailableReason.SAMPLER_FAILURE
+    assert observation.cleanup_failed is True
 
 
 # ---------------------------------------------------------------------------
