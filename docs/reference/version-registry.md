@@ -68,6 +68,9 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `H5_PROMOTION_MANIFEST_SCHEMA_VERSION` | `megb-03h5-promotion-manifest-v1` | `h5_promotion_manifest.py` | `H5PromotionManifest` field shape and `PromotionState`/`EntryPromotionState` state-machine semantics (the transition table in `advance_manifest` is versioned together with the manifest shape, not as a separate constant — a future state-machine change bumps this same version, per this table's own established one-version-per-persisted-shape discipline). See "MEGB-03H.2B.2 addendum" below. |
 | `PROMOTION_SUMMARY_SCHEMA_VERSION` | `megb-03h5-promotion-summary-v1` | `h5_promotion.py` | `PromotionSummary` field shape — the safe, allowlisted, committed-output-suitable promotion report. See "MEGB-03H.2B.2 addendum" below. |
 | `CALIBRATION_SCHEMA_VERSION` | `megb-03h-calibration-record-v2` | `calibration_schema.py` | `CalibrationRunContext`/`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` field shape. **v1→v2**: v1 had no persisted telemetry-collection-policy, host/runtime, or per-metric collector-method provenance — see "MEGB-03H.2C.2A addendum" below. (Introduced by MEGB-03H.2A; this row itself was missing from this registry until the H.2C.2A correction pass — a registry-currency gap, not a second schema change.) |
+| `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` | `megb-03h2c3b1-distributed-provenance-v1` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` provenance/identity type (`DistributedRunContext`, `WorkerExecutionContext`, `RetryLeasePolicy`, `MixedWorkerProvenanceSummary`, `QualificationIdentity`, `ProductionIdentityProjection`, `AggregateProductionIdentityProjection`, `SafeRedactedSummary`, `ProtectedOperationalMapping`). Introduced by MEGB-03H.2C.3B.1; this row itself was missing from this registry until this MEGB-03H.2C.3B.2A pass — a registry-currency gap, not a schema change. See "MEGB-03H.2C.3B addendum" below. |
+| `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` | `megb-03h2c3b2a-distributed-orchestration-v1` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` orchestration-contract type introduced by MEGB-03H.2C.3B.2A (`ArtifactReference`, `WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`, `ExecutionAttempt`, `ResultCommit`, `Acknowledgement`, `TerminalDisposition`, `WorkerRegistration`, `Lease`, `LeaseRenewal`, `PersonalEnvironmentPolicy`, `SafeAuditEvent`) — a schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` above. Introduced by, and current as of, this same MEGB-03H.2C.3B.2A checkpoint. See "MEGB-03H.2C.3B addendum" below. |
+| `CHECKSUM_ALGORITHM_VERSION` (`src.distributed`) | `sha256-canonical-json-v1` | `src/distributed/_checksums.py` | The one checksum-derivation algorithm identity shared by **both** `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped types — sha256 over `json.dumps(payload, sort_keys=True)`. Deliberately the same name as no other constant in this table (`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` is a distinct, unrelated identity scoped to G.4's own synthetic workload checksum) — the two never collide because they are different Python identifiers in different modules; this row exists so this document's own registry is not silently incomplete about which module's `CHECKSUM_ALGORITHM_VERSION` it is describing. Introduced by MEGB-03H.2C.3B.1; unchanged by MEGB-03H.2C.3B.2A, which reuses it rather than defining a second one. See "MEGB-03H.2C.3B addendum" below. |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
 `BENCHMARK_PLAN_VERSION`, `SYNTHETIC_WORKLOAD_VERSION`,
@@ -391,6 +394,107 @@ invent a migration when no real artifact exists), none was written; v1
 readers simply reject v1-stamped input going forward via the normal
 `UnsupportedCalibrationSchemaVersionError` path, same as any other schema
 version bump in this registry.
+
+## MEGB-03H.2C.3B addendum: distributed-execution provenance/orchestration schema identities
+
+Three constants, all in `src/distributed/_checksums.py`, were never added
+as rows to this table before this addendum — the same "registry-currency
+gap, not a schema change" pattern already documented in the H.2C.2A
+addendum above. No version was invented, bumped, or otherwise changed to
+produce this addendum; every value below is the literal, already-in-force
+constant, unmodified by this documentation pass.
+
+### `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` = `megb-03h2c3b1-distributed-provenance-v1`
+
+- **Introduced:** MEGB-03H.2C.3B.1, commit `d79c1d5` (rewritten to
+  `b476d8c` during the H.2C.3B.1 secret-scan remediation — content
+  unchanged).
+- **Trust classification:** manually governed schema-version label (not a
+  content checksum).
+- **Owning module:** `src/distributed/_checksums.py` (shared constant);
+  enforced via `require_schema_version` on every type in
+  `src/distributed/provenance.py` (`DistributedRunContext`,
+  `WorkerExecutionContext`, `RetryLeasePolicy`), `identity.py`
+  (`MixedWorkerProvenanceSummary`, `QualificationIdentity`,
+  `ProductionIdentityProjection`, `AggregateProductionIdentityProjection`),
+  `safe_summary.py` (`SafeRedactedSummary`), and `protected_mapping.py`
+  (`ProtectedOperationalMapping`).
+- **What carries it:** the `distributed_provenance_schema_version` field
+  present on every instance of each type above — in-memory objects only;
+  no persisted artifact of any of these types currently exists anywhere
+  in this repository (no real GCP/distributed run has occurred as of
+  MEGB-03H.2C.3B.2A — H.2C.3C, the personal GCP bootstrap, has not begun).
+- **Compatibility/migration:** v1 is the only version that has ever
+  existed; no migration is required or possible yet, since no persisted
+  instance exists to migrate.
+- **Relationship to the checksum algorithm:** every type above also
+  declares `checksum_algorithm_version` and is validated against
+  `CHECKSUM_ALGORITHM_VERSION` below — the schema-version and
+  checksum-algorithm-version fields are independent and both required,
+  matching this registry's own "two categories of identity" distinction.
+
+### `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` = `megb-03h2c3b2a-distributed-orchestration-v1`
+
+- **Introduced:** MEGB-03H.2C.3B.2A, commit `04e9d83`.
+- **Trust classification:** manually governed schema-version label.
+- **Owning module:** `src/distributed/_checksums.py` (shared constant);
+  enforced via `require_orchestration_schema_version` on every type in
+  `src/distributed/work_contracts.py` (`ArtifactReference`,
+  `WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`,
+  `ExecutionAttempt`, `ResultCommit`, `Acknowledgement`,
+  `TerminalDisposition`), `worker_contracts.py` (`WorkerRegistration`,
+  `Lease`, `LeaseRenewal`), `personal_policy.py`
+  (`PersonalEnvironmentPolicy`), and `safe_audit.py` (`SafeAuditEvent`).
+- **What carries it:** the `distributed_orchestration_schema_version`
+  field present on every instance of each type above — in-memory objects
+  only, produced today exclusively by this checkpoint's own test
+  fixtures (`tests/_distributed_orchestration_fixtures.py`); no queue,
+  store, or coordinator implementation exists yet to persist or transmit
+  one for real (MEGB-03H.2C.3B.2B's own, separately authorized, scope).
+- **Compatibility/migration:** v1 is the only version that has ever
+  existed; nothing to migrate.
+- **Relationship to `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`:** a
+  deliberately **separate** schema family, not a version bump of the
+  provenance schema — the orchestration-contract types (work/lease/
+  result-commit/acknowledgement/policy/audit) are a distinct schema
+  surface from the provenance/identity types B.1 introduced, with their
+  own independent evolution cadence, exactly mirroring how this registry
+  already keeps `RESULT_SCHEMA_VERSION`, `CACHE_KEY_SCHEMA_VERSION`, and
+  `CALIBRATION_SCHEMA_VERSION` as three separately-versioned families
+  rather than one shared counter. The two `src/distributed/` schema
+  families share the same `CHECKSUM_ALGORITHM_VERSION` (below), the same
+  way `RESULT_SCHEMA_VERSION` and `CACHE_KEY_SCHEMA_VERSION` share the
+  same sha256-canonical-JSON checksum discipline without sharing one
+  schema-version counter.
+
+### `CHECKSUM_ALGORITHM_VERSION` (`src.distributed`) = `sha256-canonical-json-v1`
+
+- **Introduced:** MEGB-03H.2C.3B.1, commit `d79c1d5` (rewritten to
+  `b476d8c`, content unchanged); reused, not redefined, by
+  MEGB-03H.2C.3B.2A.
+- **Trust classification:** manually governed algorithm-version label
+  (identifies *how* a checksum is derived — sha256 over
+  `json.dumps(payload, sort_keys=True)` — not a checksum value itself).
+- **Owning module:** `src/distributed/_checksums.py`; the single
+  `sha256_of`/`canonical_json` implementation every self-checksummed
+  type in both `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`- and
+  `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped modules calls.
+- **What carries it:** the `checksum_algorithm_version` field present on
+  every self-checksummed type in `src/distributed/` (both schema
+  families) — same in-memory-only status as the two schema versions
+  above.
+- **Compatibility/migration:** v1 is the only version that has ever
+  existed; nothing to migrate.
+- **Relationship to the two schema versions above:** deliberately the one
+  checksum-derivation scheme shared across both `src/distributed/` schema
+  families — a future change to *how* checksums are computed (a new
+  canonicalization scheme, a different hash function) would bump this
+  one constant independently of either schema-version constant, the same
+  separation of concerns `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`
+  already models for G.4's own workload checksum. Distinct from, and
+  never to be confused with, `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`
+  itself — same *kind* of constant (a checksum-algorithm label), different
+  Python identifier, different module, different scope, no shared value.
 
 ## Cache key: complete field list
 
