@@ -6,7 +6,10 @@ or imported across a `_`-prefixed private boundary) so every type in this
 package -- :mod:`~src.distributed.provenance`,
 :mod:`~src.distributed.protected_mapping`,
 :mod:`~src.distributed.safe_summary`, :mod:`~src.distributed.identity`,
-:mod:`~src.distributed.qualification_gate` -- shares exactly one
+:mod:`~src.distributed.qualification_gate`, and (MEGB-03H.2C.3B.2A)
+:mod:`~src.distributed.work_contracts`, :mod:`~src.distributed.worker_contracts`,
+:mod:`~src.distributed.state_machine`, :mod:`~src.distributed.safe_audit`,
+:mod:`~src.distributed.personal_policy` -- shares exactly one
 canonicalization/checksum scheme and one schema-version/checksum-
 algorithm-version enforcement path. Deliberately independent of
 ``src.reference.calibration_schema``'s own private helpers of the same
@@ -21,6 +24,16 @@ from typing import Any, Iterable, Mapping
 DISTRIBUTED_PROVENANCE_SCHEMA_VERSION = "megb-03h2c3b1-distributed-provenance-v1"
 CHECKSUM_ALGORITHM_VERSION = "sha256-canonical-json-v1"
 
+# MEGB-03H.2C.3B.2A: a second, independently versioned schema family for the
+# orchestration-contract types (work/lease/result-commit/acknowledgement/
+# worker-registration/policy/safe-audit) -- distinct from
+# DISTRIBUTED_PROVENANCE_SCHEMA_VERSION above because these are a different
+# schema surface with its own evolution cadence, mirroring this project's own
+# established discipline of independently versioning each schema family
+# (calibration schema v2, result schema v4, cache-key schema v2 all evolve on
+# their own version counters, never one shared one).
+DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION = "megb-03h2c3b2a-distributed-orchestration-v1"
+
 
 class InvalidDistributedProvenanceError(ValueError):
     """Raised when a distributed-provenance record's fields are internally
@@ -32,6 +45,12 @@ class UnsupportedDistributedProvenanceSchemaVersionError(InvalidDistributedProve
     """Raised when deserializing a payload stamped with a different
     ``DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`` than this package currently
     implements."""
+
+
+class UnsupportedDistributedOrchestrationSchemaVersionError(InvalidDistributedProvenanceError):
+    """Raised when deserializing a payload stamped with a different
+    ``DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`` than this package
+    currently implements."""
 
 
 class UnsupportedChecksumAlgorithmVersionError(InvalidDistributedProvenanceError):
@@ -136,4 +155,17 @@ def require_schema_version(obj: object) -> None:
         raise UnsupportedDistributedProvenanceSchemaVersionError(
             f"distributed_provenance_schema_version {value!r} does not match the version this "
             f"package implements ({DISTRIBUTED_PROVENANCE_SCHEMA_VERSION!r})"
+        )
+
+
+def require_orchestration_schema_version(obj: object) -> None:
+    """Raise unless ``obj.distributed_orchestration_schema_version`` matches
+    :data:`DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` -- the B.2A analogue of
+    :func:`require_schema_version` for the orchestration-contract schema
+    family."""
+    value = getattr(obj, "distributed_orchestration_schema_version")
+    if value != DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION:
+        raise UnsupportedDistributedOrchestrationSchemaVersionError(
+            f"distributed_orchestration_schema_version {value!r} does not match the version "
+            f"this package implements ({DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION!r})"
         )

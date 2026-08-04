@@ -14,6 +14,11 @@ from pathlib import Path
 
 from src.distributed._checksums import sha256_of
 from tests._distributed_fixtures import make_run_and_worker
+from tests._distributed_orchestration_fixtures import (
+    make_execution_attempt,
+    make_result_commit,
+    make_work_descriptor,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -67,3 +72,49 @@ def test_checksum_is_deterministic_across_two_independent_subprocesses() -> None
         )
         outputs.append(child.stdout.strip().splitlines())
     assert outputs[0] == outputs[1]
+
+
+# ---------------------------------------------------------------------------
+# MEGB-03H.2C.3B.2A: orchestration-contract checksum determinism
+# ---------------------------------------------------------------------------
+
+_ORCHESTRATION_CHILD_SCRIPT = """
+import sys
+sys.path.insert(0, {repo_root!r})
+from tests._distributed_orchestration_fixtures import (
+    make_execution_attempt, make_result_commit, make_work_descriptor,
+)
+
+attempt = make_execution_attempt()
+commit = make_result_commit(attempt)
+descriptor = make_work_descriptor()
+print(attempt.attempt_checksum)
+print(commit.commit_checksum)
+print(descriptor.work_descriptor_checksum)
+"""
+
+
+def test_orchestration_contract_checksum_is_deterministic_across_processes() -> None:
+    """Test that ExecutionAttempt/ResultCommit/WorkDescriptor checksums
+    -- the B.2A execution-attempt, result-content, and scientific-work
+    identities -- are deterministic across a fresh subprocess interpreter,
+    not merely within the pytest process."""
+    attempt = make_execution_attempt()
+    commit = make_result_commit(attempt)
+    descriptor = make_work_descriptor()
+
+    child = subprocess.run(
+        [sys.executable, "-c", _ORCHESTRATION_CHILD_SCRIPT.format(repo_root=str(_REPO_ROOT))],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    lines = child.stdout.strip().splitlines()
+    assert len(lines) == 3, child.stdout + child.stderr
+    child_attempt_checksum, child_commit_checksum, child_descriptor_checksum = lines
+
+    assert child_attempt_checksum == attempt.attempt_checksum
+    assert child_commit_checksum == commit.commit_checksum
+    assert child_descriptor_checksum == descriptor.work_descriptor_checksum
