@@ -29,15 +29,38 @@ also reports a spot-price-sensitivity range, not a single figure.
 
 ## 2. Cost model structure
 
-Total estimated cost for one run:
+**Corrected after initial review**: cost is now modeled per plane, not
+as one undifferentiated total, mirroring
+`gcp-distributed-reference-execution.md` §2's structural separation of
+the reference-execution plane from the candidate-generation plane. This
+is not merely a presentation change — because the execution-plane
+service accounts never hold Vertex permission (§2.3 of the architecture
+doc; threat #26 in the threat model), `vertex_cost` is **structurally
+confined to the generation plane's own budget line**, and no compute-
+plane failure mode (bug, retry storm, or full worker compromise) can
+inflate it. The two totals are tracked, estimated, and enforced
+separately:
 
 ```
-total_cost = compute_cost + storage_cost + pubsub_cost
-           + artifact_registry_cost + logging_cost + network_egress_cost
-           + vertex_cost + contingency
+execution_plane_cost = compute_cost + storage_cost (execution) + pubsub_cost (execution)
+                      + artifact_registry_cost + logging_cost (execution) + network_egress_cost
+                      + contingency (execution)
+
+generation_plane_cost = vertex_cost + storage_cost (generation) + pubsub_cost (generation)
+                       + logging_cost (generation) + contingency (generation)
+
+total_cost = execution_plane_cost + generation_plane_cost
 ```
 
-### 2.1 Compute cost
+`total_cost` remains the figure compared against the personal $50 /
+company $1,500 ceilings (§4), but the *cost-amplification threat* this
+split closes is specifically: a compromised or buggy execution worker
+cannot move `vertex_cost` at all, because it holds no credential capable
+of calling Vertex in the first place — the cost isolation is a direct
+consequence of the IAM isolation, not an independent monitoring layer
+layered on top.
+
+### 2.1 Compute cost (reference-execution plane only)
 
 ```
 compute_cost = worker_hours × (spot_fraction × spot_price_per_hour
@@ -52,11 +75,11 @@ throughout MEGB-03H: `stage_time = invocation_count × per_invocation_time
 ÷ measured_concurrency_speedup`).
 
 Persistent-disk cost: a small, fixed per-worker boot-disk allocation
-(exact size an H.2C.3B interface decision, not frozen here), priced at
+(exact size an H.2C.3B.2 interface decision, not frozen here), priced at
 standard persistent-disk rates — a minor term relative to compute/Vertex
 cost at the volumes below, not separately itemized per-scenario.
 
-### 2.2 Storage cost
+### 2.2 Storage cost (tracked separately per plane)
 
 ```
 storage_cost = (artifact_gb + trace_gb + audit_gb) × storage_price_per_gb_month
@@ -64,25 +87,37 @@ storage_cost = (artifact_gb + trace_gb + audit_gb) × storage_price_per_gb_month
              + operation_count × storage_operation_price
 ```
 
-### 2.3 Pub/Sub cost
+Computed once for the execution-plane bucket (trace/audit/protected
+prefix) and once for the generation-plane bucket (immutable candidate
+manifests/provenance) — the two buckets have no shared accounting, per
+the architecture doc's own bucket-per-plane design.
+
+### 2.3 Pub/Sub cost (tracked separately per plane)
 
 ```
 pubsub_cost = max(0, total_message_gib - 10) × 40  # $/TiB beyond free tier, converted to GiB terms
 ```
 
 Given this project's own message sizes are expected to be small
-(work-item coordinates, not payloads — mirroring `WorkItem`'s own
-existing lightweight design), Pub/Sub cost is expected to be a minor
-term relative to compute/Vertex cost; the 1 KiB-per-request minimum
-means very small messages still round up, so this is not assumed zero.
+(opaque work references and allowlisted routing metadata only, per the
+architecture doc's own message-schema correction — never payloads),
+Pub/Sub cost is expected to be a minor term relative to compute/Vertex
+cost on both planes; the 1 KiB-per-request minimum means very small
+messages still round up, so this is not assumed zero.
 
-### 2.4 Vertex (candidate-generation) cost
+### 2.4 Vertex (candidate-generation) cost — generation plane only
 
 ```
 vertex_cost = candidate_count × calls_per_candidate
             × (input_tokens_per_call × input_price_per_token
                + output_tokens_per_call × output_price_per_token)
 ```
+
+**This is the only cost term the generation plane's own coordinator can
+incur, and the only plane that can incur it at all** — no code path on
+the execution plane calls Vertex, so `vertex_cost` cannot be attributed
+to, or inflated by, anything happening inside a candidate container or
+a compromised worker process.
 
 ## 3. Scenario parameters
 
@@ -198,9 +233,21 @@ committed to any model in the proposed portfolio.
 
 Per the accepted amendment §5 — **GCP budget alerts alone are
 insufficient as hard stops.** The following technical limits are
-required in the eventual implementation (H.2C.3B interface design,
-H.2C.3D/F real proof):
+required in the eventual implementation (H.2C.3B.1 for the identity/
+provenance fields, H.2C.3B.2 for the preflight/circuit-breaker
+interfaces, H.2C.3D/F for real proof):
 
+- **Structural plane isolation of Vertex cost (already true by IAM
+  design, not a future implementation item)** — because the execution-
+  plane service accounts hold no Vertex permission (§2 above), the
+  cost-amplification failure mode described in threat #26
+  (`gcp-distributed-execution-threat-model.md`) cannot occur regardless
+  of whether the remaining items below are fully implemented yet. The
+  items below harden the *generation* plane's own legitimate usage and
+  the *execution* plane's own compute/storage spend — they are not the
+  only thing standing between a compromised worker and runaway Vertex
+  cost, because nothing stands between them at all; the path does not
+  exist.
 - Environment identity embedded in every run manifest (also a threat-
   model and provenance-audit requirement, not cost-specific alone).
 - Personal environment accepts only synthetic/development stages
