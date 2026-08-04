@@ -52,7 +52,7 @@ def test_build_safe_redacted_summary() -> None:
         run_context, aggregate_worker_provenance(run_context, (worker,))
     )
     summary = build_safe_redacted_summary(run_context, (worker,), identity)
-    assert summary.distinct_worker_count == 1
+    assert summary.admitted_worker_count == 1
     assert summary.regions_observed == (worker.region,)
 
 
@@ -85,15 +85,19 @@ def test_aggregates_are_sorted_and_deduplicated() -> None:
     """Test aggregates are sorted and deduplicated."""
     run_context = make_run_context()
     worker_a = make_worker_context(
-        parent_run_context_checksum=run_context.run_context_checksum, region="us-west1"
+        parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-a",
+        region="us-west1",
     )
     worker_b = make_worker_context(
         parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-b",
         region="us-central1",
         worker_image_digest="9" * 64,
     )
     worker_c = make_worker_context(
         parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-c",
         region="us-central1",  # duplicate region, distinct worker (different image)
         worker_image_digest="8" * 64,
     )
@@ -103,7 +107,7 @@ def test_aggregates_are_sorted_and_deduplicated() -> None:
     summary = build_safe_redacted_summary(run_context, (worker_a, worker_b, worker_c), identity)
     assert summary.regions_observed == tuple(sorted(summary.regions_observed))
     assert summary.regions_observed == ("us-central1", "us-west1")
-    assert summary.distinct_worker_count == 3
+    assert summary.admitted_worker_count == 3
 
 
 def test_summary_is_frozen() -> None:
@@ -114,7 +118,7 @@ def test_summary_is_frozen() -> None:
     )
     summary = build_safe_redacted_summary(run_context, (worker,), identity)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        summary.distinct_worker_count = 99  # type: ignore[misc]
+        summary.admitted_worker_count = 99  # type: ignore[misc]
 
 
 def test_summary_checksum_tampering_detected() -> None:
@@ -125,7 +129,7 @@ def test_summary_checksum_tampering_detected() -> None:
     )
     summary = build_safe_redacted_summary(run_context, (worker,), identity)
     payload = safe_redacted_summary_to_dict(summary)
-    payload["distinct_worker_count"] = 99
+    payload["admitted_worker_count"] = 99
     with pytest.raises(InvalidDistributedProvenanceError, match="summary_checksum"):
         safe_redacted_summary_from_dict(payload)
 

@@ -108,6 +108,15 @@ def require_positive_float(obj: object, field_name: str) -> None:
         )
 
 
+def require_positive_int(obj: object, field_name: str) -> None:
+    """Raise unless ``getattr(obj, field_name)`` is a positive ``int``."""
+    value = getattr(obj, field_name)
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise InvalidDistributedProvenanceError(
+            f"{field_name!r} must be a positive int, got {value!r}"
+        )
+
+
 def require_checksum_algorithm_version(obj: object) -> None:
     """Raise unless ``obj.checksum_algorithm_version`` matches
     :data:`CHECKSUM_ALGORITHM_VERSION`."""

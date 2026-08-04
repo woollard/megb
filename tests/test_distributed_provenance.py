@@ -63,6 +63,12 @@ def test_retry_lease_policy_rejects_non_positive_lease_duration() -> None:
         make_retry_lease_policy(lease_duration_sec=0.0)
 
 
+def test_worker_context_rejects_empty_participant_id() -> None:
+    """Test worker context rejects empty participant id."""
+    with pytest.raises(InvalidDistributedProvenanceError, match="worker_participant_id"):
+        make_worker_context(worker_participant_id="")
+
+
 def test_worker_context_rejects_invalid_zone() -> None:
     """Test worker context rejects invalid zone."""
     with pytest.raises(InvalidDistributedProvenanceError, match="zone"):
@@ -270,6 +276,7 @@ def test_run_context_field_changes_change_checksum(override: dict[str, Any]) -> 
 @pytest.mark.parametrize(
     "override",
     [
+        {"worker_participant_id": "worker-participant-other"},
         {"region": "us-east1"},
         {"machine_type": "c2-standard-8"},
         {"cpu_architecture": "arm64"},

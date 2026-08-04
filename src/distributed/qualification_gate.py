@@ -148,8 +148,8 @@ def evaluate_qualification_gate(
         for worker in workers
     ):
         reasons.append(ProvenanceGateFailureReason.MIXED_CONTEXT_WORKERS)
-    worker_checksums = [worker.worker_context_checksum for worker in workers]
-    if len(set(worker_checksums)) != len(worker_checksums):
+    participant_ids = [worker.worker_participant_id for worker in workers]
+    if len(set(participant_ids)) != len(participant_ids):
         reasons.append(ProvenanceGateFailureReason.DUPLICATE_WORKER_PROVENANCE)
 
     if reasons:

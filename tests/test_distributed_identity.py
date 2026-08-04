@@ -9,10 +9,14 @@ import pytest
 
 from src.distributed._checksums import InvalidDistributedProvenanceError
 from src.distributed.identity import (
+    AggregateProductionIdentityProjection,
     DuplicateWorkerProvenanceError,
     EmptyWorkerSetError,
     MismatchedWorkerContextError,
     ProductionIdentityProjection,
+    aggregate_production_identity_for,
+    aggregate_production_identity_projection_from_dict,
+    aggregate_production_identity_projection_to_dict,
     aggregate_worker_provenance,
     mixed_worker_provenance_summary_from_dict,
     mixed_worker_provenance_summary_to_dict,
@@ -25,6 +29,7 @@ from src.distributed.identity import (
 )
 from src.distributed.provenance import EnvironmentClass, ProvisioningClass
 from tests._distributed_fixtures import (
+    make_homogeneous_workers,
     make_run_and_worker,
     make_run_context,
     make_two_region_workers,
@@ -66,10 +71,11 @@ def test_aggregate_single_worker() -> None:
     """Test aggregate single worker."""
     run_context, worker = make_run_and_worker()
     summary = aggregate_worker_provenance(run_context, (worker,))
-    assert summary.worker_context_checksums == (worker.worker_context_checksum,)
-    assert summary.distinct_region_count == 1
-    assert summary.distinct_provisioning_class_count == 1
-    assert summary.distinct_worker_image_digest_count == 1
+    assert summary.worker_participant_checksums == (worker.worker_context_checksum,)
+    assert summary.admitted_worker_count == 1
+    assert summary.region_counts == ((worker.region, 1),)
+    assert summary.provisioning_class_counts == ((worker.provisioning_class.value, 1),)
+    assert summary.worker_image_digest_counts == ((worker.worker_image_digest, 1),)
 
 
 def test_aggregate_mixed_workers_multiple_regions_and_provisioning_classes() -> None:
@@ -77,23 +83,85 @@ def test_aggregate_mixed_workers_multiple_regions_and_provisioning_classes() -> 
     run_context = make_run_context()
     worker_a = make_worker_context(
         parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-a",
         region="us-central1",
         provisioning_class=ProvisioningClass.ON_DEMAND,
         worker_image_digest="1" * 64,
     )
     worker_b = make_worker_context(
         parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-b",
         region="us-east1",
         provisioning_class=ProvisioningClass.SPOT,
         worker_image_digest="2" * 64,
     )
     summary = aggregate_worker_provenance(run_context, (worker_a, worker_b))
-    assert summary.distinct_region_count == 2
-    assert summary.distinct_provisioning_class_count == 2
-    assert summary.distinct_worker_image_digest_count == 2
+    assert summary.admitted_worker_count == 2
+    assert len(summary.region_counts) == 2
+    assert len(summary.provisioning_class_counts) == 2
+    assert len(summary.worker_image_digest_counts) == 2
     # a run with multiple workers/zones/provisioning classes is not
     # misrepresented as one homogeneous worker
-    assert len(summary.worker_context_checksums) == 2
+    assert len(summary.worker_participant_checksums) == 2
+
+
+def test_aggregate_allows_homogeneous_fleet_of_distinct_participants() -> None:
+    """MEGB-03H.2C.3B.1 conformance audit, correction 2: two (or more)
+    workers sharing byte-identical configuration provenance are distinct
+    execution participants, not duplicates -- they must be counted, not
+    rejected."""
+    run_context = make_run_context()
+    workers = make_homogeneous_workers(run_context, 4)
+    # fixture sanity check: identical configuration, but each worker is a
+    # distinct participant, so worker_context_checksum (which binds
+    # worker_participant_id) is different for every one of them
+    configs = {
+        (w.region, w.machine_type, w.provisioning_class, w.worker_image_digest)
+        for w in workers
+    }
+    assert len(configs) == 1, "fixture sanity check: all four share one configuration"
+    assert len({w.worker_participant_id for w in workers}) == 4
+    assert len({w.worker_context_checksum for w in workers}) == 4
+    summary = aggregate_worker_provenance(run_context, workers)
+    assert summary.admitted_worker_count == 4
+    assert len(summary.worker_participant_checksums) == 4
+    assert summary.provisioning_class_counts == (("ON_DEMAND", 4),)
+    assert summary.region_counts == (("us-central1", 4),)
+    assert summary.machine_type_counts == (("n2-standard-4", 4),)
+    assert summary.worker_image_digest_counts[0][1] == 4
+
+
+def test_aggregate_one_worker_and_four_workers_are_distinct_topologies() -> None:
+    """A run using one worker and a run using four identically-configured
+    workers must not collapse to the same qualification/aggregate
+    identity -- throughput and recovery behavior genuinely differ."""
+    run_context = make_run_context()
+    workers = make_homogeneous_workers(run_context, 4)
+    summary_one = aggregate_worker_provenance(run_context, workers[:1])
+    summary_four = aggregate_worker_provenance(run_context, workers)
+    assert summary_one.admitted_worker_count == 1
+    assert summary_four.admitted_worker_count == 4
+    assert summary_one.aggregate_checksum != summary_four.aggregate_checksum
+
+
+def test_aggregate_rejects_same_participant_id_even_with_different_content() -> None:
+    """Two entries sharing ``worker_participant_id`` are always rejected
+    as a duplicate observation of the same participant, even if their
+    other fields happen to differ (an internally inconsistent report,
+    not a legitimate second participant)."""
+    run_context = make_run_context()
+    worker_a = make_worker_context(
+        parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-shared",
+        machine_type="n2-standard-4",
+    )
+    worker_b = make_worker_context(
+        parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-shared",
+        machine_type="c2-standard-8",
+    )
+    with pytest.raises(DuplicateWorkerProvenanceError):
+        aggregate_worker_provenance(run_context, (worker_a, worker_b))
 
 
 def test_aggregate_is_order_independent() -> None:
@@ -111,7 +179,7 @@ def test_aggregate_is_frozen() -> None:
     run_context, worker = make_run_and_worker()
     summary = aggregate_worker_provenance(run_context, (worker,))
     with pytest.raises(dataclasses.FrozenInstanceError):
-        summary.distinct_region_count = 99  # type: ignore[misc]
+        summary.admitted_worker_count = 99  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -132,9 +200,13 @@ def test_qualification_identity_deterministic_for_same_content() -> None:
 def test_qualification_identity_changes_with_worker_set() -> None:
     """Test qualification identity changes with worker set."""
     run_context = make_run_context()
-    worker_a = make_worker_context(parent_run_context_checksum=run_context.run_context_checksum)
+    worker_a = make_worker_context(
+        parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-a",
+    )
     worker_b = make_worker_context(
         parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-b",
         machine_type="c2-standard-8",
     )
     identity_one_worker = qualification_identity_for(
@@ -203,7 +275,7 @@ def test_mixed_worker_summary_checksum_tampering_detected() -> None:
     run_context, worker = make_run_and_worker()
     summary = aggregate_worker_provenance(run_context, (worker,))
     payload = mixed_worker_provenance_summary_to_dict(summary)
-    payload["distinct_region_count"] = 99
+    payload["run_context_checksum"] = "0" * 64
     with pytest.raises(InvalidDistributedProvenanceError, match="aggregate_checksum"):
         mixed_worker_provenance_summary_from_dict(payload)
 
@@ -334,3 +406,110 @@ def test_personal_and_company_qualification_identities_never_equal() -> None:
         company_run, aggregate_worker_provenance(company_run, (company_worker,))
     )
     assert personal_identity.identity_checksum != company_identity.identity_checksum
+
+
+# ---------------------------------------------------------------------------
+# AggregateProductionIdentityProjection (MEGB-03H.2C.3B.1 conformance audit,
+# correction 2)
+# ---------------------------------------------------------------------------
+
+
+def test_aggregate_production_identity_single_worker() -> None:
+    """Test aggregate production identity single worker."""
+    run_context, worker = make_run_and_worker()
+    projection = aggregate_production_identity_for(run_context, (worker,))
+    assert projection.contributing_worker_count == 1
+    assert projection.machine_type_counts == ((worker.machine_type, 1),)
+
+
+def test_aggregate_production_identity_multi_worker_counts_multiplicity() -> None:
+    """A work item produced across 4 identically-configured workers must
+    not be indistinguishable from one produced by a single worker."""
+    run_context = make_run_context()
+    workers = make_homogeneous_workers(run_context, 4)
+    projection_one = aggregate_production_identity_for(run_context, workers[:1])
+    projection_four = aggregate_production_identity_for(run_context, workers)
+    assert projection_one.contributing_worker_count == 1
+    assert projection_four.contributing_worker_count == 4
+    assert projection_one.projection_checksum != projection_four.projection_checksum
+    assert projection_four.machine_type_counts == (("n2-standard-4", 4),)
+
+
+def test_aggregate_production_identity_rejects_empty_workers() -> None:
+    """Test aggregate production identity rejects empty workers."""
+    run_context = make_run_context()
+    with pytest.raises(EmptyWorkerSetError):
+        aggregate_production_identity_for(run_context, ())
+
+
+def test_aggregate_production_identity_rejects_mismatched_worker() -> None:
+    """Test aggregate production identity rejects mismatched worker."""
+    run_a = make_run_context(distributed_run_id="run-a")
+    run_b = make_run_context(distributed_run_id="run-b")
+    worker_b = make_worker_context(parent_run_context_checksum=run_b.run_context_checksum)
+    with pytest.raises(MismatchedWorkerContextError):
+        aggregate_production_identity_for(run_a, (worker_b,))
+
+
+def test_aggregate_production_identity_rejects_duplicate_participant() -> None:
+    """Test aggregate production identity rejects duplicate participant."""
+    run_context, worker = make_run_and_worker()
+    duplicate = make_worker_context(
+        parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id=worker.worker_participant_id,
+        machine_type="c2-standard-8",
+    )
+    with pytest.raises(DuplicateWorkerProvenanceError):
+        aggregate_production_identity_for(run_context, (worker, duplicate))
+
+
+def test_aggregate_production_identity_deterministic_order_independent() -> None:
+    """Test aggregate production identity deterministic order independent."""
+    run_context = make_run_context()
+    worker_a, worker_b = make_two_region_workers(run_context)
+    forward = aggregate_production_identity_for(run_context, (worker_a, worker_b))
+    backward = aggregate_production_identity_for(run_context, (worker_b, worker_a))
+    assert forward.projection_checksum == backward.projection_checksum
+
+
+def test_aggregate_production_identity_is_frozen() -> None:
+    """Test aggregate production identity is frozen."""
+    run_context, worker = make_run_and_worker()
+    projection = aggregate_production_identity_for(run_context, (worker,))
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        projection.contributing_worker_count = 99  # type: ignore[misc]
+
+
+def test_aggregate_production_identity_round_trip() -> None:
+    """Test aggregate production identity round trip."""
+    run_context = make_run_context()
+    workers = make_homogeneous_workers(run_context, 3)
+    projection = aggregate_production_identity_for(run_context, workers)
+    restored = aggregate_production_identity_projection_from_dict(
+        aggregate_production_identity_projection_to_dict(projection)
+    )
+    assert restored == projection
+
+
+def test_aggregate_production_identity_checksum_tampering_detected() -> None:
+    """Test aggregate production identity checksum tampering detected."""
+    run_context, worker = make_run_and_worker()
+    projection = aggregate_production_identity_for(run_context, (worker,))
+    payload = aggregate_production_identity_projection_to_dict(projection)
+    payload["network_isolation_policy_checksum"] = "0" * 64
+    with pytest.raises(InvalidDistributedProvenanceError, match="projection_checksum"):
+        aggregate_production_identity_projection_from_dict(payload)
+
+
+def test_aggregate_production_identity_field_names_exclude_timing_only_and_audit_only() -> None:
+    """Same structural exclusions as the single-worker
+    ProductionIdentityProjection -- region/zone/cpu_architecture (timing-
+    only) and coordinator/fleet-version/distributed_run_id (audit-only)
+    have no field here either."""
+    field_names = {f.name for f in dataclasses.fields(AggregateProductionIdentityProjection)}
+    assert "region" not in field_names
+    assert "zone" not in field_names
+    assert "cpu_architecture" not in field_names
+    assert "coordinator_implementation_version" not in field_names
+    assert "worker_fleet_implementation_version" not in field_names
+    assert "distributed_run_id" not in field_names

@@ -74,6 +74,7 @@ def make_worker_context(
             if parent_run_context_checksum is not None
             else "b" * 64
         ),
+        "worker_participant_id": "worker-participant-0000000000001",
         "region": "us-central1",
         "zone": None,
         "machine_type": "n2-standard-4",
@@ -109,15 +110,37 @@ def make_two_region_workers(
     run_context: DistributedRunContext,
 ) -> tuple[WorkerExecutionContext, WorkerExecutionContext]:
     """Two distinct, mutually-consistent worker contexts under
-    ``run_context``, differing in region and worker-image digest --
-    shared by every test proving a run can use multiple workers/zones
-    without misrepresenting them as one homogeneous worker."""
+    ``run_context``, differing in participant id, region, and worker-
+    image digest -- shared by every test proving a run can use multiple
+    workers/zones without misrepresenting them as one homogeneous
+    worker."""
     worker_a = make_worker_context(
-        parent_run_context_checksum=run_context.run_context_checksum, region="us-central1"
+        parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-a",
+        region="us-central1",
     )
     worker_b = make_worker_context(
         parent_run_context_checksum=run_context.run_context_checksum,
+        worker_participant_id="worker-participant-b",
         region="us-east1",
         worker_image_digest="9" * 64,
     )
     return worker_a, worker_b
+
+
+def make_homogeneous_workers(
+    run_context: DistributedRunContext, count: int
+) -> tuple[WorkerExecutionContext, ...]:
+    """``count`` distinct execution participants sharing byte-identical
+    configuration provenance (region, machine type, image, provisioning
+    class) -- the legitimate "homogeneous fleet" case: distinct
+    participants, not duplicates, per the MEGB-03H.2C.3B.1 conformance
+    audit's correction 2 (two workers with identical configuration
+    provenance must not be rejected merely for that reason)."""
+    return tuple(
+        make_worker_context(
+            parent_run_context_checksum=run_context.run_context_checksum,
+            worker_participant_id=f"worker-participant-{i:04d}",
+        )
+        for i in range(count)
+    )

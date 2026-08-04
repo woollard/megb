@@ -32,6 +32,7 @@ from src.distributed._checksums import (
     InvalidDistributedProvenanceError,
     require_checksum_algorithm_version as _require_checksum_algorithm_version,
     require_nonempty_str_fields as _require_nonempty_str_fields,
+    require_positive_int as _require_positive_int,
     require_schema_version as _require_schema_version,
     require_sha256_hex as _require_sha256_hex,
     sha256_of as _sha256_of,
@@ -40,6 +41,7 @@ from src.distributed.identity import (
     EmptyWorkerSetError,
     MismatchedWorkerContextError,
     QualificationIdentity,
+    require_workers_belong_to_run,
 )
 from src.distributed.provenance import (
     CHECKSUM_ALGORITHM_VERSION,
@@ -68,7 +70,7 @@ class SafeRedactedSummary:  # pylint: disable=too-many-instance-attributes
     deployment_topology_policy_id: str
     deployment_topology_policy_version: str
     qualification_identity_checksum: str
-    distinct_worker_count: int
+    admitted_worker_count: int
     regions_observed: tuple[str, ...]
     machine_types_observed: tuple[str, ...]
     provisioning_classes_observed: tuple[str, ...]
@@ -93,14 +95,7 @@ class SafeRedactedSummary:  # pylint: disable=too-many-instance-attributes
         )
         _require_sha256_hex(self, "network_isolation_policy_checksum")
         _require_sha256_hex(self, "qualification_identity_checksum")
-        if (
-            not isinstance(self.distinct_worker_count, int)
-            or isinstance(self.distinct_worker_count, bool)
-            or self.distinct_worker_count < 1
-        ):
-            raise InvalidDistributedProvenanceError(
-                f"distinct_worker_count must be a positive int, got {self.distinct_worker_count!r}"
-            )
+        _require_positive_int(self, "admitted_worker_count")
         for field_name in (
             "regions_observed",
             "machine_types_observed",
@@ -145,7 +140,7 @@ def _safe_redacted_summary_payload(summary: SafeRedactedSummary) -> dict[str, An
         "deployment_topology_policy_id": summary.deployment_topology_policy_id,
         "deployment_topology_policy_version": summary.deployment_topology_policy_version,
         "qualification_identity_checksum": summary.qualification_identity_checksum,
-        "distinct_worker_count": summary.distinct_worker_count,
+        "admitted_worker_count": summary.admitted_worker_count,
         "regions_observed": list(summary.regions_observed),
         "machine_types_observed": list(summary.machine_types_observed),
         "provisioning_classes_observed": list(summary.provisioning_classes_observed),
@@ -176,7 +171,7 @@ def safe_redacted_summary_from_dict(data: Mapping[str, Any]) -> SafeRedactedSumm
             deployment_topology_policy_id=data["deployment_topology_policy_id"],
             deployment_topology_policy_version=data["deployment_topology_policy_version"],
             qualification_identity_checksum=data["qualification_identity_checksum"],
-            distinct_worker_count=data["distinct_worker_count"],
+            admitted_worker_count=data["admitted_worker_count"],
             regions_observed=tuple(data["regions_observed"]),
             machine_types_observed=tuple(data["machine_types_observed"]),
             provisioning_classes_observed=tuple(data["provisioning_classes_observed"]),
@@ -205,13 +200,7 @@ def build_safe_redacted_summary(
         raise EmptyWorkerSetError(
             "build_safe_redacted_summary requires at least one worker context"
         )
-    for worker in workers:
-        if worker.parent_run_context_checksum != run_context.run_context_checksum:
-            raise MismatchedWorkerContextError(
-                f"worker.parent_run_context_checksum {worker.parent_run_context_checksum!r} "
-                f"does not match run_context.run_context_checksum "
-                f"{run_context.run_context_checksum!r}"
-            )
+    require_workers_belong_to_run(run_context, workers)
     if qualification_identity.run_context_checksum != run_context.run_context_checksum:
         raise MismatchedWorkerContextError(
             "qualification_identity was not derived from run_context "
@@ -230,7 +219,7 @@ def build_safe_redacted_summary(
         deployment_topology_policy_id=run_context.deployment_topology_policy_id,
         deployment_topology_policy_version=run_context.deployment_topology_policy_version,
         qualification_identity_checksum=qualification_identity.identity_checksum,
-        distinct_worker_count=len(workers),
+        admitted_worker_count=len(workers),
         regions_observed=tuple(sorted({worker.region for worker in workers})),
         machine_types_observed=tuple(sorted({worker.machine_type for worker in workers})),
         provisioning_classes_observed=tuple(

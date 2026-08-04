@@ -8,6 +8,34 @@ new, standalone, provider-neutral types this checkpoint implements
 `reference_audit.py`) is modified — every "owning record" below is either
 an existing, untouched schema or a new type in `src/distributed/`.
 
+**Corrected after the MEGB-03H.2C.3B.1 conformance audit (correction
+2).** A checksum over a *set* of distinct `WorkerExecutionContext`
+values does not bind the actual topology of a distributed run: two
+workers with identical configuration provenance previously collapsed
+under the original "duplicate worker provenance" rejection rule, which
+would have incorrectly blocked any homogeneous fleet. `WorkerExecutionContext`
+now carries `worker_participant_id` (a safe, logical/pseudonymous
+identifier, mirroring `logical_environment_id`'s own pattern) so that
+distinct execution participants are never conflated merely because they
+share configuration — duplication is now judged solely by
+`worker_participant_id`. `MixedWorkerProvenanceSummary` is now a
+deterministic multiset/histogram (`admitted_worker_count` plus
+per-dimension `(value, count)` histograms for provisioning class,
+region, zone, machine type, and worker-image digest), not a deduplicated
+set of distinct values, so the *actual admitted* worker composition is
+bound, not merely the *distinct configurations* observed. A new
+`AggregateProductionIdentityProjection` (multiplicity-aware, over
+however many workers contributed to one production result) supplements
+the original per-worker `ProductionIdentityProjection`, since no
+indivisible one-worker-per-production-work-item invariant is frozen or
+enforced anywhere in the accepted or proposed design (see
+`production_identity_projection_for`'s own docstring). "Peak
+concurrency" is deliberately **not** bound by any identity type here — it
+is an observed runtime measurement, not a provenance fact, mirroring
+this project's own established identity-vs-telemetry split; a future
+H.2C.3D/H.2C.3B.2 qualification-report design should record it as its
+own measured metric.
+
 ## Legend
 
 - **Run-level**: carried once per `DistributedRunContext`.

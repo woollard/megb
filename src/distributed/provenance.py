@@ -349,15 +349,31 @@ class WorkerExecutionContext:  # pylint: disable=too-many-instance-attributes
     embedding -- a run may have many worker contexts across many zones/
     provisioning classes; see :func:`aggregate_worker_provenance`).
 
-    Deliberately carries no raw instance identifier, hostname, or display
-    name -- identity here is purely by content
-    (``worker_context_checksum``), per the authorization's own rule that
-    "run IDs, timestamps, instance IDs, display names, and retry-attempt
-    IDs must not create false cache misses unless their semantics
-    genuinely affect outcomes." ``zone`` is optional and, even when
-    present, is deliberately excluded from :class:`SafeRedactedSummary`
-    (see the field-ownership matrix's concept #3 rationale) to avoid
-    per-record infrastructure-topology fingerprinting.
+    Deliberately carries no *raw* instance identifier, hostname, or
+    display name -- but does carry ``worker_participant_id``, a safe,
+    logical/pseudonymous identifier distinguishing this specific
+    execution participant from every other one, even one with byte-
+    identical configuration (mirrors ``DistributedRunContext.
+    logical_environment_id``'s own logical-identifier pattern; the real
+    mapping back to a raw instance identifier, if ever needed
+    operationally, is protected metadata held outside this schema, the
+    same discipline ``logical_environment_id`` already follows via
+    :class:`ProtectedOperationalMapping`). This field exists precisely
+    because "run IDs, timestamps, instance IDs, display names, and
+    retry-attempt IDs must not create false cache misses unless their
+    semantics genuinely affect outcomes" does not apply here: worker
+    *count* and *topology* genuinely affect throughput and recovery
+    behavior (MEGB-03H.2C.3B.1 conformance audit, correction 2) -- two
+    workers sharing identical configuration provenance are still two
+    distinct execution participants, and conflating them into one
+    checksum would silently misrepresent a multi-worker run as a
+    single-worker one. See :func:`aggregate_worker_provenance` for how
+    genuine multiplicity (many participants, same or different
+    configuration) is distinguished from a duplicate *observation* of
+    the same participant. ``zone`` is optional and, even when present,
+    is deliberately excluded from :class:`SafeRedactedSummary` (see the
+    field-ownership matrix's concept #3 rationale) to avoid per-record
+    infrastructure-topology fingerprinting.
 
     ``host_runtime_identity_checksum``/``telemetry_policy_identity_checksum``
     are opaque, provider-neutral cross-references to the accepted
@@ -376,6 +392,7 @@ class WorkerExecutionContext:  # pylint: disable=too-many-instance-attributes
     distributed_provenance_schema_version: str
     checksum_algorithm_version: str
     parent_run_context_checksum: str
+    worker_participant_id: str
     region: str
     zone: str | None
     machine_type: str
@@ -394,6 +411,7 @@ class WorkerExecutionContext:  # pylint: disable=too-many-instance-attributes
         _require_checksum_algorithm_version(self)
         _require_sha256_hex(self, "parent_run_context_checksum")
         for field_name in (
+            "worker_participant_id",
             "region",
             "machine_type",
             "cpu_architecture",
@@ -430,6 +448,7 @@ def _worker_execution_context_payload(context: WorkerExecutionContext) -> dict[s
         "distributed_provenance_schema_version": context.distributed_provenance_schema_version,
         "checksum_algorithm_version": context.checksum_algorithm_version,
         "parent_run_context_checksum": context.parent_run_context_checksum,
+        "worker_participant_id": context.worker_participant_id,
         "region": context.region,
         "zone": context.zone,
         "machine_type": context.machine_type,
@@ -459,6 +478,7 @@ def worker_execution_context_from_dict(data: Mapping[str, Any]) -> WorkerExecuti
             distributed_provenance_schema_version=data["distributed_provenance_schema_version"],
             checksum_algorithm_version=data["checksum_algorithm_version"],
             parent_run_context_checksum=data["parent_run_context_checksum"],
+            worker_participant_id=data["worker_participant_id"],
             region=data["region"],
             zone=data["zone"],
             machine_type=data["machine_type"],

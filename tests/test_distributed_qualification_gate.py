@@ -14,6 +14,7 @@ from src.distributed.qualification_gate import (
     evaluate_qualification_gate,
 )
 from tests._distributed_fixtures import (
+    make_homogeneous_workers,
     make_run_context,
     make_two_region_workers,
     make_worker_context,
@@ -38,7 +39,7 @@ def test_gate_ready_for_multiple_workers_different_regions() -> None:
     result = evaluate_qualification_gate(run_context, (worker_a, worker_b))
     assert result.readiness == ProvenanceGateReadiness.READY
     assert result.worker_summary is not None
-    assert result.worker_summary.distinct_region_count == 2
+    assert len(result.worker_summary.region_counts) == 2
 
 
 def test_gate_blocked_for_smoke_test_intent() -> None:
@@ -102,6 +103,18 @@ def test_gate_blocked_for_duplicate_worker_provenance() -> None:
     result = evaluate_qualification_gate(run_context, (worker, duplicate))
     assert result.readiness == ProvenanceGateReadiness.BLOCKED
     assert ProvenanceGateFailureReason.DUPLICATE_WORKER_PROVENANCE in result.missing_dimensions
+
+
+def test_gate_ready_for_homogeneous_fleet_distinct_participants() -> None:
+    """MEGB-03H.2C.3B.1 conformance audit, correction 2: workers sharing
+    identical configuration provenance but distinct participant ids are
+    not duplicates and must not block the gate."""
+    run_context = make_run_context(run_intent=DistributedRunIntent.QUALIFICATION_CANDIDATE)
+    workers = make_homogeneous_workers(run_context, 4)
+    result = evaluate_qualification_gate(run_context, workers)
+    assert result.readiness == ProvenanceGateReadiness.READY
+    assert result.worker_summary is not None
+    assert result.worker_summary.admitted_worker_count == 4
 
 
 def test_gate_enumerates_multiple_simultaneous_reasons() -> None:
