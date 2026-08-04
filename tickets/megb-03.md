@@ -1889,6 +1889,155 @@ Tracks each H checkpoint's own execution, mirroring MEGB-03G's own internal-chec
 | MEGB-03H.2C.2B — Real-Docker telemetry measurement (diagnostic pilot) | **Executed, pending your acceptance.** No H.2D, no canonical/candidate evaluation, no AWS provisioning, no production/staging/calibration-cache write. Not pushed. Commits: `df53187` (harness + qualification-report schema + offline tests) / `eb6c771` (safe qualification report from the real run); ticket checkpoint committed separately, per instruction. | **1. Plan freeze/identity** (`docs/reference/megb-03h2c2b-real-docker-measurement-plan.md`): verified `HEAD == origin/main == e8d40a2` and a clean working tree before any implementation; recomputed and recorded the plan's own identity — sha256 `9014bbbca776af9ad9075190dc5b43bf95af6e138e89d21960d5f2889a387c75`, git blob `f8a422c457ad1b7a7ecfa33901fe986ff476a20f` — both frozen as module constants (`src/reference/h2c2b_measurement.py`) and re-verified programmatically (`verify_plan_identity()`) at the start of the real run; the plan was internally consistent and executable as written, no conflict to report. **2. Harness** (`src/reference/h2c2b_measurement.py`, new): the four frozen synthetic workloads (`baseline`, `memory_allocator`, `process_spawner`, `late_peak` — the last timed so its spike is resident at container exit, per the amended plan); the frozen execution-status matrix (each real-Docker recipe individually confirmed working before being encoded, reusing `tests/test_execution_sandbox.py`'s own already-proven candidates where directly applicable); balanced AB/BA paired telemetry-disabled/enabled invocation via a bounded thread pool at concurrency 1/2/4; the accepted collector-selection precedence and calibration-schema-v2 provenance model (both reused unchanged from H.2C.2A — no new collector/schema code was needed); the accepted concurrency-aware stage-projection formula. Every frozen parameter (`N=8` pairs, `0.05s` sampling intervals, `0.02s`/`2.0s` existence-wait bounds, the `20.9ms` overhead gate) is a module constant, never an overridable default; a non-qualifying run's identity is unconditionally tagged `-diagnostic-`, never confusable with a qualifying one (`run_identity_for()`). **3. Safe report schema** (`src/reference/h2c2b_qualification_report.py`, new): mirrors `g4_qualification_report.py`'s self-checksummed, versioned, explicitly-allowlisted pattern — only counts/booleans/timings/version-labels/checksums; structurally excludes candidate source, per-invocation I/O, container identity, paths, hostnames, and raw exception text (verified by an offline allowlist test and, before commit, a direct `grep` of the committed report for path/container-name/hostname patterns — none found). **4. Pre-execution validation**: full offline suite, `mypy --strict`, `pylint` all clean before any real execution; confirmed no privileged-artifact access, no production/H.5-staging/calibration-cache use anywhere in the new code; confirmed zero pre-existing `megb-runner-*` containers; rebuilt and re-verified the pinned runner image via `docker/runner/compute_provenance.sh` (Dockerfile sha256 `cdf2fa8490f2a0dd2b8470e8d7218a864afe655d3018e56dd788a47bbe7caa29`, unchanged since G.4; resulting image `sha256:e8e1d4d128de4536f1da5f7ec7eddae4838a05ad7719ca81c0d862353ee90679`); implementation + offline tests committed (`df53187`) with a clean working tree before the real run. No sandbox weakening was required or considered — every real invocation went through the already-accepted, unmodified `DockerPerInvocationBackend`/`TelemetryCollectorFactory`/`RealHostCapabilityProbe`. **5. One real run executed** (run identity `h2c2b-diagnostic-20260803T211615Z`): host — macOS (Darwin) arm64, kernel `25.5.0`, Docker server `29.1.3`, cgroup driver `cgroupfs` (as reported by `docker info`; this host has no host-visible `/sys/fs/cgroup` at all — confirmed directly — since Docker Desktop runs containers inside a Linux VM the macOS host cannot read cgroupfs from). **Deliberate, disclosed scope reduction from the plan's own literal combinatorial count** (documented here, not silently applied): the overhead grid ran the full frozen `N=8` paired repetitions at all three concurrency levels (1/2/4) for 3 workloads (`baseline`, `memory_allocator`, `process_spawner`) — 72 real paired invocations, 144 real containers — matching the plan's own statistical requirement for the *timing* measurement; the execution-status matrix (8 named statuses plus `process_limit`) was run once per scenario (not `N=8`) since classification agreement is a deterministic structural property, not a statistic needing repeated-measures power; `late_peak` was run 3 times (not once) as an extra robustness check beyond the plan's own minimum. This is a genuine, real, honestly-scoped execution of every workload and status the plan names — not the plan's own full ~576-invocation combinatorial sweep — hence `qualifying=false` in the safe report and a `-diagnostic-` run identity, per the authorization's own requirement that a reduced run never silently pass as qualifying. **6. Empirical determinations** — memory: preferred `CGROUP_V2_MEMORY_PEAK`, actual selected `SAMPLED_DOCKER_STATS_MEMORY` (`FALLBACK_METHOD_SELECTED`), quality `BOUNDARY_ONLY` on every invocation, never `EXACT` (the host has no cgroup path to resolve, confirmed both by a direct capability-probe call and by 100% of real invocations); process count: preferred `CGROUP_V2_PIDS_PEAK`, actual selected `SAMPLED_DOCKER_TOP_PROCESS_COUNT`, quality `None`/`HOST_TELEMETRY_UNAVAILABLE` — the sampler obtained **zero** successful `docker top` samples in all 8 status-matrix attempts, a distinct, additional real-host reliability finding (operational sampler failure, not capability absence); `late_peak` — reported value `75,497,472` bytes (exactly 72 MiB, matching the 8 MiB baseline + 64 MiB late spike ground truth) on all 3 attempts, quality `BOUNDARY_ONLY` (the EXACT/broken-confirm comparison the plan describes is not reachable on this host at all, since the cgroup-exact method is never selected here — this is itself the empirical, expected finding, not a skipped step). **7. Noninterference/cleanup: both passed completely** — 9/9 status-matrix scenarios (8 named statuses plus `process_limit`) showed 100% agreement in both classification and returned value/failure category between telemetry-disabled and telemetry-enabled real runs; zero leftover `megb-runner-*` containers both before and after the run (independently re-checked again after the full Docker-marked suite); no sandbox weakening, no `docker exec`, no mount, no candidate-visible telemetry mechanism anywhere. **8. Overhead: primary gate failed badly** — pooled mean overhead per invocation was `1478ms` (concurrency=1), `1612ms` (concurrency=2), `2670ms` (concurrency=4) against the frozen `20.9ms` gate (a 70–130× breach at every concurrency level; even the single fastest observed pair, `606ms`, is ~29× the gate) — driven by the sampled-fallback collectors' own `docker stats`/`docker top` subprocess-polling cost on Docker Desktop, not by the (unreachable) cgroup-exact path. Per §10/§12 of the frozen plan, this is a hard stop: `BLOCKED_TELEMETRY_OVERHEAD`. Stage projections (H.3–H.6, using the accepted concurrency-aware formula with the *measured* overhead folded in) exceed every stage's frozen hard ceiling except H.3/H.4's own baseline and moderate scenarios; H.5's baseline scenario alone projects to ≈120,143s (≈33.4h) against its 12h/43,200s ceiling. **9. Readiness: `BLOCKED_TELEMETRY_OVERHEAD`**, with three additional, independently-reportable findings recorded in the safe report's own `blocking_reasons`: EXACT telemetry is unavailable on this host and requires native Linux or AWS to exercise or qualify at all; process-count sampling itself needs investigation (zero real samples obtained in every attempt); and the H.5 projection materially exceeds its ceiling once measured overhead is included. Per the plan's own §9/§13 taxonomy, this host is squarely in the "technically usable for timing/byte telemetry but requires native Linux/AWS for exact resource telemetry" category — *and* independently blocked on overhead even setting exactness aside. AWS provisioning and collector redesign were **not** performed, per instruction — this is the measured result being reported, not a problem solved in this checkpoint. | Offline: 45 new tests (`test_h2c2b_measurement.py` 22, `test_h2c2b_qualification_report.py` 21) covering plan-identity verification against the real committed plan file, workload source generation, the status-matrix table, overhead statistics, stage-runtime projections, and the report schema's round-trip/checksum-tamper/validation/field-allowlist behavior; full offline suite 1,117 passed / 31 deselected, 0 failed. Docker-marked: complete existing suite (31 tests, unchanged) re-run and passing, confirming no regression from the new harness. `mypy --strict` clean (131 files); `pylint` 10.00/10. Independently reconfirmed after the real run and again after the full Docker-marked suite: zero leftover `megb-runner-*` containers, zero lingering `docker stats`/`docker top` sampler processes. The committed safe report was re-verified against its own recomputed checksum via the real schema code (not just the generation script) and directly inspected (`grep`) for path/container-name/hostname leakage — none found. | The literal authorization's scope was honored — no H.2D, no canonical/candidate evaluation, no AWS provisioning, no production/staging/calibration-cache write, no push. The one disclosed, honestly-reported deviation is the execution-status matrix's own repetition count (`N=1` per scenario instead of the plan's literal `N=8`), justified in item 5 above and reflected in the run's own non-qualifying identity and `qualifying=false` report field — the *timing* measurement that actually needed `N=8`'s statistical power got it in full, at every concurrency level, for every workload. No sandbox weakening was needed or attempted. **Protected-data statement**: no candidate source, individual invocation input/output, raw stdout/stderr, container id/name, cgroup/filesystem path, hostname/username, Docker socket path, unrestricted exception message, or privileged artifact path/content appears in the committed safe report (verified structurally and by direct inspection); the raw per-invocation diagnostic log and JSON this report was derived from were written only to a local, run-scoped scratch location entirely outside this repository, never committed or gitignored-in-place. Branch `main`, ahead of `origin/main` by the commits listed above plus this ticket checkpoint; working tree clean. **Not pushed.** MEGB-03H.2D remains unauthorized and not begun. |
 | MEGB-03H.2C.2B — **COMPLETE: BLOCKED_TELEMETRY_OVERHEAD** | Complete, as a completed *blocking* determination — **not** as a qualifying readiness run. Commits: `df53187` (harness + safe-report schema + offline tests) / `eb6c771` (safe qualification report from the real run) / `10669cf` (ticket checkpoint recording the run). This acceptance means **the feasibility checkpoint produced a valid blocking determination** — it does **not** mean "the telemetry design passed." No re-execution of the measurement plan occurred to reach this acceptance; no value in the already-committed report was altered. | **Formal state, preserved exactly as measured, none of it retroactively altered**: (1) `qualifying=false` in the committed report and remains so — this run is not, and must never be read as, a successful qualifying execution of the complete frozen plan. (2) The status-matrix `N=1` deviation (vs. the plan's own literal `N=8`) remains fully visible in the ticket record above and in the report's own `status_matrix_scenarios_tested`/`qualifying` fields — it means this run cannot establish full-plan readiness or full statistical noninterference qualification, only a single-sample structural agreement check. (3) The full `N=8` paired overhead grid *was* executed exactly, at concurrency 1/2/4, across all three workloads (`baseline`/`memory_allocator`/`process_spawner`) — 72 real paired invocations — and on its own is sufficient to establish the frozen overhead blocker; this part of the run required no reduction and needs no requalification. (4) The Docker Desktop cgroup-capability result (no host-visible `/sys/fs/cgroup`, `SAMPLED_DOCKER_STATS_MEMORY`/`SAMPLED_DOCKER_TOP_PROCESS_COUNT` selected on 100% of real invocations, never `CGROUP_V2_MEMORY_PEAK`/`CGROUP_V2_PIDS_PEAK`) is treated as deterministic evidence that exact cgroup resource telemetry is unavailable on this host under the accepted no-`docker exec`/no-mount architecture — not a transient or fixable-in-place condition. (5) The 9/9 status-matrix agreement is retained as useful diagnostic evidence of noninterference — it is explicitly **not** treated as a substitute for the reduced (`N=1`) portion of the qualifying plan's own statistical requirement. (6) `late_peak`'s correct reported value (72 MiB, matching ground truth) does **not** upgrade its `BOUNDARY_ONLY` classification to `EXACT` — the cgroup-exact method was never selected on this host, so no read this run took can be exact by definition, however numerically correct the boundary value happened to be. (7) Process-count telemetry remains **unavailable and unresolved** (`HOST_TELEMETRY_UNAVAILABLE`, zero successful samples across all 8 attempts) — no fix, workaround, or investigation was performed in this checkpoint. (8) No claim of readiness for MEGB-03H.2D is made anywhere in this record. **Secondary blocking findings, recorded without altering the primary frozen readiness classification** (`readiness` remains `BLOCKED_TELEMETRY_OVERHEAD` in the committed report, unchanged): exact resource telemetry is unavailable on this Docker Desktop host; process-count sampling produced zero usable samples in every attempt; the telemetry-enabled H.5 baseline projection (≈120,143s ≈ 33.4h) exceeds the frozen 12h/43,200s ceiling; the sampled resource collectors (`docker stats`/`docker top` polling, 70–130× over the frozen 20.9ms overhead gate) are unsuitable as always-on instrumentation for the full reference corpus in their current form. **Nothing retroactively modified**: the frozen plan thresholds, the plan's own sha256/git-blob checksum, the committed report's `qualifying` flag, and the run identity (`h2c2b-diagnostic-20260803T211615Z`) are all exactly as committed at `eb6c771`/`10669cf` — this row adds a formal acceptance/reconciliation record on top, it does not edit the underlying measurement artifacts. | Full local commit range `origin/main..HEAD` reconciled and confirmed to touch only: `src/reference/h2c2b_measurement.py`, `src/reference/h2c2b_qualification_report.py`, `tests/test_h2c2b_measurement.py`, `tests/test_h2c2b_qualification_report.py`, `docs/measurement/megb-03h2c2b-qualification-report.{json,md}`, and `tickets/megb-03.md` — 7 files total, no unexpected paths. Confirmed: no `artifacts/` (privileged or production-cache) path appears anywhere in the range; the raw per-invocation diagnostic log/JSON this checkpoint's report was derived from remains entirely outside the repository (local scratch location only, never committed); the committed report's `qualifying` field is confirmed `false` by direct re-read of the committed JSON, not merely by memory of the prior checkpoint. No new tests, no code changes, no re-execution — this is a ticket-only acceptance/reconciliation commit. | None. No re-execution of the measurement plan occurred; no threshold, checksum, qualification flag, or run identity was changed. MEGB-03H.2D remains unauthorized and not begun; no AWS provisioning or collector redesign was performed or is authorized by this acceptance. The correct response to `BLOCKED_TELEMETRY_OVERHEAD` requires a separately authorized planning amendment, not implicit in this acceptance. | Branch `main`; working tree clean; not yet pushed at the time this row was written (push follows as its own, separately confirmed step in this same checkpoint). |
 
+### Approved MEGB-03H.2C.3 Planning Amendment — Provider-Neutral Distributed Execution on GCP
+
+Authorized as a **ticket-only** planning amendment, positioned here per this ticket's own established amendment-precedence convention (see the "Approved MEGB-03H Planning Amendment (Checkpoint Decomposition H.1–H.7)" above, which this amendment supplements, not supersedes — that amendment's H.1–H.7 decomposition remains in force; this one only replaces the *execution substrate* H.3–H.6 will eventually run on, in light of MEGB-03H.2C.2B's `BLOCKED_TELEMETRY_OVERHEAD` finding). **This amendment installs the specification only.** It does not authorize: pushing this commit; GCP authentication, project creation, API activation, model-terms acceptance, quota requests, IAM/service-account/network configuration, or any other cloud-resource creation; privileged-artifact access; candidate or canonical code execution; Docker execution; or beginning MEGB-03H.2D. Each of MEGB-03H.2C.3A–H below requires its own separate, explicit authorization, per the "Approved MEGB-03H Planning Amendment"'s own established discipline.
+
+#### 1. Reason for the architectural change
+
+The real-Docker MEGB-03H.2C.2B diagnostic **completed successfully as a diagnostic run** — the harness executed correctly, produced a self-checksummed safe report, and reached a clean, well-evidenced classification. Within that run: candidate correctness/status noninterference **passed** (9/9 status-matrix scenarios showed 100% agreement between telemetry-disabled and telemetry-enabled execution); exact cgroup-derived telemetry (`CGROUP_V2_MEMORY_PEAK`/`CGROUP_V2_PIDS_PEAK`) was **unavailable** on the macOS/Docker Desktop host tested (no host-visible `/sys/fs/cgroup`); and the `docker stats`/`docker top` sampled-fallback telemetry imposed **unacceptable overhead** (70–130× the frozen 20.9ms/invocation gate). The committed classification remains `BLOCKED_TELEMETRY_OVERHEAD`, per the prior checkpoint's own acceptance record — this amendment does not reopen or relitigate that result.
+
+**Consequence**: the local-laptop path is therefore blocked for the remaining calibration stages (H.3–H.6) and the full experimental workload. The remedy is a **native-Linux, horizontally distributed execution environment**, replacing the single-laptop/Docker-Desktop substrate with real Linux hosts where cgroup v2 telemetry is genuinely reachable and where invocation throughput can scale across multiple workers rather than one sequential process.
+
+**Provider selection**: **Google Cloud Platform (GCP)** is selected as the initial implementation, not AWS as previously contemplated, because it aligns with Standard AI's existing cloud environment, billing relationship, IAM conventions, operational practices, and company playground. This is an infrastructure-substrate decision, not a scientific one.
+
+**Provider-neutrality requirement**: the architecture must remain provider-neutral at the application boundary. Selecting GCP must not embed GCP-specific concepts (project IDs, Pub/Sub topic names, Cloud Storage bucket paths, Vertex model resource names, service-account identities, region/zone strings, or any other GCP-specific identifier) into the scientific result schema, cache-key schema, evaluator identity, or calibration schema, unless a later checkpoint independently justifies and authorizes doing so. Any distributed-execution-specific provenance belongs in a distinct, additive layer (mirroring this project's own established pattern of keeping `backend_id`/`backend_version`/`runner_image_digest` separate from scientific identity), never conflated with `execution_profile_id`, `evaluator_version`, or any existing checksum-bearing field.
+
+#### 2. High-level GCP architecture (planned, not yet implemented)
+
+- **Vertex AI Model Garden/MaaS** for managed open-weight candidate generation.
+- **Pub/Sub** for resumable work admission.
+- **Cloud Storage** for artifacts, run manifests, checkpoints, and protected persistence.
+- **Artifact Registry** for pinned worker and runner images.
+- **Compute Engine** native-Linux x86 workers.
+- A **Managed Instance Group** or an equivalently bounded worker controller for scaling.
+- Primarily **Spot VMs** with a small On-Demand fallback pool.
+- **Cloud Logging and Monitoring**, using strict safe-field allowlists mirroring this project's own existing safe-report/safe-summary discipline.
+- **Secret Manager** and service-account-based access where required.
+- Infrastructure defined through **Terraform/OpenTofu** or an equivalent declarative system.
+- The existing **MEGB-02 per-invocation Docker isolation boundary remains in force** inside each trusted worker VM — this amendment changes where workers run, not the sandbox model MEGB-02 already established and this project has repeatedly re-verified.
+
+**Excluded for the initial substrate**: Cloud Run, GKE, and containerized Cloud Batch are **not** selected as the initial execution substrate, unless a later, separately authorized checkpoint proves that nested-container isolation, Docker-daemon access, cgroup identity, and post-terminal telemetry all remain correct under one of those substrates. The initial qualification target is an ordinary native-Linux Compute Engine worker — the substrate closest to the already-validated MEGB-02 design, minimizing the number of new variables this next checkpoint round must qualify.
+
+#### 3. Two-environment promotion model
+
+Two explicitly distinct environments, never conflated:
+
+**Personal bootstrap environment** — disposable infrastructure development only:
+- Synthetic and non-privileged fixtures only.
+- Maximum **2 workers**.
+- No GPUs.
+- No canonical solutions.
+- No privileged partition/oracle/reference artifacts.
+- No real candidate portfolios.
+- No full calibration or experiment.
+- No customer, company-production, or proprietary datasets.
+- At most a few minimal Vertex requests solely to validate authentication, API shape, response parsing, and provenance capture — and only after separate authorization for that specific step.
+- Target spending ceiling: **$50**.
+- **Must refuse privileged or real-experimental stages by construction** (a technical guard rejecting the request), not merely by documentation or operator discipline.
+
+**Standard AI company playground** — the only environment eligible for real calibration, privileged-artifact access, candidate-generation campaigns, or scientific runs:
+- Created under the company organization, billing account, IAM, network controls, and SRE-reviewed operational configuration.
+- Receives a clean deployment from the same infrastructure-as-code source as the personal environment.
+- Must **not** import personal Terraform state, service accounts, credentials, buckets, logs, or any other personal-environment resource.
+- Must pass a formal environment-promotion and qualification gate (§8 below) before any real run.
+- Full-campaign budget ceiling: **$1,500**, unless separately amended.
+
+#### 4. Credential and permissioning interaction protocol (mandatory for every future GCP checkpoint)
+
+Whenever authentication, credentials, billing, API activation, IAM, organization policy, model access, quota, networking, or service-account configuration becomes necessary at any future GCP checkpoint, Claude must **stop before taking the action** and walk the user through it interactively, providing:
+
+1. Why the credential or permission is needed.
+2. Whether it belongs in the personal bootstrap or the company playground.
+3. The exact API, role, permission, quota, or resource involved.
+4. The minimum privilege required.
+5. The exact console steps and/or `gcloud` commands for the user to execute themselves.
+6. Any billing or security consequence.
+7. A verification command and the expected safe output.
+8. How the permission or credential can later be revoked or cleaned up.
+9. What non-secret identity/provenance fields will be recorded.
+10. A clear stop asking the user to confirm completion before Claude proceeds.
+
+**Credential rules, in force for every future GCP checkpoint**:
+- Never ask the user to paste passwords, access tokens, private keys, service-account JSON, or other secret material into chat.
+- Never print or commit secrets.
+- Never create or download a long-lived service-account key unless an independently documented blocker proves no keyless option works and the user explicitly authorizes it.
+- Prefer user Application Default Credentials for the disposable personal bootstrap.
+- Prefer service-account impersonation, attached-VM service accounts, Workload Identity Federation, or another keyless mechanism for the company environment.
+- Never reuse personal credentials in the company environment.
+- Never silently use ambient company credentials merely because they happen to be present.
+- Never enable paid APIs, accept publisher/model terms, request quota, or create billable resources without that specific checkpoint's explicit authorization.
+- If SRE or organization-admin action is required, produce a minimal handoff checklist instead of attempting to bypass the restriction.
+
+#### 5. Cost controls
+
+GCP budget alerts alone are **not** sufficient as hard stops. Future implementation must include technical limits:
+
+- Environment identity embedded in every run manifest.
+- The personal environment accepts only synthetic/development stages (by construction — see §3).
+- Personal environment `max_workers <= 2`.
+- A required maximum invocation count on every run.
+- A required estimated-cost preflight before any run starts.
+- Refusal to start above the checkpoint's own authorized cost.
+- Candidate, token, retry, and concurrency limits frozen before execution — never adjusted after observing partial results.
+- Scale-to-zero after queue drainage.
+- Bounded logging and retention.
+- No unrestricted per-invocation output in Cloud Logging.
+- No general internet egress from candidate containers.
+- A run-scoped circuit breaker for cost, error rate, telemetry failure, and retry exhaustion.
+
+#### 6. Model-portfolio decision boundary
+
+Infrastructure selection and scientific model selection remain **separate decisions**. The following GCP-native managed portfolio is recorded as a **proposal only, not a frozen decision**:
+
+- Primary candidate: **Qwen3-Coder-480B-A35B-Instruct** via Vertex MaaS.
+- Within-family subset candidate: **Qwen3-Next-80B-A3B-Instruct** via Vertex MaaS.
+- Cross-family subset candidate: **Kimi K2 Thinking** via Vertex MaaS.
+
+These are **not exact replacements** for the previously discussed Qwen3-Coder-30B / Qwen3-Coder-Next / Kimi K2.5 portfolio — a different set of models with different scale, family relationships, and availability characteristics. **No model in this proposed portfolio is enabled or called in this turn.**
+
+A later, separately authorized scientific-design checkpoint (§7, `H.2C.3G`) must, before any candidate generation:
+- Verify current Vertex availability, exact immutable model identifiers, pricing, regions, terms, quotas, and request semantics.
+- Assess whether the substitutions change the intended experimental claims.
+- Freeze task coverage, candidate counts, replicate counts, prompts, sampling parameters, tool protocol, token limits, and model identifiers.
+- Define the managed-inference reproducibility/provenance record.
+- Prohibit any candidate generation before that freeze is accepted.
+
+#### 7. Proposed checkpoint decomposition (each requires separate authorization; every checkpoint stops and reports before the next begins)
+
+| Checkpoint | Scope | Cloud/Docker access |
+|---|---|---|
+| **H.2C.3A** | Architecture, threat model, cost model, and environment-promotion specification | Ticket/docs only; no GCP access |
+| **H.2C.3B** | Provider-neutral distributed-execution interfaces and offline synthetic tests | No cloud access |
+| **H.2C.3C** | Personal GCP bootstrap and just-in-time credential walkthrough (infrastructure-as-code, synthetic only, hard personal guardrails) | Personal environment only, per §4's credential protocol |
+| **H.2C.3D** | Personal synthetic distributed qualification — Pub/Sub, storage, worker interruption/resumption, deterministic ordering, isolation, cleanup, safe telemetry, teardown | Personal environment only |
+| **H.2C.3E** | Company-playground SRE handoff and environment-promotion review — checklist and review artifacts | No company deployment until required approvals are complete |
+| **H.2C.3F** | Company-playground deployment and native-Linux qualification — exact telemetry, container isolation, noninterference, concurrency, Spot recovery, throughput, cost | Company playground, post-promotion-gate only |
+| **H.2C.3G** | Managed-model scientific portfolio freeze and minimal provenance pilot | Company playground, post-freeze only |
+| **H.2C.3H** | Reconciliation and readiness decision for H.3/H.4/H.5/H.6 | No new cloud access |
+
+#### 8. Company-playground qualification gate
+
+Before any real work on the company playground, **all** of the following are required:
+
+- Correct GCP project number, environment identity, region, infrastructure revision, and service-account identities recorded.
+- No personal-account credentials or resources involved.
+- SRE-reviewed IAM and networking.
+- Pinned runner-image provenance.
+- Candidate network isolation.
+- Exact or explicitly classified telemetry (never a silent, unclassified gap).
+- Status and return-value equivalence with telemetry disabled/enabled.
+- Deterministic ordered results under concurrency.
+- Cross-invocation writable-state isolation.
+- Spot interruption and resumption without duplicate or missing scientific coordinates.
+- Cache, trace, and audit reconciliation.
+- Zero leftover containers.
+- Bounded logging with leakage tests.
+- Measured throughput and projected stage runtimes.
+- Measured cost and projected full-campaign cost.
+- A READY/BLOCKED classification.
+- **No privileged or canonical run occurs if any mandatory gate is blocked.**
+
 ### Objective
 
 Calibrate and freeze the evaluator's execution profile using corrected canonical solutions, then demonstrate stable classifications under repeated execution.
