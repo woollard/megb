@@ -181,6 +181,81 @@ def test_verify_artifact_classification_raises_not_found_for_unwritten_reference
         )
 
 
+# ---------------------------------------------------------------------------
+# MEGB-03H.2C.3B.2B.1 correction: content-bound classification -- same
+# bytes plus different classification are distinct artifact identities,
+# never an idempotent equivalent write and never a mutable-metadata
+# conflict on the same identity.
+# ---------------------------------------------------------------------------
+
+
+def test_same_bytes_different_classification_are_distinct_identities() -> None:
+    """Test that storing the same content bytes under two different
+    classifications produces two independently resolvable artifacts --
+    not a conflict, and not one overwriting the other."""
+    store = InMemoryArtifactStore()
+    content = make_synthetic_content("shared-bytes")
+    synthetic_metadata = _metadata()
+    production_metadata = _metadata(data_classification=DataClassification.PRIVILEGED_REFERENCE)
+    synthetic_reference = make_result_artifact_reference(content, metadata=synthetic_metadata)
+    privileged_reference = make_result_artifact_reference(content, metadata=production_metadata)
+    assert synthetic_reference.reference_checksum != privileged_reference.reference_checksum
+    assert synthetic_reference.metadata_checksum != privileged_reference.metadata_checksum
+    assert synthetic_reference.content_checksum == privileged_reference.content_checksum
+
+    store.put(synthetic_reference, content, synthetic_metadata)
+    store.put(privileged_reference, content, production_metadata)
+
+    assert store.resolve(synthetic_reference) is True
+    assert store.resolve(privileged_reference) is True
+    got_content_a, got_metadata_a = store.get(synthetic_reference)
+    got_content_b, got_metadata_b = store.get(privileged_reference)
+    assert got_content_a == got_content_b == content
+    assert got_metadata_a == synthetic_metadata
+    assert got_metadata_b == production_metadata
+
+
+def test_artifact_metadata_rejects_checksum_tampering() -> None:
+    """Test ArtifactMetadata's own self-checksum detects tampering,
+    exactly like every other self-checksummed type in this project."""
+    genuine = _metadata()
+    with pytest.raises(ArtifactMetadataMismatchError):
+        ArtifactMetadata(
+            workload_class=genuine.workload_class,
+            data_classification=DataClassification.PRODUCTION_CACHE,
+            metadata_checksum=genuine.metadata_checksum,
+        )
+
+
+def test_put_rejects_metadata_not_matching_reference_metadata_checksum() -> None:
+    """Test put refuses metadata whose own checksum does not match the
+    reference's bound ``metadata_checksum`` -- a caller cannot bind
+    arbitrary metadata to a reference that already commits to a
+    different one, proving the reference's own binding rather than
+    trusting an internal dict alone."""
+    store = InMemoryArtifactStore()
+    content = make_synthetic_content("binding-check")
+    reference = make_result_artifact_reference(content)  # bound to the default metadata
+    mismatched_metadata = _metadata(workload_class=WorkloadClass.PRODUCTION)
+    with pytest.raises(ArtifactMetadataMismatchError):
+        store.put(reference, content, mismatched_metadata)
+
+
+def test_artifact_reference_metadata_checksum_is_bound_into_reference_checksum() -> None:
+    """Test that changing only the bound metadata (content unchanged)
+    changes the reference's own overall ``reference_checksum`` -- proving
+    classification is folded into the reference's self-checksum, not
+    merely stored alongside it."""
+    content = make_synthetic_content("envelope-check")
+    reference_a = make_result_artifact_reference(content, metadata=_metadata())
+    reference_b = make_result_artifact_reference(
+        content, metadata=_metadata(data_classification=DataClassification.NON_PRIVILEGED)
+    )
+    assert reference_a.content_checksum == reference_b.content_checksum
+    assert reference_a.metadata_checksum != reference_b.metadata_checksum
+    assert reference_a.reference_checksum != reference_b.reference_checksum
+
+
 def test_artifact_store_exposes_no_provider_uri_path_or_credential() -> None:
     """Test the store's own public surface has no provider URI/path/
     credential-shaped method or attribute."""

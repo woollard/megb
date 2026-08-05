@@ -22,18 +22,61 @@ equal to the reservation's own ``requested_cost_cents``.
 
 :func:`evaluate_and_reserve` composes this store with
 :mod:`~src.distributed.artifact_store`'s own classification-verification
-and the already-accepted
-:func:`~src.distributed.personal_policy.evaluate_admission` into the one
-required policy-plus-budget admission decision -- artifact classification
-is verified against the artifact store's own immutably-bound metadata
-first (never trusted solely from a caller's claim), and only once that
-passes does the (already-accepted, unmodified) policy check and this
-store's own exact-integer ledger check run. `evaluate_admission`'s own
-``estimated_cost_usd: float`` parameter is bridged from cents (a single,
-non-accumulating conversion for that one already-accepted comparison);
-the real, exact, concurrency-safe ceiling enforcement is entirely this
-module's own integer ledger in :meth:`AtomicBudgetStore.reserve`, never
-that float comparison."""
+and :func:`~src.distributed.personal_policy.evaluate_admission` into the
+one required policy-plus-budget admission decision -- artifact
+classification is verified against the artifact store's own immutably-bound
+metadata first (never trusted solely from a caller's claim), and only once
+that passes does the policy check and this store's own exact-integer
+ledger check run.
+
+**MEGB-03H.2C.3B.2B.1 correction:** the prior version of this module
+bridged ``requested_cost_cents`` to a Python ``float`` (``/ 100``) before
+calling :func:`~src.distributed.personal_policy.evaluate_admission`, which
+had at the time taken an ``estimated_cost_usd: float`` parameter. The
+B.2B.1 checkpoint correction's own audit found this violated the
+authorization's "no conversion to float before an authorization
+comparison" requirement, since a caller-observable admission decision was
+computed via a float comparison, even though this store's own ledger
+(:meth:`AtomicBudgetStore.reserve`) never used one. ``evaluate_admission``
+now takes ``estimated_cost_cents: int`` directly (``DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION``
+v1->v2), so ``requested_cost_cents`` passes through to it unconverted --
+there is no float anywhere on this module's admission/reservation path.
+
+**Reservation/work-creation crash-window recoverability (B.2B.1
+correction):** ``reserve`` before ``AtomicWorkStore.create_if_absent`` is
+the mandated ordering (reservation before admission), but this module
+does not and cannot claim cross-store atomicity between the two --
+:class:`AtomicBudgetStore` and
+:class:`~src.distributed.atomic_work_store.AtomicWorkStore` are
+independent, separately-locked stores. Instead:
+
+* ``AtomicWorkStore.create_if_absent`` now *requires* a ``reservation_id``
+  and a ``reservation_validator`` callback (see that module) -- an
+  authoritative work record cannot be created except against a reservation
+  that validates as currently ``RESERVED`` at creation time, and
+  ``acquire_lease``/``reassign_lease`` re-validate the same bound
+  reservation before any ``LEASED`` transition, so a work item can never
+  become leaseable without a currently valid reservation, even if the
+  reservation is later released between creation and leasing.
+* If a reservation succeeds but the process crashes before
+  ``create_if_absent`` is ever called, :func:`diagnose_reservation_work_binding`
+  below lets a recovering caller determine the reservation is
+  ``RESUMABLE`` -- deterministically safe to retry (``create_if_absent``
+  is itself idempotent) or to ``release``.
+* If ``create_if_absent`` somehow succeeds referencing a reservation_id
+  that is not (or no longer) ``RESERVED`` -- a caller/protocol violation,
+  not a crash this module causes -- the resulting work record is
+  permanently non-leaseable (``acquire_lease``/``reassign_lease`` reject
+  it), never silently treated as admitted.
+* ``release``/``finalize`` each require the reservation to still be
+  ``RESERVED`` and transition it to a terminal status
+  (``RELEASED``/``FINALIZED``); a second call on an already-terminal
+  reservation raises :class:`ReservationNotActiveError` rather than
+  double-crediting or double-debiting the budget.
+
+This is a deterministic, recoverable two-step protocol with explicit,
+non-leaseable intermediate states -- not a claim of genuine cross-store
+atomicity."""
 
 import threading
 from dataclasses import dataclass
@@ -41,6 +84,7 @@ from enum import Enum
 
 from src.distributed._checksums import InvalidDistributedProvenanceError
 from src.distributed.artifact_store import InMemoryArtifactStore
+from src.distributed.atomic_work_store import AtomicWorkStore, WorkRecordNotFoundError
 from src.distributed.personal_policy import (
     AdmissionDecision,
     DataClassification,
@@ -303,12 +347,69 @@ def evaluate_and_reserve(  # pylint: disable=too-many-arguments,too-many-positio
         claimed_workload_class,
         claimed_data_classification,
         requested_worker_count,
-        requested_cost_cents / 100,
+        requested_cost_cents,
     )
     if not decision.admitted:
         return decision
     budget_store.reserve(reservation_id, requested_cost_cents, requested_worker_count)
     return decision
+
+
+class OrphanReservationDisposition(str, Enum):
+    """The outcome of :func:`diagnose_reservation_work_binding` -- a pure,
+    single-item diagnostic (never a scanning/polling coordinator, out of
+    this checkpoint's scope) that lets a recovering caller determine what,
+    if anything, must be done after a crash between reservation and
+    authoritative work creation."""
+
+    NO_ACTION_NEEDED = "NO_ACTION_NEEDED"
+    RESUMABLE = "RESUMABLE"
+    ALREADY_RESOLVED = "ALREADY_RESOLVED"
+    CONFLICTING_BINDING = "CONFLICTING_BINDING"
+
+
+def diagnose_reservation_work_binding(
+    budget_store: AtomicBudgetStore,
+    work_store: AtomicWorkStore,
+    scientific_work_id: str,
+    reservation_id: str,
+) -> OrphanReservationDisposition:
+    """Determine the recovery disposition of one ``(scientific_work_id,
+    reservation_id)`` pair after a possible crash between
+    :meth:`AtomicBudgetStore.reserve` and
+    :meth:`~src.distributed.atomic_work_store.AtomicWorkStore.create_if_absent`.
+
+    * :attr:`OrphanReservationDisposition.RESUMABLE` -- the reservation is
+      still ``RESERVED`` and no authoritative work record exists yet for
+      ``scientific_work_id``: safe to retry ``create_if_absent`` (idempotent)
+      or to ``release`` the reservation, at the caller's discretion.
+    * :attr:`OrphanReservationDisposition.ALREADY_RESOLVED` -- no work
+      record exists, and the reservation is no longer ``RESERVED``
+      (already released or finalized elsewhere): nothing to reconcile.
+    * :attr:`OrphanReservationDisposition.NO_ACTION_NEEDED` -- a work
+      record already exists and is bound to exactly this ``reservation_id``:
+      recovery already completed.
+    * :attr:`OrphanReservationDisposition.CONFLICTING_BINDING` -- a work
+      record exists but is bound to a *different* ``reservation_id`` than
+      the one supplied: a protocol violation that must never occur under
+      correct reserve-before-admission usage, surfaced rather than
+      silently ignored.
+
+    Raises :class:`ReservationNotFoundError` if ``reservation_id`` names no
+    reservation at all -- there is nothing to diagnose for a reservation
+    that was never made."""
+    reservation = budget_store.get(reservation_id)
+    try:
+        record = work_store.read(scientific_work_id)
+    except WorkRecordNotFoundError:
+        record = None
+    if record is None:
+        if reservation.status == ReservationStatus.RESERVED:
+            return OrphanReservationDisposition.RESUMABLE
+        return OrphanReservationDisposition.ALREADY_RESOLVED
+    if record.reservation_id != reservation_id:
+        return OrphanReservationDisposition.CONFLICTING_BINDING
+    return OrphanReservationDisposition.NO_ACTION_NEEDED
 
 
 __all__ = [
@@ -321,4 +422,6 @@ __all__ = [
     "BudgetReservation",
     "AtomicBudgetStore",
     "evaluate_and_reserve",
+    "OrphanReservationDisposition",
+    "diagnose_reservation_work_binding",
 ]

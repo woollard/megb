@@ -90,13 +90,36 @@ class ArtifactReference:
     result artifact) -- never the content itself. This is the only way
     candidate material may enter a :class:`WorkDescriptor`/
     :class:`QueueWorkMessage`: as an opaque reference plus a checksum,
-    never inline source."""
+    never inline source.
+
+    **MEGB-03H.2C.3B.2B.1 correction
+    (``DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`` v1->v2):** the prior
+    single ``artifact_checksum`` field covered content bytes only: the
+    immutable classification metadata
+    (:class:`~src.distributed.artifact_store.ArtifactMetadata`) bound to
+    an artifact lived only in the artifact store's own internal dict,
+    keyed by that same content-only checksum -- so this reference type
+    itself never *proved* which classification was bound to it; a reader
+    had to trust the store's own bookkeeping. This correction adds
+    ``metadata_checksum`` (the immutable metadata's own checksum, computed
+    by :mod:`~src.distributed.artifact_store`) as a required field
+    alongside ``content_checksum`` (renamed from ``artifact_checksum``,
+    same meaning: sha256 of raw content bytes only). Both are now folded
+    into this reference's own ``reference_checksum`` -- the reference's
+    self-checksum is the envelope binding content identity *and* metadata
+    identity together, so the same content bytes bound to a different
+    classification is structurally a different reference (a different
+    ``metadata_checksum``, hence a different ``reference_checksum``),
+    never a reinterpretation of "the same accepted reference." See
+    :mod:`~src.distributed.artifact_store` for the store-side half of this
+    correction (composite-key storage, tamper detection on every read)."""
 
     distributed_orchestration_schema_version: str
     checksum_algorithm_version: str
     artifact_kind: ArtifactKind
     artifact_reference_id: str
-    artifact_checksum: str
+    content_checksum: str
+    metadata_checksum: str
     reference_checksum: str = ""
 
     def __post_init__(self) -> None:
@@ -107,7 +130,8 @@ class ArtifactReference:
                 f"artifact_kind must be an ArtifactKind, got {self.artifact_kind!r}"
             )
         _require_nonempty_str(self, "artifact_reference_id")
-        _require_sha256_hex(self, "artifact_checksum")
+        _require_sha256_hex(self, "content_checksum")
+        _require_sha256_hex(self, "metadata_checksum")
         payload = _artifact_reference_payload(self)
         expected_checksum = _sha256_of(payload)
         if self.reference_checksum and self.reference_checksum != expected_checksum:
@@ -127,7 +151,8 @@ def _artifact_reference_payload(reference: ArtifactReference) -> dict[str, Any]:
         "checksum_algorithm_version": reference.checksum_algorithm_version,
         "artifact_kind": reference.artifact_kind.value,
         "artifact_reference_id": reference.artifact_reference_id,
-        "artifact_checksum": reference.artifact_checksum,
+        "content_checksum": reference.content_checksum,
+        "metadata_checksum": reference.metadata_checksum,
     }
 
 

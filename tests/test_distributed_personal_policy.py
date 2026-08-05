@@ -13,7 +13,7 @@ from src.distributed._checksums import (
 )
 from src.distributed.personal_policy import (
     PERSONAL_BOOTSTRAP_MAX_WORKERS,
-    PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD,
+    PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS,
     AdmissionDecision,
     AdmissionRefusalReason,
     DataClassification,
@@ -51,7 +51,7 @@ def test_personal_environment_policy_round_trips() -> None:
             WorkloadClass(item) for item in data["allowed_workload_classes"]
         ),
         max_admitted_workers=data["max_admitted_workers"],
-        spending_ceiling_usd=data["spending_ceiling_usd"],
+        spending_ceiling_cents=data["spending_ceiling_cents"],
         policy_checksum=data["policy_checksum"],
     )
     assert rebuilt == policy
@@ -75,7 +75,7 @@ def test_personal_bootstrap_ceiling_constants_match_accepted_amendment() -> None
     """Test personal bootstrap ceiling constants match accepted
     amendment (max 2 workers, $50 spending ceiling)."""
     assert PERSONAL_BOOTSTRAP_MAX_WORKERS == 2
-    assert PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD == 50.0
+    assert PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS == 5000
 
 
 def test_personal_bootstrap_policy_accepts_exactly_two_workers() -> None:
@@ -96,8 +96,8 @@ def test_personal_bootstrap_policy_rejects_more_than_two_workers() -> None:
 def test_personal_bootstrap_policy_accepts_exactly_fifty_dollar_ceiling() -> None:
     """Test personal bootstrap policy accepts exactly fifty dollar
     ceiling."""
-    policy = make_personal_environment_policy(spending_ceiling_usd=50.0)
-    assert policy.spending_ceiling_usd == 50.0
+    policy = make_personal_environment_policy(spending_ceiling_cents=5000)
+    assert policy.spending_ceiling_cents == 5000
 
 
 def test_personal_bootstrap_policy_rejects_ceiling_above_fifty_dollars() -> None:
@@ -105,7 +105,7 @@ def test_personal_bootstrap_policy_rejects_ceiling_above_fifty_dollars() -> None
     spending ceiling above $50 -- represented as a hard construction-time
     rejection, not a runtime check that could be skipped."""
     with pytest.raises(InvalidDistributedProvenanceError):
-        make_personal_environment_policy(spending_ceiling_usd=50.01)
+        make_personal_environment_policy(spending_ceiling_cents=5001)
 
 
 def test_personal_bootstrap_policy_rejects_disallowed_workload_class() -> None:
@@ -126,10 +126,10 @@ def test_company_playground_policy_may_exceed_personal_ceilings() -> None:
         environment_class=EnvironmentClass.COMPANY_PLAYGROUND,
         allowed_workload_classes=(WorkloadClass.CALIBRATION, WorkloadClass.PRODUCTION),
         max_admitted_workers=50,
-        spending_ceiling_usd=1500.0,
+        spending_ceiling_cents=150000,
     )
     assert policy.max_admitted_workers == 50
-    assert policy.spending_ceiling_usd == 1500.0
+    assert policy.spending_ceiling_cents == 150000
 
 
 def test_allowed_workload_classes_must_be_sorted() -> None:
@@ -168,7 +168,7 @@ def test_evaluate_admission_admits_valid_synthetic_request() -> None:
         WorkloadClass.SYNTHETIC_SMOKE,
         DataClassification.SYNTHETIC,
         requested_worker_count=2,
-        estimated_cost_usd=10.0,
+        estimated_cost_cents=1000,
     )
     assert decision.admitted is True
     assert not decision.refusal_reasons
@@ -185,7 +185,7 @@ def test_evaluate_admission_refuses_privileged_reference_data() -> None:
         WorkloadClass.SYNTHETIC_SMOKE,
         DataClassification.PRIVILEGED_REFERENCE,
         requested_worker_count=1,
-        estimated_cost_usd=1.0,
+        estimated_cost_cents=100,
     )
     assert decision.admitted is False
     assert AdmissionRefusalReason.DATA_CLASSIFICATION_REFUSED in decision.refusal_reasons
@@ -199,7 +199,7 @@ def test_evaluate_admission_refuses_real_candidate_portfolio_data() -> None:
         WorkloadClass.SYNTHETIC_SMOKE,
         DataClassification.REAL_CANDIDATE_PORTFOLIO,
         requested_worker_count=1,
-        estimated_cost_usd=1.0,
+        estimated_cost_cents=100,
     )
     assert decision.admitted is False
     assert AdmissionRefusalReason.DATA_CLASSIFICATION_REFUSED in decision.refusal_reasons
@@ -213,7 +213,7 @@ def test_evaluate_admission_refuses_production_cache_data() -> None:
         WorkloadClass.SYNTHETIC_SMOKE,
         DataClassification.PRODUCTION_CACHE,
         requested_worker_count=1,
-        estimated_cost_usd=1.0,
+        estimated_cost_cents=100,
     )
     assert decision.admitted is False
     assert AdmissionRefusalReason.DATA_CLASSIFICATION_REFUSED in decision.refusal_reasons
@@ -229,7 +229,7 @@ def test_evaluate_admission_refuses_calibration_workload_class() -> None:
         WorkloadClass.CALIBRATION,
         DataClassification.SYNTHETIC,
         requested_worker_count=1,
-        estimated_cost_usd=1.0,
+        estimated_cost_cents=100,
     )
     assert decision.admitted is False
     assert AdmissionRefusalReason.WORKLOAD_CLASS_NOT_ALLOWLISTED in decision.refusal_reasons
@@ -243,7 +243,7 @@ def test_evaluate_admission_refuses_production_workload_class() -> None:
         WorkloadClass.PRODUCTION,
         DataClassification.SYNTHETIC,
         requested_worker_count=1,
-        estimated_cost_usd=1.0,
+        estimated_cost_cents=100,
     )
     assert decision.admitted is False
     assert AdmissionRefusalReason.WORKLOAD_CLASS_NOT_ALLOWLISTED in decision.refusal_reasons
@@ -257,7 +257,7 @@ def test_evaluate_admission_refuses_worker_count_above_ceiling() -> None:
         WorkloadClass.SYNTHETIC_SMOKE,
         DataClassification.SYNTHETIC,
         requested_worker_count=3,
-        estimated_cost_usd=1.0,
+        estimated_cost_cents=100,
     )
     assert decision.admitted is False
     assert AdmissionRefusalReason.WORKER_COUNT_CEILING_EXCEEDED in decision.refusal_reasons
@@ -271,7 +271,7 @@ def test_evaluate_admission_refuses_cost_above_ceiling() -> None:
         WorkloadClass.SYNTHETIC_SMOKE,
         DataClassification.SYNTHETIC,
         requested_worker_count=1,
-        estimated_cost_usd=50.01,
+        estimated_cost_cents=5001,
     )
     assert decision.admitted is False
     assert AdmissionRefusalReason.COST_CEILING_EXCEEDED in decision.refusal_reasons
@@ -286,7 +286,7 @@ def test_evaluate_admission_enumerates_every_applicable_reason() -> None:
         WorkloadClass.PRODUCTION,
         DataClassification.PRODUCTION_CACHE,
         requested_worker_count=10,
-        estimated_cost_usd=1000.0,
+        estimated_cost_cents=100000,
     )
     assert decision.admitted is False
     assert set(decision.refusal_reasons) == {
@@ -321,9 +321,133 @@ def test_evaluate_admission_creates_no_resource_and_authorizes_no_billing() -> N
     observe."""
     policy = make_personal_environment_policy()
     first = evaluate_admission(
-        policy, WorkloadClass.SYNTHETIC_SMOKE, DataClassification.SYNTHETIC, 1, 1.0
+        policy, WorkloadClass.SYNTHETIC_SMOKE, DataClassification.SYNTHETIC, 1, 100
     )
     second = evaluate_admission(
-        policy, WorkloadClass.SYNTHETIC_SMOKE, DataClassification.SYNTHETIC, 1, 1.0
+        policy, WorkloadClass.SYNTHETIC_SMOKE, DataClassification.SYNTHETIC, 1, 100
     )
     assert first == second
+
+
+# ---------------------------------------------------------------------------
+# MEGB-03H.2C.3B.2B.1 correction: canonical integer cents, never a float, on
+# the authorization/comparison path -- exact boundary behavior and explicit
+# float rejection.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cents", [0, 1, 4999, 5000])
+def test_evaluate_admission_accepts_cost_at_and_below_the_ceiling(cents: int) -> None:
+    """Test evaluate_admission accepts every exact boundary value at or
+    below the 5000-cent ceiling: 0, 1, 4999, and the ceiling itself
+    (5000)."""
+    policy = make_personal_environment_policy()
+    decision = evaluate_admission(
+        policy,
+        WorkloadClass.SYNTHETIC_SMOKE,
+        DataClassification.SYNTHETIC,
+        requested_worker_count=1,
+        estimated_cost_cents=cents,
+    )
+    assert decision.admitted is True
+
+
+def test_evaluate_admission_rejects_cost_one_cent_above_the_ceiling() -> None:
+    """Test evaluate_admission refuses exactly one cent above the
+    5000-cent ceiling (5001), the exact opposite boundary from the
+    accepted-at-ceiling case above."""
+    policy = make_personal_environment_policy()
+    decision = evaluate_admission(
+        policy,
+        WorkloadClass.SYNTHETIC_SMOKE,
+        DataClassification.SYNTHETIC,
+        requested_worker_count=1,
+        estimated_cost_cents=5001,
+    )
+    assert decision.admitted is False
+    assert AdmissionRefusalReason.COST_CEILING_EXCEEDED in decision.refusal_reasons
+
+
+def test_evaluate_admission_rejects_a_float_estimated_cost() -> None:
+    """Test evaluate_admission raises rather than silently accepting a
+    binary floating-point ``estimated_cost_cents`` -- the authorization
+    path admits only ``int``, never ``float``, even when the float value
+    is numerically integral (e.g. ``100.0``)."""
+    policy = make_personal_environment_policy()
+    with pytest.raises(InvalidDistributedProvenanceError):
+        evaluate_admission(
+            policy,
+            WorkloadClass.SYNTHETIC_SMOKE,
+            DataClassification.SYNTHETIC,
+            requested_worker_count=1,
+            estimated_cost_cents=100.0,  # type: ignore[arg-type]
+        )
+
+
+def test_evaluate_admission_rejects_a_negative_estimated_cost() -> None:
+    """Test evaluate_admission rejects a negative cost outright rather
+    than silently treating it as always-admitted."""
+    policy = make_personal_environment_policy()
+    with pytest.raises(InvalidDistributedProvenanceError):
+        evaluate_admission(
+            policy,
+            WorkloadClass.SYNTHETIC_SMOKE,
+            DataClassification.SYNTHETIC,
+            requested_worker_count=1,
+            estimated_cost_cents=-1,
+        )
+
+
+def test_evaluate_admission_rejects_a_boolean_estimated_cost() -> None:
+    """Test evaluate_admission rejects ``bool`` (a ``int`` subclass in
+    Python) as an ambiguous, disallowed conversion for
+    ``estimated_cost_cents``."""
+    policy = make_personal_environment_policy()
+    with pytest.raises(InvalidDistributedProvenanceError):
+        evaluate_admission(
+            policy,
+            WorkloadClass.SYNTHETIC_SMOKE,
+            DataClassification.SYNTHETIC,
+            requested_worker_count=1,
+            estimated_cost_cents=True,
+        )
+
+
+def test_personal_environment_policy_rejects_a_float_spending_ceiling() -> None:
+    """Test PersonalEnvironmentPolicy construction itself refuses a
+    binary floating-point ``spending_ceiling_cents`` -- canonical integer
+    currency units are required at construction time, not merely at
+    comparison time."""
+    with pytest.raises(InvalidDistributedProvenanceError):
+        make_personal_environment_policy(spending_ceiling_cents=5000.0)
+
+
+def test_personal_environment_policy_rejects_a_negative_spending_ceiling() -> None:
+    """Test personal environment policy rejects a negative spending
+    ceiling."""
+    with pytest.raises(InvalidDistributedProvenanceError):
+        make_personal_environment_policy(spending_ceiling_cents=-1)
+
+
+def test_personal_environment_policy_rejects_the_stale_v1_schema_version_literal() -> None:
+    """Test personal environment policy rejects the stale
+    MEGB-03H.2C.3B.2A v1 schema-version literal -- v1's
+    ``PersonalEnvironmentPolicy`` had a ``spending_ceiling_usd: float``
+    field; a payload still stamped with the exact prior v1 string must
+    be rejected under the v2 field shape, never silently
+    reinterpreted."""
+    with pytest.raises(UnsupportedDistributedOrchestrationSchemaVersionError):
+        make_personal_environment_policy(
+            distributed_orchestration_schema_version="megb-03h2c3b2a-distributed-orchestration-v1"
+        )
+
+
+def test_personal_environment_policy_has_no_float_typed_field() -> None:
+    """Test PersonalEnvironmentPolicy has no ``float``-typed field
+    anywhere -- a structural guarantee, not merely a construction-time
+    check, that the authorization path never carries binary
+    floating-point currency."""
+    for field in dataclasses.fields(PersonalEnvironmentPolicy):
+        assert field.type is not float, (
+            f"field {field.name!r} is typed float -- canonical integer cents required"
+        )

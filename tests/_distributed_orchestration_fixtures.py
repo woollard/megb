@@ -48,26 +48,34 @@ def make_run_context_checksum(seed: str = "synthetic-run-context") -> str:
 
 
 def make_candidate_artifact_reference(**overrides: Any) -> ArtifactReference:
-    """Make candidate artifact reference."""
+    """Make candidate artifact reference. This is a purely structural
+    fixture (never used against a real
+    :class:`~src.distributed.artifact_store.InMemoryArtifactStore`), so
+    ``metadata_checksum`` is a synthetic sha256-shaped placeholder, exactly
+    like every other checksum field here -- content-aware artifact-store
+    tests use ``tests/_atomic_stores_fixtures.py``'s own builders instead."""
     fields: dict[str, Any] = {
         "distributed_orchestration_schema_version": DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
         "checksum_algorithm_version": CHECKSUM_ALGORITHM_VERSION,
         "artifact_kind": ArtifactKind.CANDIDATE_MANIFEST_ENTRY,
         "artifact_reference_id": "candidate-manifest-entry-0001",
-        "artifact_checksum": make_sha256("candidate-content"),
+        "content_checksum": make_sha256("candidate-content"),
+        "metadata_checksum": make_sha256("candidate-metadata"),
     }
     fields.update(overrides)
     return ArtifactReference(**fields)
 
 
 def make_result_artifact_reference(**overrides: Any) -> ArtifactReference:
-    """Make result artifact reference."""
+    """Make result artifact reference (purely structural -- see
+    :func:`make_candidate_artifact_reference`'s own note)."""
     fields: dict[str, Any] = {
         "distributed_orchestration_schema_version": DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
         "checksum_algorithm_version": CHECKSUM_ALGORITHM_VERSION,
         "artifact_kind": ArtifactKind.RESULT_ARTIFACT,
         "artifact_reference_id": "result-artifact-0001",
-        "artifact_checksum": make_sha256("result-content"),
+        "content_checksum": make_sha256("result-content"),
+        "metadata_checksum": make_sha256("result-metadata"),
     }
     fields.update(overrides)
     return ArtifactReference(**fields)
@@ -229,7 +237,7 @@ def make_personal_environment_policy(**overrides: Any) -> PersonalEnvironmentPol
             )
         ),
         "max_admitted_workers": 2,
-        "spending_ceiling_usd": 50.0,
+        "spending_ceiling_cents": 5000,
     }
     fields.update(overrides)
     return PersonalEnvironmentPolicy(**fields)

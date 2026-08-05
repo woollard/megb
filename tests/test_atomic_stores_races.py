@@ -53,7 +53,12 @@ from tests._distributed_orchestration_fixtures import (
 )
 
 RUN_CTX = make_sha256("synthetic-run-context")
+RESERVATION_ID = "reservation-0001"
 _TRIALS = 25
+
+
+def _always_valid_reservation(_reservation_id: str) -> bool:
+    return True
 
 
 def _run_concurrently(*targets: Callable[[], None]) -> None:
@@ -71,7 +76,7 @@ def test_two_workers_racing_for_one_lease_yields_exactly_one_valid_lease() -> No
     for trial in range(_TRIALS):
         work_id = f"work-lease-race-{trial}"
         store = AtomicWorkStore()
-        record = store.create_if_absent(work_id, RUN_CTX)
+        record = store.create_if_absent(work_id, RUN_CTX, RESERVATION_ID, _always_valid_reservation)
         barrier = threading.Barrier(2)
         outcomes: list[tuple[str, str]] = []
         lock = threading.Lock()
@@ -83,7 +88,12 @@ def test_two_workers_racing_for_one_lease_yields_exactly_one_valid_lease() -> No
             barrier.wait()
             status: str
             try:
-                store.acquire_lease(work_id, record.revision, lease)
+                store.acquire_lease(
+                    work_id,
+                    record.revision,
+                    lease,
+                    reservation_validator=_always_valid_reservation,
+                )
                 status = "success"
             except RevisionConflictError:
                 status = "conflict"
@@ -114,16 +124,22 @@ def test_stale_worker_never_commits_despite_racing_against_the_reassigned_worker
     for trial in range(_TRIALS):
         work_id = f"work-stale-race-{trial}"
         store = AtomicWorkStore()
-        record = store.create_if_absent(work_id, RUN_CTX)
+        record = store.create_if_absent(
+            work_id, RUN_CTX, RESERVATION_ID, _always_valid_reservation
+        )
         lease1 = make_lease(
             scientific_work_id=work_id, worker_participant_id="worker-a", lease_generation=1
         )
-        record = store.acquire_lease(work_id, record.revision, lease1)
+        record = store.acquire_lease(
+            work_id, record.revision, lease1, reservation_validator=_always_valid_reservation
+        )
         record = store.mark_retryable(work_id, record.revision)
         lease2 = make_lease(
             scientific_work_id=work_id, worker_participant_id="worker-b", lease_generation=2
         )
-        record = store.reassign_lease(work_id, record.revision, lease2)
+        record = store.reassign_lease(
+            work_id, record.revision, lease2, reservation_validator=_always_valid_reservation
+        )
         record = store.transition_to_executing(work_id, record.revision)
 
         stale_attempt = make_execution_attempt(
@@ -184,11 +200,13 @@ def test_losing_competing_artifact_remains_unreferenced_after_cas_race() -> None
     for trial in range(_TRIALS):
         work_id = f"work-artifact-race-{trial}"
         store = AtomicWorkStore()
-        record = store.create_if_absent(work_id, RUN_CTX)
+        record = store.create_if_absent(work_id, RUN_CTX, RESERVATION_ID, _always_valid_reservation)
         lease = make_lease(
             scientific_work_id=work_id, worker_participant_id="worker-a", lease_generation=1
         )
-        record = store.acquire_lease(work_id, record.revision, lease)
+        record = store.acquire_lease(
+            work_id, record.revision, lease, reservation_validator=_always_valid_reservation
+        )
         record = store.transition_to_executing(work_id, record.revision)
 
         attempt = make_execution_attempt(
@@ -254,11 +272,13 @@ def test_cancellation_and_result_commit_race_has_exactly_one_deterministic_winne
     for trial in range(_TRIALS):
         work_id = f"work-cancel-race-{trial}"
         store = AtomicWorkStore()
-        record = store.create_if_absent(work_id, RUN_CTX)
+        record = store.create_if_absent(work_id, RUN_CTX, RESERVATION_ID, _always_valid_reservation)
         lease = make_lease(
             scientific_work_id=work_id, worker_participant_id="worker-a", lease_generation=1
         )
-        record = store.acquire_lease(work_id, record.revision, lease)
+        record = store.acquire_lease(
+            work_id, record.revision, lease, reservation_validator=_always_valid_reservation
+        )
         record = store.transition_to_executing(work_id, record.revision)
 
         attempt = make_execution_attempt(

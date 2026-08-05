@@ -26,11 +26,23 @@ from src.distributed._checksums import (
     CHECKSUM_ALGORITHM_VERSION,
     DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
 )
+from src.distributed.artifact_store import ArtifactMetadata
+from src.distributed.personal_policy import DataClassification, WorkloadClass
 from src.distributed.work_contracts import (
     ArtifactKind,
     ArtifactReference,
     ExecutionAttempt,
     ResultCommit,
+)
+
+#: The default classification bound to every artifact reference this
+#: module builds unless a caller supplies its own ``metadata=`` --
+#: matches every existing race/budget test's own default so a bare
+#: ``make_result_artifact_reference(content)`` composes directly with a
+#: same-default ``ArtifactMetadata()`` construction at the call site.
+_DEFAULT_METADATA = ArtifactMetadata(
+    workload_class=WorkloadClass.SYNTHETIC_SMOKE,
+    data_classification=DataClassification.SYNTHETIC,
 )
 
 
@@ -40,18 +52,29 @@ def make_synthetic_content(seed: str) -> bytes:
     return f"synthetic-artifact-content-{seed}".encode("utf-8")
 
 
-def make_result_artifact_reference(content: bytes, **overrides: Any) -> ArtifactReference:
+def make_result_artifact_reference(
+    content: bytes, *, metadata: ArtifactMetadata | None = None, **overrides: Any
+) -> ArtifactReference:
     """Make result artifact reference -- unlike
     ``_distributed_orchestration_fixtures.make_result_artifact_reference``,
-    this variant's checksum is computed from real, caller-supplied bytes
-    (required by :class:`~src.distributed.artifact_store.InMemoryArtifactStore`'s
-    own checksum verification)."""
+    this variant's ``content_checksum`` is computed from real,
+    caller-supplied bytes (required by
+    :class:`~src.distributed.artifact_store.InMemoryArtifactStore`'s own
+    checksum verification), and ``metadata_checksum`` is bound to a real
+    :class:`~src.distributed.artifact_store.ArtifactMetadata`'s own
+    checksum (defaulting to synthetic/non-privileged) -- required by the
+    MEGB-03H.2C.3B.2B.1 content-bound-classification correction. Pass
+    ``metadata=`` explicitly when a test needs the reference bound to a
+    non-default classification (e.g. to exercise a policy refusal)."""
+    if metadata is None:
+        metadata = _DEFAULT_METADATA
     fields: dict[str, Any] = {
         "distributed_orchestration_schema_version": DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
         "checksum_algorithm_version": CHECKSUM_ALGORITHM_VERSION,
         "artifact_kind": ArtifactKind.RESULT_ARTIFACT,
         "artifact_reference_id": "result-artifact-0001",
-        "artifact_checksum": hashlib.sha256(content).hexdigest(),
+        "content_checksum": hashlib.sha256(content).hexdigest(),
+        "metadata_checksum": metadata.metadata_checksum,
     }
     fields.update(overrides)
     return ArtifactReference(**fields)

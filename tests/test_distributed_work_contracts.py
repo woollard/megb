@@ -86,7 +86,8 @@ def test_artifact_reference_round_trips() -> None:
         checksum_algorithm_version=data["checksum_algorithm_version"],
         artifact_kind=ArtifactKind(data["artifact_kind"]),
         artifact_reference_id=data["artifact_reference_id"],
-        artifact_checksum=data["artifact_checksum"],
+        content_checksum=data["content_checksum"],
+        metadata_checksum=data["metadata_checksum"],
         reference_checksum=data["reference_checksum"],
     )
     assert rebuilt == reference
@@ -109,13 +110,49 @@ def test_artifact_reference_rejects_unsupported_schema_version() -> None:
 def test_artifact_reference_rejects_non_sha256_checksum() -> None:
     """Test artifact reference rejects non sha256 checksum."""
     with pytest.raises(InvalidDistributedProvenanceError):
-        make_candidate_artifact_reference(artifact_checksum="not-a-checksum")
+        make_candidate_artifact_reference(content_checksum="not-a-checksum")
 
 
 def test_artifact_reference_rejects_empty_reference_id() -> None:
     """Test artifact reference rejects empty reference id."""
     with pytest.raises(InvalidDistributedProvenanceError):
         make_candidate_artifact_reference(artifact_reference_id="")
+
+
+def test_artifact_reference_rejects_the_stale_v1_schema_version_literal() -> None:
+    """Test artifact reference rejects the stale
+    MEGB-03H.2C.3B.2A v1 schema-version literal -- MEGB-03H.2C.3B.2B.1's
+    correction bumped DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION v1->v2
+    because ArtifactReference's own field shape changed
+    (``artifact_checksum`` split into ``content_checksum``/
+    ``metadata_checksum``); a payload still stamped with the exact prior
+    v1 string must be rejected, never silently reinterpreted under v2."""
+    with pytest.raises(UnsupportedDistributedOrchestrationSchemaVersionError):
+        make_candidate_artifact_reference(
+            distributed_orchestration_schema_version="megb-03h2c3b2a-distributed-orchestration-v1"
+        )
+
+
+def test_artifact_reference_v2_round_trips_with_current_schema_version() -> None:
+    """Test artifact reference round-trips cleanly under the current
+    (v2) schema version -- the companion positive case to the stale-v1
+    rejection test above."""
+    reference = make_candidate_artifact_reference()
+    assert reference.distributed_orchestration_schema_version == (
+        DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION
+    )
+    assert DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION.endswith("-v2")
+    data = artifact_reference_to_dict(reference)
+    rebuilt = ArtifactReference(
+        distributed_orchestration_schema_version=data["distributed_orchestration_schema_version"],
+        checksum_algorithm_version=data["checksum_algorithm_version"],
+        artifact_kind=ArtifactKind(data["artifact_kind"]),
+        artifact_reference_id=data["artifact_reference_id"],
+        content_checksum=data["content_checksum"],
+        metadata_checksum=data["metadata_checksum"],
+        reference_checksum=data["reference_checksum"],
+    )
+    assert rebuilt == reference
 
 
 def test_artifact_reference_kind_changes_checksum() -> None:
@@ -125,7 +162,8 @@ def test_artifact_reference_kind_changes_checksum() -> None:
     candidate = make_candidate_artifact_reference()
     result = make_result_artifact_reference(
         artifact_reference_id=candidate.artifact_reference_id,
-        artifact_checksum=candidate.artifact_checksum,
+        content_checksum=candidate.content_checksum,
+        metadata_checksum=candidate.metadata_checksum,
     )
     assert candidate.reference_checksum != result.reference_checksum
 
@@ -519,7 +557,7 @@ def test_reconcile_result_commit_conflicting_duplicate_blocks() -> None:
     conflicting_commit = make_result_commit(
         attempt,
         result_content_checksum="9" * 64,
-        result_artifact_reference=make_result_artifact_reference(artifact_checksum="9" * 64),
+        result_artifact_reference=make_result_artifact_reference(content_checksum="9" * 64),
     )
     with pytest.raises(ConflictingResultCommitError):
         reconcile_result_commit(first_commit, conflicting_commit)

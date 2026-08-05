@@ -3,6 +3,8 @@
 idempotent/conflicting reservation replay, and the composed
 :func:`~src.distributed.budget_store.evaluate_and_reserve` decision."""
 
+from typing import Callable
+
 import pytest
 
 from src.distributed._checksums import (
@@ -15,14 +17,17 @@ from src.distributed.artifact_store import (
     ArtifactMetadataMismatchError,
     InMemoryArtifactStore,
 )
+from src.distributed.atomic_work_store import AtomicWorkStore, InvalidReservationError
 from src.distributed.budget_store import (
     AtomicBudgetStore,
     BudgetCeilingExceededError,
+    OrphanReservationDisposition,
     ReservationConflictError,
     ReservationNotActiveError,
     ReservationNotFoundError,
     ReservationStatus,
     WorkerCeilingExceededError,
+    diagnose_reservation_work_binding,
     evaluate_and_reserve,
 )
 from src.distributed.personal_policy import (
@@ -32,6 +37,7 @@ from src.distributed.personal_policy import (
 )
 from src.distributed.provenance import EnvironmentClass
 from tests._atomic_stores_fixtures import make_result_artifact_reference, make_synthetic_content
+from tests._distributed_orchestration_fixtures import make_sha256
 
 PERSONAL_BOOTSTRAP_MAX_WORKERS = 2
 PERSONAL_BOOTSTRAP_CEILING_CENTS = 5000
@@ -44,7 +50,7 @@ def _policy() -> PersonalEnvironmentPolicy:
         environment_class=EnvironmentClass.PERSONAL_BOOTSTRAP,
         allowed_workload_classes=(WorkloadClass.SYNTHETIC_SMOKE,),
         max_admitted_workers=PERSONAL_BOOTSTRAP_MAX_WORKERS,
-        spending_ceiling_usd=50.0,
+        spending_ceiling_cents=PERSONAL_BOOTSTRAP_CEILING_CENTS,
     )
 
 
@@ -272,15 +278,12 @@ def test_evaluate_and_reserve_refuses_disallowed_workload_class_without_raising(
     budget for it."""
     astore = InMemoryArtifactStore()
     content = make_synthetic_content("budget-3")
-    reference = make_result_artifact_reference(content)
-    astore.put(
-        reference,
-        content,
-        ArtifactMetadata(
-            workload_class=WorkloadClass.PRODUCTION,
-            data_classification=DataClassification.SYNTHETIC,
-        ),
+    metadata = ArtifactMetadata(
+        workload_class=WorkloadClass.PRODUCTION,
+        data_classification=DataClassification.SYNTHETIC,
     )
+    reference = make_result_artifact_reference(content, metadata=metadata)
+    astore.put(reference, content, metadata)
     bstore = _budget_store()
     decision = evaluate_and_reserve(
         _policy(), bstore, astore, reference, WorkloadClass.PRODUCTION,
@@ -289,3 +292,130 @@ def test_evaluate_and_reserve_refuses_disallowed_workload_class_without_raising(
     assert decision.admitted is False
     with pytest.raises(ReservationNotFoundError):
         bstore.get("res-1")
+
+
+# ---------------------------------------------------------------------------
+# MEGB-03H.2C.3B.2B.1 correction: reservation/work-creation crash-window
+# recovery -- a deterministic, recoverable two-step protocol with
+# explicit, non-leaseable intermediate states, never a claim of genuine
+# cross-store atomicity.
+# ---------------------------------------------------------------------------
+
+RUN_CTX = make_sha256("budget-reservation-run-context")
+
+
+def _reservation_validator(bstore: AtomicBudgetStore) -> Callable[[str], bool]:
+    def _validate(reservation_id: str) -> bool:
+        try:
+            return bstore.get(reservation_id).status == ReservationStatus.RESERVED
+        except ReservationNotFoundError:
+            return False
+
+    return _validate
+
+
+def test_reservation_before_work_creation_then_resume_after_simulated_crash() -> None:
+    """Test the crash window between a successful reservation and work
+    creation: the reservation succeeds, work creation is never reached
+    (simulated crash), and a recovering caller diagnoses RESUMABLE and
+    safely retries create_if_absent."""
+    bstore = _budget_store()
+    wstore = AtomicWorkStore()
+    bstore.reserve("res-crash-1", 1000, 1)
+    # Simulated crash: create_if_absent was never called.
+
+    disposition = diagnose_reservation_work_binding(bstore, wstore, "work-crash-1", "res-crash-1")
+    assert disposition == OrphanReservationDisposition.RESUMABLE
+
+    record = wstore.create_if_absent(
+        "work-crash-1", RUN_CTX, "res-crash-1", _reservation_validator(bstore)
+    )
+    assert record.reservation_id == "res-crash-1"
+    assert (
+        diagnose_reservation_work_binding(bstore, wstore, "work-crash-1", "res-crash-1")
+        == OrphanReservationDisposition.NO_ACTION_NEEDED
+    )
+
+
+def test_reservation_before_work_creation_then_release_after_simulated_crash() -> None:
+    """Test the same crash window, but the recovering caller instead
+    chooses to release the orphaned reservation rather than resume --
+    both are valid, deterministic recovery actions from a RESUMABLE
+    diagnosis."""
+    bstore = _budget_store()
+    wstore = AtomicWorkStore()
+    bstore.reserve("res-crash-2", 1000, 1)
+
+    assert (
+        diagnose_reservation_work_binding(bstore, wstore, "work-crash-2", "res-crash-2")
+        == OrphanReservationDisposition.RESUMABLE
+    )
+    bstore.release("res-crash-2")
+    assert (
+        diagnose_reservation_work_binding(bstore, wstore, "work-crash-2", "res-crash-2")
+        == OrphanReservationDisposition.ALREADY_RESOLVED
+    )
+    # A subsequent create_if_absent attempt against the now-released
+    # reservation is correctly refused -- work cannot be admitted without
+    # a currently valid reservation.
+    with pytest.raises(InvalidReservationError):
+        wstore.create_if_absent(
+            "work-crash-2", RUN_CTX, "res-crash-2", _reservation_validator(bstore)
+        )
+
+
+def test_diagnose_reservation_work_binding_raises_for_unknown_reservation() -> None:
+    """Test diagnose_reservation_work_binding raises for a reservation
+    that was never made -- there is nothing to diagnose."""
+    bstore = _budget_store()
+    wstore = AtomicWorkStore()
+    with pytest.raises(ReservationNotFoundError):
+        diagnose_reservation_work_binding(bstore, wstore, "work-x", "no-such-reservation")
+
+
+def test_diagnose_reservation_work_binding_detects_conflicting_binding() -> None:
+    """Test diagnose_reservation_work_binding reports CONFLICTING_BINDING
+    when a work record already exists bound to a different
+    reservation_id than the one supplied -- a protocol violation that
+    must never occur under correct reserve-before-admission usage, but
+    must be surfaced rather than silently ignored if it does."""
+    bstore = _budget_store()
+    wstore = AtomicWorkStore()
+    bstore.reserve("res-a", 1000, 1)
+    bstore.reserve("res-b", 1000, 1)
+    wstore.create_if_absent("work-conflict", RUN_CTX, "res-a", _reservation_validator(bstore))
+    disposition = diagnose_reservation_work_binding(bstore, wstore, "work-conflict", "res-b")
+    assert disposition == OrphanReservationDisposition.CONFLICTING_BINDING
+
+
+def test_work_creation_without_a_valid_reservation_is_refused() -> None:
+    """Test that work creation naming a reservation_id that was never
+    reserved is refused outright -- work cannot be admitted without
+    reservation."""
+    bstore = _budget_store()
+    wstore = AtomicWorkStore()
+    with pytest.raises(InvalidReservationError):
+        wstore.create_if_absent(
+            "work-no-reservation", RUN_CTX, "never-reserved", _reservation_validator(bstore)
+        )
+
+
+def test_release_then_release_again_raises_not_active_never_double_credits() -> None:
+    """Test that releasing an already-released reservation raises rather
+    than silently double-crediting the budget ledger."""
+    store = _budget_store()
+    store.reserve("res-1", 1000, 1)
+    store.release("res-1")
+    with pytest.raises(ReservationNotActiveError):
+        store.release("res-1")
+
+
+def test_finalize_then_release_raises_not_active_never_double_credits() -> None:
+    """Test that finalizing then attempting to release the same
+    reservation raises -- finalize and release are mutually exclusive
+    terminal outcomes, never both applied to the same reservation."""
+    store = _budget_store()
+    store.reserve("res-1", 1000, 1)
+    store.finalize("res-1", 900)
+    with pytest.raises(ReservationNotActiveError):
+        store.release("res-1")

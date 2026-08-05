@@ -81,7 +81,30 @@ strictly *after* it. :class:`AtomicWorkStore` below is the synthetic,
 single-process, ``threading.Lock``-protected realization of this shape --
 a real distributed backend would replace the internal lock with its own
 atomic primitive, but the *contract* (one revisioned record, one
-indivisible read-validate-write) is what this module fixes.
+indivisible read-validate-write) is what this module fixes. This module
+structurally implements
+:class:`~src.distributed.protocols.AtomicWorkStoreProtocol` (see that
+module for the full method contract and linearizability requirement).
+
+**MEGB-03H.2C.3B.2B.1 correction: reservation binding.** The checkpoint
+correction's admission/reservation crash-window audit found that an
+authoritative work record and a budget reservation
+(:mod:`~src.distributed.budget_store`) are necessarily created in two
+separate, non-atomic steps (this module does not claim cross-store
+atomicity with an independent, separately-locked budget store). To keep
+that two-step protocol deterministic and recoverable rather than merely
+best-effort, :class:`AuthoritativeWorkRecord` now binds an immutable
+``reservation_id`` at creation, :meth:`AtomicWorkStore.create_if_absent`
+requires it to validate as currently reserved before a *new* record is
+ever created, and :meth:`AtomicWorkStore.acquire_lease`/
+:meth:`AtomicWorkStore.reassign_lease` re-validate the same bound
+reservation, inside the same atomic ``mutate`` step as the ``LEASED``
+transition itself (never as a separate check-then-write), before either
+may proceed -- "work cannot become leaseable without a valid reservation"
+is enforced at the one indivisible step where leaseability actually takes
+effect, not by convention. See
+:func:`~src.distributed.budget_store.diagnose_reservation_work_binding`
+for the crash-recovery diagnostic this binding makes possible.
 """
 
 # pylint: disable=duplicate-code
@@ -153,6 +176,18 @@ class IdentityMismatchError(InvalidDistributedProvenanceError):
     record they are being applied against."""
 
 
+class InvalidReservationError(InvalidDistributedProvenanceError):
+    """Raised when a caller-supplied ``reservation_id`` does not validate
+    as currently reserved (per an injected ``reservation_validator``) --
+    either at authoritative work creation (reservation before admission)
+    or at lease acquisition/reassignment (a work item must never become
+    leaseable without a currently valid reservation, even if the
+    reservation was released after the work record was created). See
+    :mod:`~src.distributed.budget_store`'s own module docstring for the
+    full reservation/work-creation crash-window recovery protocol this
+    validation is part of."""
+
+
 @dataclass(frozen=True)
 class AuthoritativeWorkRecord:  # pylint: disable=too-many-instance-attributes
     """The single authoritative, revisioned state for one unit of
@@ -175,6 +210,7 @@ class AuthoritativeWorkRecord:  # pylint: disable=too-many-instance-attributes
 
     scientific_work_id: str
     distributed_run_context_checksum: str
+    reservation_id: str
     state: WorkItemState
     revision: int
     current_lease_generation: int
@@ -190,6 +226,7 @@ class AuthoritativeWorkRecord:  # pylint: disable=too-many-instance-attributes
     def __post_init__(self) -> None:  # pylint: disable=too-many-branches
         _require_nonempty_str(self, "scientific_work_id")
         _require_sha256_hex(self, "distributed_run_context_checksum")
+        _require_nonempty_str(self, "reservation_id")
         if not isinstance(self.state, WorkItemState):
             raise InvalidDistributedProvenanceError(
                 f"state must be a WorkItemState, got {self.state!r}"
@@ -279,11 +316,12 @@ class AuthoritativeWorkRecord:  # pylint: disable=too-many-instance-attributes
 
 
 def _new_record(
-    scientific_work_id: str, distributed_run_context_checksum: str
+    scientific_work_id: str, distributed_run_context_checksum: str, reservation_id: str
 ) -> AuthoritativeWorkRecord:
     return AuthoritativeWorkRecord(
         scientific_work_id=scientific_work_id,
         distributed_run_context_checksum=distributed_run_context_checksum,
+        reservation_id=reservation_id,
         state=WorkItemState.PENDING_AVAILABLE,
         revision=0,
         current_lease_generation=0,
@@ -311,16 +349,38 @@ class AtomicWorkStore:
         self._records: dict[str, AuthoritativeWorkRecord] = {}
 
     def create_if_absent(
-        self, scientific_work_id: str, distributed_run_context_checksum: str
+        self,
+        scientific_work_id: str,
+        distributed_run_context_checksum: str,
+        reservation_id: str,
+        reservation_validator: Callable[[str], bool],
     ) -> AuthoritativeWorkRecord:
-        """Create a fresh, ``PENDING_AVAILABLE``, revision-0 record if
-        none exists yet; idempotently return the existing record
-        otherwise (never overwrites)."""
+        """Create a fresh, ``PENDING_AVAILABLE``, revision-0 record bound
+        to ``reservation_id`` if none exists yet; idempotently return the
+        existing record otherwise (never overwrites, and does not
+        re-validate the reservation on the idempotent-return path -- it
+        was already validated when the record was first created).
+
+        ``reservation_validator(reservation_id)`` must return ``True`` for
+        a *new* record to be created -- "reservation before admission" is
+        enforced here structurally, not merely by calling-convention.
+        Raises :class:`InvalidReservationError` if it returns ``False``:
+        no record is created, and the reservation itself is left
+        untouched (the caller may retry once the reservation is valid, or
+        may instead release it)."""
         with self._lock:
             existing = self._records.get(scientific_work_id)
             if existing is not None:
                 return existing
-            record = _new_record(scientific_work_id, distributed_run_context_checksum)
+            if not reservation_validator(reservation_id):
+                raise InvalidReservationError(
+                    f"reservation_id {reservation_id!r} is not currently valid -- an "
+                    "authoritative work record cannot be created without a currently reserved "
+                    "budget/worker-capacity reservation"
+                )
+            record = _new_record(
+                scientific_work_id, distributed_run_context_checksum, reservation_id
+            )
             self._records[scientific_work_id] = record
             return record
 
@@ -360,13 +420,26 @@ class AtomicWorkStore:
             return new_record
 
     def acquire_lease(
-        self, scientific_work_id: str, expected_revision: int, lease: Lease
+        self,
+        scientific_work_id: str,
+        expected_revision: int,
+        lease: Lease,
+        *,
+        reservation_validator: Callable[[str], bool],
     ) -> AuthoritativeWorkRecord:
         """Atomically transition ``PENDING_AVAILABLE`` (or ``RETRYABLE``,
         for reassignment) to ``LEASED``, binding ``lease``'s worker
         participant and requiring ``lease.lease_generation`` to be
         exactly one more than the record's current generation -- the
-        coordinator-issued, monotonically-increasing fencing token."""
+        coordinator-issued, monotonically-increasing fencing token.
+
+        ``reservation_validator(current.reservation_id)`` is checked
+        inside this same atomic step, before the ``LEASED`` transition is
+        applied -- a work item can never become leaseable without a
+        currently valid reservation, even if the reservation bound at
+        creation time was released in the interim. Raises
+        :class:`InvalidReservationError` if it returns ``False``; no
+        state change is applied."""
         if lease.scientific_work_id != scientific_work_id:
             raise IdentityMismatchError(
                 f"lease.scientific_work_id {lease.scientific_work_id!r} does not match "
@@ -375,6 +448,12 @@ class AtomicWorkStore:
 
         def mutate(current: AuthoritativeWorkRecord) -> AuthoritativeWorkRecord:
             validate_transition(current.state, WorkItemState.LEASED)
+            if not reservation_validator(current.reservation_id):
+                raise InvalidReservationError(
+                    f"reservation_id {current.reservation_id!r} bound to {scientific_work_id!r} "
+                    "is no longer valid -- a work item cannot become leaseable without a "
+                    "currently valid reservation"
+                )
             if lease.lease_generation != current.current_lease_generation + 1:
                 raise IdentityMismatchError(
                     f"lease_generation {lease.lease_generation} is not the next expected "
@@ -446,11 +525,20 @@ class AtomicWorkStore:
         return self._atomic_update(scientific_work_id, expected_revision, mutate)
 
     def reassign_lease(
-        self, scientific_work_id: str, expected_revision: int, new_lease: Lease
+        self,
+        scientific_work_id: str,
+        expected_revision: int,
+        new_lease: Lease,
+        *,
+        reservation_validator: Callable[[str], bool],
     ) -> AuthoritativeWorkRecord:
         """Atomically transition ``RETRYABLE`` to ``LEASED`` under a
         fresh, strictly higher lease generation -- reassignment after
-        expiry, never a renewal."""
+        expiry, never a renewal. Re-validates the record's bound
+        reservation in the same atomic step, exactly as
+        :meth:`acquire_lease` does -- a redelivered/reassigned work item
+        is no more leaseable without a valid reservation than a
+        first-time lease is."""
         if new_lease.scientific_work_id != scientific_work_id:
             raise IdentityMismatchError(
                 f"new_lease.scientific_work_id {new_lease.scientific_work_id!r} does not match "
@@ -459,6 +547,12 @@ class AtomicWorkStore:
 
         def mutate(current: AuthoritativeWorkRecord) -> AuthoritativeWorkRecord:
             validate_transition(current.state, WorkItemState.LEASED)
+            if not reservation_validator(current.reservation_id):
+                raise InvalidReservationError(
+                    f"reservation_id {current.reservation_id!r} bound to {scientific_work_id!r} "
+                    "is no longer valid -- a work item cannot become leaseable without a "
+                    "currently valid reservation"
+                )
             if new_lease.lease_generation != current.current_lease_generation + 1:
                 raise IdentityMismatchError(
                     f"reassignment lease_generation {new_lease.lease_generation} is not the "
@@ -659,6 +753,7 @@ __all__ = [
     "RevisionConflictError",
     "MissingArtifactReferenceError",
     "IdentityMismatchError",
+    "InvalidReservationError",
     "AuthoritativeWorkRecord",
     "AtomicWorkStore",
 ]

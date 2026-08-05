@@ -22,6 +22,7 @@ from src.distributed.atomic_work_store import (
     AtomicWorkStore,
     AuthoritativeWorkRecord,
     IdentityMismatchError,
+    InvalidReservationError,
     MissingArtifactReferenceError,
     RevisionConflictError,
     WorkRecordNotFoundError,
@@ -45,6 +46,7 @@ from tests._distributed_orchestration_fixtures import (
 )
 
 RUN_CTX = make_sha256("synthetic-run-context")
+RESERVATION_ID = "reservation-0001"
 
 
 def _always_present(_reference: object) -> bool:
@@ -52,6 +54,14 @@ def _always_present(_reference: object) -> bool:
 
 
 def _never_present(_reference: object) -> bool:
+    return False
+
+
+def _always_valid_reservation(_reservation_id: str) -> bool:
+    return True
+
+
+def _never_valid_reservation(_reservation_id: str) -> bool:
     return False
 
 
@@ -63,7 +73,7 @@ def _never_present(_reference: object) -> bool:
 def test_create_if_absent_starts_at_pending_available_revision_zero() -> None:
     """Test create if absent starts at pending available revision zero."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     assert record.state == WorkItemState.PENDING_AVAILABLE
     assert record.revision == 0
     assert record.current_lease_generation == 0
@@ -76,8 +86,8 @@ def test_create_if_absent_starts_at_pending_available_revision_zero() -> None:
 def test_create_if_absent_is_idempotent() -> None:
     """Test create if absent is idempotent."""
     store = AtomicWorkStore()
-    first = store.create_if_absent("work-1", RUN_CTX)
-    second = store.create_if_absent("work-1", RUN_CTX)
+    first = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
+    second = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     assert first == second
 
 
@@ -91,7 +101,7 @@ def test_read_raises_for_unknown_work_id() -> None:
 def test_authoritative_work_record_is_immutable() -> None:
     """Test authoritative work record is immutable."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     with pytest.raises(dataclasses.FrozenInstanceError):
         record.revision = 99  # type: ignore[misc]
 
@@ -103,6 +113,7 @@ def test_authoritative_work_record_rejects_acknowledged_without_result_commit() 
         AuthoritativeWorkRecord(
             scientific_work_id="work-1",
             distributed_run_context_checksum=RUN_CTX,
+            reservation_id=RESERVATION_ID,
             state=WorkItemState.ACKNOWLEDGED_COMPLETED,
             revision=1,
             current_lease_generation=1,
@@ -127,6 +138,7 @@ def test_authoritative_work_record_rejects_result_commit_in_wrong_state() -> Non
         AuthoritativeWorkRecord(
             scientific_work_id="work-1",
             distributed_run_context_checksum=RUN_CTX,
+            reservation_id=RESERVATION_ID,
             state=WorkItemState.EXECUTING,
             revision=1,
             current_lease_generation=1,
@@ -148,6 +160,7 @@ def test_authoritative_work_record_rejects_terminal_state_without_disposition() 
         AuthoritativeWorkRecord(
             scientific_work_id="work-1",
             distributed_run_context_checksum=RUN_CTX,
+            reservation_id=RESERVATION_ID,
             state=WorkItemState.CANCELLED,
             revision=1,
             current_lease_generation=0,
@@ -168,6 +181,7 @@ def test_authoritative_work_record_rejects_retry_count_above_limit() -> None:
         AuthoritativeWorkRecord(
             scientific_work_id="work-1",
             distributed_run_context_checksum=RUN_CTX,
+            reservation_id=RESERVATION_ID,
             state=WorkItemState.PENDING_AVAILABLE,
             revision=0,
             current_lease_generation=0,
@@ -185,11 +199,16 @@ def test_authoritative_work_record_rejects_retry_count_above_limit() -> None:
 def test_acknowledgement_eligible_false_before_commit_true_after_false_after_ack() -> None:
     """Test acknowledgement_eligible property tracks the full lifecycle."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     assert record.acknowledgement_eligible is False
 
     lease = make_lease(scientific_work_id="work-1")
-    record = store.acquire_lease("work-1", record.revision, lease)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.transition_to_executing("work-1", record.revision)
     assert record.acknowledgement_eligible is False
 
@@ -219,11 +238,21 @@ def test_acknowledgement_eligible_false_before_commit_true_after_false_after_ack
 def test_acquire_lease_rejects_stale_expected_revision() -> None:
     """Test acquire lease rejects stale expected revision."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease = make_lease(scientific_work_id="work-1")
-    store.acquire_lease("work-1", record.revision, lease)  # succeeds, revision now 1
+    store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )  # succeeds, revision now 1
     with pytest.raises(RevisionConflictError):
-        store.acquire_lease("work-1", record.revision, lease)  # stale (0), current is 1
+        store.acquire_lease(
+            "work-1",
+            record.revision,
+            lease,
+            reservation_validator=_always_valid_reservation,
+        )  # stale (0), current is 1
 
 
 def test_operations_on_unknown_work_id_raise_not_found() -> None:
@@ -231,14 +260,14 @@ def test_operations_on_unknown_work_id_raise_not_found() -> None:
     store = AtomicWorkStore()
     lease = make_lease(scientific_work_id="ghost-work")
     with pytest.raises(WorkRecordNotFoundError):
-        store.acquire_lease("ghost-work", 0, lease)
+        store.acquire_lease("ghost-work", 0, lease, reservation_validator=_always_valid_reservation)
 
 
 def test_illegal_transition_leaves_record_unchanged() -> None:
     """Test a rejected operation (illegal transition) leaves the record's
     revision and state completely unchanged -- no partial write."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     # PENDING_AVAILABLE -> EXECUTING is illegal (must go through LEASED)
     with pytest.raises(IllegalStateTransitionError):
         store.transition_to_executing("work-1", record.revision)
@@ -254,18 +283,28 @@ def test_illegal_transition_leaves_record_unchanged() -> None:
 def test_acquire_lease_requires_next_generation() -> None:
     """Test acquire lease requires next generation."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     bad_lease = make_lease(scientific_work_id="work-1", lease_generation=2)
     with pytest.raises(IdentityMismatchError):
-        store.acquire_lease("work-1", record.revision, bad_lease)
+        store.acquire_lease(
+            "work-1",
+            record.revision,
+            bad_lease,
+            reservation_validator=_always_valid_reservation,
+        )
 
 
 def test_renew_lease_keeps_generation_and_state() -> None:
     """Test renew lease keeps generation and state."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease = make_lease(scientific_work_id="work-1")
-    record = store.acquire_lease("work-1", record.revision, lease)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     renewal = LeaseRenewal(
         distributed_orchestration_schema_version=lease.distributed_orchestration_schema_version,
         checksum_algorithm_version=lease.checksum_algorithm_version,
@@ -284,16 +323,26 @@ def test_renew_lease_rejects_stale_generation() -> None:
     """Test renew lease rejects stale generation (fencing) -- a delayed
     renewal for a generation that has since been reassigned away."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease1 = make_lease(
         scientific_work_id="work-1", worker_participant_id="worker-a", lease_generation=1
     )
-    record = store.acquire_lease("work-1", record.revision, lease1)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease1,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.mark_retryable("work-1", record.revision)
     lease2 = make_lease(
         scientific_work_id="work-1", worker_participant_id="worker-b", lease_generation=2
     )
-    record = store.reassign_lease("work-1", record.revision, lease2)
+    record = store.reassign_lease(
+        "work-1",
+        record.revision,
+        lease2,
+        reservation_validator=_always_valid_reservation,
+    )
     stale_renewal = LeaseRenewal(
         distributed_orchestration_schema_version=lease1.distributed_orchestration_schema_version,
         checksum_algorithm_version=lease1.checksum_algorithm_version,
@@ -309,9 +358,14 @@ def test_renew_lease_rejects_stale_generation() -> None:
 def test_mark_retryable_then_reassign_lease_increments_generation() -> None:
     """Test mark retryable then reassign lease increments generation."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease = make_lease(scientific_work_id="work-1")
-    record = store.acquire_lease("work-1", record.revision, lease)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.mark_retryable("work-1", record.revision)
     assert record.state == WorkItemState.RETRYABLE
     assert record.retry_count == 1
@@ -320,7 +374,12 @@ def test_mark_retryable_then_reassign_lease_increments_generation() -> None:
         worker_participant_id="worker-participant-b",
         lease_generation=2,
     )
-    record = store.reassign_lease("work-1", record.revision, new_lease)
+    record = store.reassign_lease(
+        "work-1",
+        record.revision,
+        new_lease,
+        reservation_validator=_always_valid_reservation,
+    )
     assert record.state == WorkItemState.LEASED
     assert record.current_lease_generation == 2
     assert record.worker_participant_id == "worker-participant-b"
@@ -329,21 +388,36 @@ def test_mark_retryable_then_reassign_lease_increments_generation() -> None:
 def test_reassign_lease_rejects_non_incrementing_generation() -> None:
     """Test reassign lease rejects non incrementing generation."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease = make_lease(scientific_work_id="work-1")
-    record = store.acquire_lease("work-1", record.revision, lease)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.mark_retryable("work-1", record.revision)
     bad_lease = make_lease(scientific_work_id="work-1", lease_generation=1)  # not incremented
     with pytest.raises(IdentityMismatchError):
-        store.reassign_lease("work-1", record.revision, bad_lease)
+        store.reassign_lease(
+            "work-1",
+            record.revision,
+            bad_lease,
+            reservation_validator=_always_valid_reservation,
+        )
 
 
 def test_dead_letter_from_retryable() -> None:
     """Test dead letter from retryable."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease = make_lease(scientific_work_id="work-1")
-    record = store.acquire_lease("work-1", record.revision, lease)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.mark_retryable("work-1", record.revision)
     disposition = TerminalDisposition(
         distributed_orchestration_schema_version=lease.distributed_orchestration_schema_version,
@@ -366,7 +440,7 @@ def test_dead_letter_from_retryable() -> None:
 def test_cancellation_before_admission() -> None:
     """Test cancellation before admission."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     request = CancellationRequest(
         distributed_orchestration_schema_version=DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
         checksum_algorithm_version=CHECKSUM_ALGORITHM_VERSION,
@@ -382,9 +456,14 @@ def test_cancellation_before_admission() -> None:
 def test_cancellation_after_lease() -> None:
     """Test cancellation after lease."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease = make_lease(scientific_work_id="work-1")
-    record = store.acquire_lease("work-1", record.revision, lease)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     request = CancellationRequest(
         distributed_orchestration_schema_version=DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
         checksum_algorithm_version=CHECKSUM_ALGORITHM_VERSION,
@@ -400,7 +479,7 @@ def test_cancellation_after_lease() -> None:
 def test_cancellation_wrong_scope_rejected() -> None:
     """Test cancellation wrong scope rejected."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     request = CancellationRequest(
         distributed_orchestration_schema_version=DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
         checksum_algorithm_version=CHECKSUM_ALGORITHM_VERSION,
@@ -416,9 +495,14 @@ def test_terminal_evidence_cannot_be_erased_by_cancellation() -> None:
     """Test terminal evidence (a committed result) cannot be erased by a
     later cancellation attempt."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease = make_lease(scientific_work_id="work-1")
-    record = store.acquire_lease("work-1", record.revision, lease)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.transition_to_executing("work-1", record.revision)
     attempt = make_execution_attempt(scientific_work_id="work-1")
     content = make_synthetic_content("z")
@@ -446,9 +530,19 @@ def test_terminal_evidence_cannot_be_erased_by_cancellation() -> None:
 def _leased_and_executing(
     store: AtomicWorkStore, scientific_work_id: str
 ) -> AuthoritativeWorkRecord:
-    record = store.create_if_absent(scientific_work_id, RUN_CTX)
+    record = store.create_if_absent(
+        scientific_work_id,
+        RUN_CTX,
+        RESERVATION_ID,
+        _always_valid_reservation,
+    )
     lease = make_lease(scientific_work_id=scientific_work_id)
-    record = store.acquire_lease(scientific_work_id, record.revision, lease)
+    record = store.acquire_lease(
+        scientific_work_id,
+        record.revision,
+        lease,
+        reservation_validator=_always_valid_reservation,
+    )
     return store.transition_to_executing(scientific_work_id, record.revision)
 
 
@@ -505,16 +599,26 @@ def test_commit_result_rejects_stale_lease_generation() -> None:
     """Test commit_result rejects stale lease generation -- a worker
     whose lease was reassigned away cannot commit."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     lease1 = make_lease(
         scientific_work_id="work-1", worker_participant_id="worker-a", lease_generation=1
     )
-    record = store.acquire_lease("work-1", record.revision, lease1)
+    record = store.acquire_lease(
+        "work-1",
+        record.revision,
+        lease1,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.mark_retryable("work-1", record.revision)
     lease2 = make_lease(
         scientific_work_id="work-1", worker_participant_id="worker-b", lease_generation=2
     )
-    record = store.reassign_lease("work-1", record.revision, lease2)
+    record = store.reassign_lease(
+        "work-1",
+        record.revision,
+        lease2,
+        reservation_validator=_always_valid_reservation,
+    )
     record = store.transition_to_executing("work-1", record.revision)
 
     stale_attempt = make_execution_attempt(
@@ -592,7 +696,7 @@ def test_commit_result_rejects_commit_not_matching_attempt() -> None:
 def test_commit_result_illegal_from_pending_available() -> None:
     """Test commit_result illegal from pending available (never leased)."""
     store = AtomicWorkStore()
-    record = store.create_if_absent("work-1", RUN_CTX)
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
     attempt = make_execution_attempt(scientific_work_id="work-1", lease_generation=1)
     content = make_synthetic_content("never-leased")
     commit = make_result_commit(attempt, content)
@@ -662,3 +766,79 @@ def test_acknowledge_cannot_be_repeated() -> None:
     record = store.acknowledge("work-1", record.revision, ack)
     with pytest.raises(IllegalStateTransitionError):
         store.acknowledge("work-1", record.revision, ack)
+
+
+# ---------------------------------------------------------------------------
+# MEGB-03H.2C.3B.2B.1 correction: reservation binding -- "reservation
+# before admission" and "no leaseability without a currently valid
+# reservation" enforced structurally, not by convention.
+# ---------------------------------------------------------------------------
+
+
+def test_create_if_absent_binds_the_supplied_reservation_id() -> None:
+    """Test create_if_absent binds the supplied reservation_id onto the
+    new record."""
+    store = AtomicWorkStore()
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
+    assert record.reservation_id == RESERVATION_ID
+
+
+def test_create_if_absent_rejects_an_invalid_reservation() -> None:
+    """Test create_if_absent refuses to create a new record when the
+    reservation does not validate -- "reservation before admission" is a
+    structural precondition, not a convention. No record is created."""
+    store = AtomicWorkStore()
+    with pytest.raises(InvalidReservationError):
+        store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _never_valid_reservation)
+    with pytest.raises(WorkRecordNotFoundError):
+        store.read("work-1")
+
+
+def test_create_if_absent_idempotent_replay_does_not_revalidate_reservation() -> None:
+    """Test that once a record exists, a replayed create_if_absent call
+    returns the existing record without re-validating the reservation --
+    the reservation was already validated at first creation; the
+    idempotent-return path is not a second admission decision."""
+    store = AtomicWorkStore()
+    first = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
+    second = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _never_valid_reservation)
+    assert first == second
+
+
+def test_acquire_lease_rejects_when_reservation_no_longer_valid() -> None:
+    """Test acquire_lease refuses the LEASED transition when the bound
+    reservation is no longer valid, even though it was valid at record
+    creation -- a work item must never become leaseable without a
+    currently valid reservation. No state change is applied."""
+    store = AtomicWorkStore()
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
+    lease = make_lease(scientific_work_id="work-1")
+    with pytest.raises(InvalidReservationError):
+        store.acquire_lease(
+            "work-1", record.revision, lease, reservation_validator=_never_valid_reservation
+        )
+    unchanged = store.read("work-1")
+    assert unchanged.state == WorkItemState.PENDING_AVAILABLE
+    assert unchanged.revision == record.revision
+
+
+def test_reassign_lease_rejects_when_reservation_no_longer_valid() -> None:
+    """Test reassign_lease refuses reassignment when the bound
+    reservation is no longer valid -- a redelivered/reassigned work item
+    is no more leaseable without a valid reservation than a first lease
+    is."""
+    store = AtomicWorkStore()
+    record = store.create_if_absent("work-1", RUN_CTX, RESERVATION_ID, _always_valid_reservation)
+    lease1 = make_lease(scientific_work_id="work-1", lease_generation=1)
+    record = store.acquire_lease(
+        "work-1", record.revision, lease1, reservation_validator=_always_valid_reservation
+    )
+    record = store.mark_retryable("work-1", record.revision)
+    lease2 = make_lease(scientific_work_id="work-1", lease_generation=2)
+    with pytest.raises(InvalidReservationError):
+        store.reassign_lease(
+            "work-1", record.revision, lease2, reservation_validator=_never_valid_reservation
+        )
+    unchanged = store.read("work-1")
+    assert unchanged.state == WorkItemState.RETRYABLE
+    assert unchanged.revision == record.revision

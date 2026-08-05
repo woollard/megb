@@ -15,7 +15,7 @@ Two typed classifications, never a filename or string heuristic:
 personal-bootstrap ceilings (maximum 2 workers, $50 spending ceiling) into
 *validation*, not merely documentation -- a policy claiming
 ``environment_class=PERSONAL_BOOTSTRAP`` with ``max_admitted_workers > 2``
-or ``spending_ceiling_usd > 50.0`` fails to construct at all.
+or ``spending_ceiling_cents > 5000`` fails to construct at all.
 :func:`evaluate_admission` is the pure, side-effect-free decision function
 a future coordinator (MEGB-03H.2C.3B.2B) would call **before** admitting
 any work -- it creates no resource, authorizes no billing, and its
@@ -34,7 +34,6 @@ from src.distributed._checksums import (
     InvalidDistributedProvenanceError,
     require_checksum_algorithm_version as _require_checksum_algorithm_version,
     require_orchestration_schema_version as _require_orchestration_schema_version,
-    require_positive_float as _require_positive_float,
     require_positive_int as _require_positive_int,
     sha256_of as _sha256_of,
 )
@@ -43,8 +42,14 @@ from src.distributed.provenance import EnvironmentClass
 # The accepted amendment's own personal-bootstrap ceilings
 # (docs/operations/gcp-environment-promotion.md §1.1) -- baked into
 # PersonalEnvironmentPolicy's own validation below, not merely documented.
+#
+# MEGB-03H.2C.3B.2B.1 correction: the spending ceiling is expressed in
+# integer cents, never a Python float -- see PersonalEnvironmentPolicy's own
+# docstring below for why the prior spending_ceiling_usd field violated the
+# B.2B.1 authorization's "canonical integer currency units... never binary
+# floating-point comparison" requirement.
 PERSONAL_BOOTSTRAP_MAX_WORKERS = 2
-PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD = 50.0
+PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS = 5000
 
 
 class WorkloadClass(str, Enum):
@@ -89,18 +94,30 @@ class PersonalEnvironmentPolicy:
     enforces the accepted ceilings: ``allowed_workload_classes`` must be a
     subset of :data:`PERSONAL_BOOTSTRAP_ALLOWED_WORKLOAD_CLASSES`,
     ``max_admitted_workers`` must not exceed
-    :data:`PERSONAL_BOOTSTRAP_MAX_WORKERS`, and ``spending_ceiling_usd``
-    must not exceed :data:`PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD`. This
+    :data:`PERSONAL_BOOTSTRAP_MAX_WORKERS`, and ``spending_ceiling_cents``
+    must not exceed :data:`PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS`. This
     is the "technical, not merely documented, refusal" the accepted
     amendment requires -- a caller cannot construct a personal-bootstrap
-    policy object that violates its own ceilings in the first place."""
+    policy object that violates its own ceilings in the first place.
+
+    ``spending_ceiling_cents`` is a canonical integer currency unit
+    (MEGB-03H.2C.3B.2B.1 correction, ``DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION``
+    v1->v2) -- the prior ``spending_ceiling_usd: float`` field allowed a
+    binary floating-point value into the authorization comparison path,
+    which the B.2B.1 checkpoint correction's own atomicity/exactness audit
+    found violates "canonical integer currency units... never binary
+    floating-point comparison." Python's arbitrary-precision ``int`` makes
+    this field's own overflow structurally impossible and NaN/infinity
+    unrepresentable; :func:`evaluate_admission` below compares it directly
+    against a caller-supplied integer-cents estimate, with no float
+    conversion anywhere on this path."""
 
     distributed_orchestration_schema_version: str
     checksum_algorithm_version: str
     environment_class: EnvironmentClass
     allowed_workload_classes: tuple[WorkloadClass, ...]
     max_admitted_workers: int
-    spending_ceiling_usd: float
+    spending_ceiling_cents: int
     policy_checksum: str = ""
 
     def __post_init__(self) -> None:  # pylint: disable=too-many-branches
@@ -129,7 +146,7 @@ class PersonalEnvironmentPolicy:
                 "allowed_workload_classes must not contain a duplicate"
             )
         _require_positive_int(self, "max_admitted_workers")
-        _require_positive_float(self, "spending_ceiling_usd")
+        _require_positive_int(self, "spending_ceiling_cents")
 
         if self.environment_class == EnvironmentClass.PERSONAL_BOOTSTRAP:
             disallowed = (
@@ -146,11 +163,11 @@ class PersonalEnvironmentPolicy:
                     f"{PERSONAL_BOOTSTRAP_MAX_WORKERS} workers, got "
                     f"{self.max_admitted_workers}"
                 )
-            if self.spending_ceiling_usd > PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD:
+            if self.spending_ceiling_cents > PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS:
                 raise InvalidDistributedProvenanceError(
                     f"personal-bootstrap policy may not exceed a "
-                    f"${PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD:.2f} spending ceiling, got "
-                    f"${self.spending_ceiling_usd:.2f}"
+                    f"{PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS}-cent spending ceiling, got "
+                    f"{self.spending_ceiling_cents} cents"
                 )
 
         computed_checksum = _sha256_of(_personal_environment_policy_payload(self))
@@ -172,7 +189,7 @@ def _personal_environment_policy_payload(policy: PersonalEnvironmentPolicy) -> d
         "environment_class": policy.environment_class.value,
         "allowed_workload_classes": [item.value for item in policy.allowed_workload_classes],
         "max_admitted_workers": policy.max_admitted_workers,
-        "spending_ceiling_usd": policy.spending_ceiling_usd,
+        "spending_ceiling_cents": policy.spending_ceiling_cents,
     }
 
 
@@ -232,7 +249,7 @@ def evaluate_admission(
     workload_class: WorkloadClass,
     data_classification: DataClassification,
     requested_worker_count: int,
-    estimated_cost_usd: float,
+    estimated_cost_cents: int,
 ) -> AdmissionDecision:
     """Pure admission-refusal decision, evaluated **before** any work is
     admitted -- creates no resource, authorizes no billing, and has no
@@ -240,7 +257,12 @@ def evaluate_admission(
     :class:`AdmissionRefusalReason` rather than stopping at the first
     one, mirroring
     :func:`~src.distributed.qualification_gate.evaluate_qualification_gate`'s
-    own "surface everything wrong in one evaluation" discipline."""
+    own "surface everything wrong in one evaluation" discipline.
+
+    ``estimated_cost_cents`` is a canonical integer currency unit
+    (MEGB-03H.2C.3B.2B.1 correction) -- strictly an ``int``, never a
+    ``float``/``bool``; there is no conversion to a binary floating-point
+    representation anywhere on this comparison path."""
     reasons: list[AdmissionRefusalReason] = []
     if workload_class not in policy.allowed_workload_classes:
         reasons.append(AdmissionRefusalReason.WORKLOAD_CLASS_NOT_ALLOWLISTED)
@@ -252,18 +274,22 @@ def evaluate_admission(
         )
     if requested_worker_count > policy.max_admitted_workers:
         reasons.append(AdmissionRefusalReason.WORKER_COUNT_CEILING_EXCEEDED)
-    if not isinstance(estimated_cost_usd, (int, float)) or isinstance(estimated_cost_usd, bool):
+    if (
+        not isinstance(estimated_cost_cents, int)
+        or isinstance(estimated_cost_cents, bool)
+        or estimated_cost_cents < 0
+    ):
         raise InvalidDistributedProvenanceError(
-            f"estimated_cost_usd must be a number, got {estimated_cost_usd!r}"
+            f"estimated_cost_cents must be a non-negative int, got {estimated_cost_cents!r}"
         )
-    if estimated_cost_usd > policy.spending_ceiling_usd:
+    if estimated_cost_cents > policy.spending_ceiling_cents:
         reasons.append(AdmissionRefusalReason.COST_CEILING_EXCEEDED)
     return AdmissionDecision(admitted=not reasons, refusal_reasons=tuple(reasons))
 
 
 __all__ = [
     "PERSONAL_BOOTSTRAP_MAX_WORKERS",
-    "PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD",
+    "PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS",
     "PERSONAL_BOOTSTRAP_ALLOWED_WORKLOAD_CLASSES",
     "PERSONAL_BOOTSTRAP_ALLOWED_DATA_CLASSIFICATIONS",
     "WorkloadClass",

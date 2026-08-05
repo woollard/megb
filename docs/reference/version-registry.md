@@ -69,7 +69,7 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `PROMOTION_SUMMARY_SCHEMA_VERSION` | `megb-03h5-promotion-summary-v1` | `h5_promotion.py` | `PromotionSummary` field shape — the safe, allowlisted, committed-output-suitable promotion report. See "MEGB-03H.2B.2 addendum" below. |
 | `CALIBRATION_SCHEMA_VERSION` | `megb-03h-calibration-record-v2` | `calibration_schema.py` | `CalibrationRunContext`/`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` field shape. **v1→v2**: v1 had no persisted telemetry-collection-policy, host/runtime, or per-metric collector-method provenance — see "MEGB-03H.2C.2A addendum" below. (Introduced by MEGB-03H.2A; this row itself was missing from this registry until the H.2C.2A correction pass — a registry-currency gap, not a second schema change.) |
 | `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` | `megb-03h2c3b1-distributed-provenance-v1` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` provenance/identity type (`DistributedRunContext`, `WorkerExecutionContext`, `RetryLeasePolicy`, `MixedWorkerProvenanceSummary`, `QualificationIdentity`, `ProductionIdentityProjection`, `AggregateProductionIdentityProjection`, `SafeRedactedSummary`, `ProtectedOperationalMapping`). Introduced by MEGB-03H.2C.3B.1; this row itself was missing from this registry until this MEGB-03H.2C.3B.2A pass — a registry-currency gap, not a schema change. See "MEGB-03H.2C.3B addendum" below. |
-| `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` | `megb-03h2c3b2a-distributed-orchestration-v1` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` orchestration-contract type introduced by MEGB-03H.2C.3B.2A (`ArtifactReference`, `WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`, `ExecutionAttempt`, `ResultCommit`, `Acknowledgement`, `TerminalDisposition`, `WorkerRegistration`, `Lease`, `LeaseRenewal`, `PersonalEnvironmentPolicy`, `SafeAuditEvent`) — a schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` above. Introduced by, and current as of, this same MEGB-03H.2C.3B.2A checkpoint. See "MEGB-03H.2C.3B addendum" below. |
+| `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` | `megb-03h2c3b2b1-distributed-orchestration-v2` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` orchestration-contract type (`ArtifactReference`, `WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`, `ExecutionAttempt`, `ResultCommit`, `Acknowledgement`, `TerminalDisposition`, `WorkerRegistration`, `Lease`, `LeaseRenewal`, `PersonalEnvironmentPolicy`, `SafeAuditEvent`) — a schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` above. **v1→v2**: v1's `PersonalEnvironmentPolicy.spending_ceiling_usd` was a `float`, and `ArtifactReference.artifact_checksum` bound content only, not classification metadata — see "MEGB-03H.2C.3B.2B.1 addendum" below. Introduced by MEGB-03H.2C.3B.2A; corrected by MEGB-03H.2C.3B.2B.1. See "MEGB-03H.2C.3B addendum" and "MEGB-03H.2C.3B.2B.1 addendum" below. |
 | `CHECKSUM_ALGORITHM_VERSION` (`src.distributed`) | `sha256-canonical-json-v1` | `src/distributed/_checksums.py` | The one checksum-derivation algorithm identity shared by **both** `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped types — sha256 over `json.dumps(payload, sort_keys=True)`. Deliberately the same name as no other constant in this table (`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` is a distinct, unrelated identity scoped to G.4's own synthetic workload checksum) — the two never collide because they are different Python identifiers in different modules; this row exists so this document's own registry is not silently incomplete about which module's `CHECKSUM_ALGORITHM_VERSION` it is describing. Introduced by MEGB-03H.2C.3B.1; unchanged by MEGB-03H.2C.3B.2A, which reuses it rather than defining a second one. See "MEGB-03H.2C.3B addendum" below. |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
@@ -495,6 +495,103 @@ constant, unmodified by this documentation pass.
   never to be confused with, `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION`
   itself — same *kind* of constant (a checksum-algorithm label), different
   Python identifier, different module, different scope, no shared value.
+
+## MEGB-03H.2C.3B.2B.1 addendum: `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` v1→v2
+
+This registry's own "Status" note (and the "MEGB-03H.2C.3B addendum" above)
+predate this addendum; it is recorded here rather than by rewriting that
+prose, per this project's established convention of appending correction
+notes instead of silently rewriting an already-accepted historical record.
+
+**Why v2 exists.** The MEGB-03H.2C.3B.2B.1 checkpoint correction's own
+authorization required two narrow fixes to already-accepted
+MEGB-03H.2C.3B.2A orchestration types, found during that checkpoint's own
+re-audit (not the original B.2B.1 atomicity audit, which had already
+passed):
+
+1. `PersonalEnvironmentPolicy.spending_ceiling_usd` was a Python `float`,
+   letting a binary floating-point value reach the personal-bootstrap
+   admission comparison — the authorization requires canonical integer
+   currency units (or an explicitly justified exact decimal), never a
+   float, on that comparison path.
+2. `ArtifactReference.artifact_checksum` bound content bytes only; the
+   immutable classification metadata
+   (`~src.distributed.artifact_store.ArtifactMetadata`) bound to an
+   artifact lived only in the artifact store's own internal dict, keyed
+   by that same content-only checksum — so the reference type itself
+   never proved which classification was bound to it.
+
+Both are field-shape changes to already-versioned, self-checksummed
+orchestration types, not merely additive ones, so this schema family
+bumps `v1` (`megb-03h2c3b2a-distributed-orchestration-v1`) to `v2`
+(`megb-03h2c3b2b1-distributed-orchestration-v2`) rather than claiming the
+correction is additive — the same "shape change requires a version bump"
+discipline this table already applies to every prior `v(n)`→`v(n+1)` bump
+(e.g. `CALIBRATION_SCHEMA_VERSION` v1→v2 above).
+
+**What v2 changes**, both in `src/distributed/`:
+
+- `personal_policy.py`: `PersonalEnvironmentPolicy.spending_ceiling_usd:
+  float` → `spending_ceiling_cents: int`
+  (`PERSONAL_BOOTSTRAP_SPENDING_CEILING_USD = 50.0` →
+  `PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS = 5000`); rejects
+  non-`int`, `bool`, and negative values by construction (Python's
+  arbitrary-precision `int` makes overflow structurally impossible and
+  NaN/infinity unrepresentable). `evaluate_admission`'s own
+  `estimated_cost_usd: float` parameter is now `estimated_cost_cents:
+  int` — there is no float conversion anywhere on the admission/budget
+  comparison path in `src/distributed/` after this correction (the prior
+  `budget_store.evaluate_and_reserve`'s one-shot `/ 100` bridge to dollars
+  is removed entirely, not merely narrowed).
+- `work_contracts.py`: `ArtifactReference.artifact_checksum` renamed to
+  `content_checksum` (same meaning: sha256 of raw content bytes only);
+  new required field `metadata_checksum` (sha256 of the immutable
+  `ArtifactMetadata`'s own canonical payload, computed and self-verified
+  by `ArtifactMetadata` in `artifact_store.py`). Both are folded into the
+  reference's own pre-existing `reference_checksum` self-checksum, so
+  changing only the bound classification (content unchanged) now changes
+  the reference's own overall checksum. `artifact_store.py`'s
+  `InMemoryArtifactStore` keys its internal storage on the composite
+  `(content_checksum, metadata_checksum)` pair rather than content
+  checksum alone, so the same content bytes bound to two different
+  classifications are two distinct artifact identities, never a
+  collision requiring a conflict check and never an idempotent
+  equivalent write.
+
+**No other orchestration type's field shape changed.** `WorkDescriptor`,
+`QueueWorkMessage`, `CancellationRequest`, `ExecutionAttempt`,
+`ResultCommit`, `Acknowledgement`, `TerminalDisposition`,
+`WorkerRegistration`, `Lease`, `LeaseRenewal`, and `SafeAuditEvent` are
+unchanged by this correction; they are stamped with the same shared
+`DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` constant purely because it is
+one schema family with one shared version counter (the same "family, not
+per-type, versioning" discipline this table's own `CALIBRATION_SCHEMA_VERSION`
+row already documents for its own three co-versioned types).
+
+**No migration performed; stale v1 is rejected, not reinterpreted.** A
+repository-wide search confirmed no persisted `src/distributed/`
+orchestration artifact of either v1 or v2 exists anywhere (no queue,
+store, or coordinator implementation exists yet to persist or transmit
+one — MEGB-03H.2C.3B.2B.2's own, separately authorized, scope) — every
+v1-stamped payload that exists today is produced live by this
+checkpoint's own test fixtures and immediately superseded by this same
+correction. `require_orchestration_schema_version` rejects the literal
+prior v1 string (`megb-03h2c3b2a-distributed-orchestration-v1`) exactly
+as it already rejects any other unrecognized version string; dedicated
+regression tests assert this for both `ArtifactReference` and
+`PersonalEnvironmentPolicy` (`tests/test_distributed_work_contracts.py`,
+`tests/test_distributed_personal_policy.py`).
+
+**A separate, additive, non-versioned change in the same checkpoint:**
+`AtomicWorkStoreProtocol` was added to `protocols.py`, and
+`AuthoritativeWorkRecord` (in `atomic_work_store.py`, never itself
+schema-versioned — see that module's own docstring) gained a new
+required `reservation_id` field plus reservation-validation on
+`create_if_absent`/`acquire_lease`/`reassign_lease`. Neither of these
+touches any `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped type's
+field shape, so neither contributes to, or is covered by, this v1→v2
+bump — recorded here only to make clear why *not* every change in this
+checkpoint required one.
 
 ## Cache key: complete field list
 

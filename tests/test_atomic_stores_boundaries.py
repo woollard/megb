@@ -26,8 +26,10 @@ from src.distributed import (
     budget_store,
     worker_registry_store,
 )
-from src.distributed.atomic_work_store import AuthoritativeWorkRecord
+from src.distributed.atomic_work_store import AtomicWorkStore, AuthoritativeWorkRecord
 from src.distributed.budget_store import BudgetReservation
+from src.distributed.protocols import AtomicWorkStoreProtocol
+from tests._distributed_orchestration_fixtures import make_sha256
 from tests.test_distributed_dependency_direction import _distributed_files
 from tests.test_execution_dependency_direction import _imported_module_names
 
@@ -126,6 +128,31 @@ def test_budget_reservation_has_no_raw_identifier_field() -> None:
         lowered = name.lower()
         for forbidden in forbidden_substrings:
             assert forbidden not in lowered, f"field {name!r} matches forbidden {forbidden!r}"
+
+
+def _always_valid_reservation(_reservation_id: str) -> bool:
+    return True
+
+
+def test_atomic_work_store_structurally_implements_atomic_work_store_protocol() -> None:
+    """Test AtomicWorkStore structurally satisfies AtomicWorkStoreProtocol
+    (MEGB-03H.2C.3B.2B.1 correction) -- the assignment below is checked
+    statically by this repository's own mypy-strict verification step
+    (a structural mismatch would be a mypy error), and the calls through
+    the protocol-typed variable prove real runtime behavior is reachable
+    through the protocol alone, never only through the concrete class."""
+    concrete = AtomicWorkStore()
+    store: AtomicWorkStoreProtocol = concrete
+    reservation_id = "reservation-conformance-0001"
+    record = store.create_if_absent(
+        "work-conformance-0001",
+        make_sha256("conformance-run-context"),
+        reservation_id,
+        _always_valid_reservation,
+    )
+    assert record.reservation_id == reservation_id
+    read_back = store.read("work-conformance-0001")
+    assert read_back == record
 
 
 def test_b2b1_modules_define_no_coordinator_or_worker_loop_class() -> None:

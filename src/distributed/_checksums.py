@@ -32,7 +32,18 @@ CHECKSUM_ALGORITHM_VERSION = "sha256-canonical-json-v1"
 # established discipline of independently versioning each schema family
 # (calibration schema v2, result schema v4, cache-key schema v2 all evolve on
 # their own version counters, never one shared one).
-DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION = "megb-03h2c3b2a-distributed-orchestration-v1"
+#
+# MEGB-03H.2C.3B.2B.1 correction, v1->v2: the B.2B.1 checkpoint correction
+# audit found that PersonalEnvironmentPolicy.spending_ceiling_usd (a Python
+# float) violated the "canonical integer currency units, never binary
+# floating-point comparison" requirement for the authorization path, and
+# that ArtifactReference bound only content, not the immutable classification
+# metadata alongside it -- both are field-shape changes to already-versioned
+# orchestration types, not merely additive ones, so this schema family bumps
+# to v2 rather than claiming the correction is additive. See
+# docs/reference/version-registry.md's "MEGB-03H.2C.3B addendum" for the
+# full v1->v2 reason and compatibility stance.
+DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION = "megb-03h2c3b2b1-distributed-orchestration-v2"
 
 
 class InvalidDistributedProvenanceError(ValueError):
