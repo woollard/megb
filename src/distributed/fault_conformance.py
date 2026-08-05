@@ -128,6 +128,10 @@ class ReadinessClassification(str, Enum):
     BLOCKED_IN_PROCESS_RECOVERY = "BLOCKED_IN_PROCESS_RECOVERY"
 
 
+_ALL_FAULT_POINTS = frozenset(FaultPointId)
+_ALL_INVARIANTS = frozenset(InvariantId)
+
+
 @dataclass(frozen=True)
 class ConformanceEntry:
     """One exercised (fault point, invariant) pair. ``attempt_count`` is
@@ -172,11 +176,23 @@ def _conformance_entry_to_dict(entry: ConformanceEntry) -> dict[str, object]:
 
 
 def _conformance_entry_from_dict(data: dict[str, object]) -> ConformanceEntry:
+    try:
+        fault_point = FaultPointId(data["fault_point"])
+        invariant = InvariantId(data["invariant"])
+    except ValueError as exc:
+        raise InvalidFaultConformanceReportError(
+            f"unknown fault_point/invariant identifier: {exc}"
+        ) from exc
+    passed = data["passed"]
+    if not isinstance(passed, bool):
+        raise InvalidFaultConformanceReportError(f"'passed' must be a bool, got {passed!r}")
+    attempt_count = data["attempt_count"]
+    if not isinstance(attempt_count, int) or isinstance(attempt_count, bool):
+        raise InvalidFaultConformanceReportError(
+            f"'attempt_count' must be an int, got {attempt_count!r}"
+        )
     return ConformanceEntry(
-        fault_point=FaultPointId(data["fault_point"]),
-        invariant=InvariantId(data["invariant"]),
-        passed=bool(data["passed"]),
-        attempt_count=int(data["attempt_count"]),  # type: ignore[call-overload]
+        fault_point=fault_point, invariant=invariant, passed=passed, attempt_count=attempt_count
     )
 
 
@@ -211,6 +227,26 @@ class FaultConformanceReport:  # pylint: disable=too-many-instance-attributes
         ):
             raise InvalidFaultConformanceReportError(
                 "entries must be a nonempty tuple of ConformanceEntry"
+            )
+        observed_pairs = [(entry.fault_point, entry.invariant) for entry in self.entries]
+        if len(observed_pairs) != len(set(observed_pairs)):
+            raise InvalidFaultConformanceReportError(
+                "entries contain a duplicate (fault_point, invariant) pair -- each pair may be "
+                "recorded at most once"
+            )
+        missing_fault_points = _ALL_FAULT_POINTS - {entry.fault_point for entry in self.entries}
+        if missing_fault_points:
+            raise InvalidFaultConformanceReportError(
+                "entries are missing required fault point(s): "
+                f"{sorted(point.value for point in missing_fault_points)!r} -- every frozen "
+                "fault point must be exercised for this report to be constructed"
+            )
+        missing_invariants = _ALL_INVARIANTS - {entry.invariant for entry in self.entries}
+        if missing_invariants:
+            raise InvalidFaultConformanceReportError(
+                "entries are missing required invariant(s): "
+                f"{sorted(invariant.value for invariant in missing_invariants)!r} -- every "
+                "frozen invariant must be exercised for this report to be constructed"
             )
         expected_total_attempts = sum(entry.attempt_count for entry in self.entries)
         if self.total_attempts != expected_total_attempts:
