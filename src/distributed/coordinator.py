@@ -58,23 +58,63 @@ audit/outbox recoverability sub-audit (its finding: expressible via a
 write-intent-before-CAS-plus-reconciliation-at-dispatch pattern, no
 contract correction needed).
 
-**One deliberate, documented reuse (not a schema expansion):** a
-*terminal* (non-retryable) executor failure dead-letters immediately,
-reusing the already-accepted
-:class:`~src.distributed.work_contracts.TerminalDispositionReason.RETRY_CEILING_EXCEEDED`
-member rather than inventing a new reason code -- modeled as "this
-failure class immediately exhausts the retry budget for this attempt,"
-never as a silent expansion of ``TerminalDispositionReason``'s own legal
-value set. No new enum member was added; no schema/version audit was
-therefore triggered by this decision.
-
 **One narrow, additive change to two already-accepted B.2B.1 modules**
 (documented, not silently made): ``InMemoryWorkerRegistry.get_registration``
 and the matching addition to ``WorkerRegistryProtocol`` -- a read-only
 getter, purely additive, so this module can validate a delivered queue
 message's ``distributed_run_context_checksum`` against the worker's own
 registered one, never trusting the queue message alone for that binding.
-No existing method's behavior changed."""
+No existing method's behavior changed.
+
+## MEGB-03H.2C.3B.2B.2 correction (four semantic issues, addressed before
+acceptance -- see ``docs/reference/version-registry.md``'s own
+"MEGB-03H.2C.3B.2B.2 correction addendum" for the full schema-version
+account)
+
+1. **Concurrency ceiling.** ``CoordinatorConfig.max_admitted_workers`` no
+   longer hardcodes :data:`~src.distributed.personal_policy.PERSONAL_BOOTSTRAP_MAX_WORKERS`
+   -- see ``coordinator_config.py``'s own docstring. This module's
+   ``__init__`` now structurally refuses to construct a
+   :class:`Coordinator` whose ``config.max_admitted_workers`` exceeds the
+   *injected policy's own* ``max_admitted_workers``, so a personal-
+   bootstrap-policy coordinator can never be configured above two, while a
+   coordinator wired to a policy with a higher ceiling (test-only; no
+   company-authorization policy is created by this correction) may run at
+   a genuinely higher bounded concurrency.
+2. **Terminal-failure taxonomy.** The reuse of ``RETRY_CEILING_EXCEEDED``
+   for a *terminal* (non-retryable) executor failure, previously recorded
+   just above this section, was withdrawn as semantically false -- a work
+   item dead-lettered on its first attempt never exhausted a retry
+   ceiling. :meth:`Coordinator._handle_executor_failure` now selects
+   between the new ``NON_RETRYABLE_EXECUTOR_FAILURE`` reason and
+   ``RETRY_CEILING_EXCEEDED`` based on *why* dead-lettering occurred. This
+   is a legal-value-set expansion of an already-versioned,
+   self-checksummed type (``TerminalDispositionReason``, embedded in
+   ``TerminalDisposition``), so ``DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION``
+   bumps v2->v3.
+3. **Admission-audit ordering plus outbox lifecycle.**
+   :meth:`Coordinator.admit` now enqueues the admission audit intent
+   *before* ``queue.publish`` (previously after) -- a queue-visible work
+   item can no longer exist without either a matching audit intent already
+   enqueued or a typed, recoverable ``ADMITTED_NOT_PUBLISHED`` diagnosis;
+   an audit-enqueue failure (outbox at capacity) now refuses admission
+   before publication rather than leaving an unaudited, already-published
+   item. See :mod:`~src.distributed.audit_outbox`'s own module docstring
+   for the paired ``ABANDONED`` entry-lifecycle state, which prevents
+   permanently-unreconciled entries from consuming outbox capacity
+   forever.
+4. **Committed-result/budget/ack recovery.** ``ResultCommit`` now carries
+   ``actual_cost_cents`` (part of the same v2->v3 bump), so the exact
+   amount to finalize is authoritative, checksum-bound state, not a
+   separate lookup against the independently-mutable budget store.
+   :meth:`Coordinator._finalize_from_commit` is called both on the
+   fresh-commit path (:meth:`Coordinator._commit_success`, now finalizing
+   *before* acking, not after) and on the ``RESULT_COMMITTED``/
+   ``ACKNOWLEDGED_COMPLETED`` recovery branch at the top of
+   :meth:`Coordinator.invoke_worker` -- so a redelivery after a commit
+   whose finalize did not complete (crash, or finalize failure) retries
+   finalize idempotently, recovers the existing result without invoking
+   the executor again, and only then acks."""
 
 # pylint: disable=too-many-lines
 
@@ -103,7 +143,11 @@ from src.distributed.atomic_work_store import (
     RevisionConflictError,
     WorkRecordNotFoundError,
 )
-from src.distributed.audit_outbox import AuditDispatchSummary, InMemoryAuditOutbox
+from src.distributed.audit_outbox import (
+    AuditDispatchSummary,
+    AuditOutboxFullError,
+    InMemoryAuditOutbox,
+)
 from src.distributed.budget_store import (
     BudgetCeilingExceededError,
     ReservationConflictError,
@@ -277,6 +321,14 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
         cancellation: CancellationController,
         executor: WorkExecutorProtocol,
     ) -> None:
+        if config.max_admitted_workers > policy.max_admitted_workers:
+            raise InvalidDistributedProvenanceError(
+                f"coordinator config.max_admitted_workers ({config.max_admitted_workers}) "
+                f"exceeds the injected policy's own max_admitted_workers "
+                f"({policy.max_admitted_workers}) -- a coordinator's technical concurrency "
+                "ceiling must never exceed what its own environment policy permits, rejected "
+                "before any admission"
+            )
         self._config = config
         self._clock = clock
         self._work_store = work_store
@@ -354,12 +406,28 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
                 pass
             return make_work_outcome(work_id, ordinal, WorkOutcomeKind.CONFLICTING_RESULT)
 
+        # MEGB-03H.2C.3B.2B.2 correction: the audit intent is enqueued
+        # BEFORE the work item becomes queue-visible, never after -- a
+        # queue-visible work item must never exist without either a
+        # matching audit intent already durably enqueued, or a typed,
+        # recoverable reconciliation state. An admission audit-enqueue
+        # failure (outbox at capacity) now refuses admission before
+        # publication rather than leaving an unaudited, already-published
+        # work item; the authoritative record it refers to already exists
+        # and is idempotently re-creatable (create_if_absent), so this
+        # admission is safely retriable once outbox capacity frees up --
+        # diagnosable via diagnose_work_publication_binding, which reports
+        # ADMITTED_NOT_PUBLISHED for exactly this state.
+        try:
+            self._enqueue_admission_audit(descriptor)
+        except AuditOutboxFullError:
+            return make_work_outcome(work_id, ordinal, WorkOutcomeKind.INFRASTRUCTURE_FAILURE)
+
         try:
             self._queue.publish(descriptor)
         except QueueBackpressureError:
             return make_work_outcome(work_id, ordinal, WorkOutcomeKind.INFRASTRUCTURE_FAILURE)
 
-        self._enqueue_admission_audit(descriptor)
         return None
 
     def _enqueue_admission_refused_audit(self, descriptor: WorkDescriptor) -> None:
@@ -426,8 +494,18 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
             return make_work_outcome(work_id, ordinal, WorkOutcomeKind.INFRASTRUCTURE_FAILURE)
 
         if record.state in (WorkItemState.RESULT_COMMITTED, WorkItemState.ACKNOWLEDGED_COMPLETED):
-            self._queue.ack(work_id)
             assert record.result_commit is not None
+            # MEGB-03H.2C.3B.2B.2 correction: retry budget finalization
+            # (idempotently -- see _finalize_from_commit) before ack, not
+            # just on the fresh-commit path. Covers the crash window where
+            # a result was durably committed but the process was
+            # interrupted (or finalize itself failed) before either
+            # finalize or ack completed: redelivery lands here, recovers
+            # the existing result without invoking the executor again, and
+            # this call is exactly what makes finalize (and ack) actually
+            # retried rather than silently skipped forever.
+            self._finalize_from_commit(record)
+            self._queue.ack(work_id)
             return make_work_outcome(
                 work_id,
                 ordinal,
@@ -602,17 +680,29 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
         except RevisionConflictError:
             return make_work_outcome(work_id, ordinal, WorkOutcomeKind.STALE_LEASE)
 
-        should_dead_letter = (
-            not is_retryable_failure(failure_reason)
-            or new_record.retry_count >= new_record.retry_limit
-        )
+        is_terminal_failure = not is_retryable_failure(failure_reason)
+        retry_ceiling_exceeded = new_record.retry_count >= new_record.retry_limit
+        should_dead_letter = is_terminal_failure or retry_ceiling_exceeded
         if should_dead_letter:
+            # MEGB-03H.2C.3B.2B.2 correction: a terminal (non-retryable)
+            # executor failure is never RETRY_CEILING_EXCEEDED -- that
+            # reason means retries were genuinely attempted and exhausted
+            # (retry_count >= retry_limit), which is false for a work item
+            # dead-lettered on its very first attempt. NON_RETRYABLE_EXECUTOR_FAILURE
+            # is the distinct, correct reason for the former; a terminal
+            # failure takes priority in the (unreachable in practice, but
+            # not structurally impossible) case where both conditions hold.
+            disposition_reason = (
+                TerminalDispositionReason.NON_RETRYABLE_EXECUTOR_FAILURE
+                if is_terminal_failure
+                else TerminalDispositionReason.RETRY_CEILING_EXCEEDED
+            )
             disposition = TerminalDisposition(
                 distributed_orchestration_schema_version=_V,
                 checksum_algorithm_version=_C,
                 scientific_work_id=work_id,
                 disposition=TerminalDispositionKind.DEAD_LETTERED,
-                disposition_reason=TerminalDispositionReason.RETRY_CEILING_EXCEEDED,
+                disposition_reason=disposition_reason,
                 attempt_count=new_record.retry_count,
             )
             try:
@@ -662,6 +752,21 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
         except (ArtifactContentMismatchError, ArtifactMetadataMismatchError):
             return make_work_outcome(work_id, ordinal, WorkOutcomeKind.CONFLICTING_RESULT)
 
+        # MEGB-03H.2C.3B.2B.2 correction: read the exact amount to finalize
+        # once, before the commit, and carry it durably on the commit
+        # itself (ResultCommit.actual_cost_cents) -- so it is recoverable
+        # from authoritative, checksum-bound state alone after a crash,
+        # never re-derived from the separately-locked budget store (whose
+        # own reservation may have already moved to FINALIZED/RELEASED by
+        # the time a recovering caller looks). This synthetic engine has
+        # no real cost-metering mechanism, so the exact amount finalized
+        # is the reservation's own requested_cost_cents -- a deterministic,
+        # already-known value at commit time.
+        try:
+            actual_cost_cents = self._budget_store.get(record.reservation_id).requested_cost_cents
+        except ReservationNotFoundError:
+            return make_work_outcome(work_id, ordinal, WorkOutcomeKind.INFRASTRUCTURE_FAILURE)
+
         commit = ResultCommit(
             distributed_orchestration_schema_version=_V,
             checksum_algorithm_version=_C,
@@ -670,6 +775,7 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
             lease_generation=attempt.lease_generation,
             result_content_checksum=result_content_checksum,
             result_artifact_reference=result_reference,
+            actual_cost_cents=actual_cost_cents,
         )
 
         event = build_safe_audit_event(
@@ -701,12 +807,16 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
         except MissingArtifactReferenceError:
             return make_work_outcome(work_id, ordinal, WorkOutcomeKind.INFRASTRUCTURE_FAILURE)
 
+        # MEGB-03H.2C.3B.2B.2 correction: finalize (idempotently) BEFORE
+        # ack, not after -- queue acknowledgement must happen only once
+        # the committed-state and accounting invariants both hold. If the
+        # process is interrupted here (after commit_result, before or
+        # during finalize/ack), no ack has occurred, so at-least-once
+        # redelivery lands back in the RESULT_COMMITTED recovery branch
+        # above, which retries this same finalize step idempotently
+        # before acking.
+        self._finalize_from_commit(new_record)
         self._queue.ack(work_id)
-        try:
-            reservation = self._budget_store.get(new_record.reservation_id)
-            self._budget_store.finalize(new_record.reservation_id, reservation.requested_cost_cents)
-        except (ReservationNotFoundError, ReservationNotActiveError):
-            pass
 
         return make_work_outcome(
             work_id,
@@ -714,6 +824,25 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
             WorkOutcomeKind.EXECUTED_AND_COMMITTED,
             result_content_checksum=result_content_checksum,
         )
+
+    def _finalize_from_commit(self, record: AuthoritativeWorkRecord) -> None:
+        """Idempotently finalize ``record``'s bound budget reservation
+        using the exact ``actual_cost_cents`` already durably carried on
+        its own ``result_commit`` -- never re-derived from a separate
+        lookup. Safe to call more than once for the same record: a second
+        finalize on an already-``FINALIZED``/``RELEASED`` reservation
+        raises :class:`ReservationNotActiveError`
+        (:class:`~src.distributed.budget_store.AtomicBudgetStore.finalize`'s
+        own existing guarantee), swallowed here as an idempotent no-op --
+        double-finalization is structurally impossible, never merely
+        avoided by convention."""
+        assert record.result_commit is not None
+        try:
+            self._budget_store.finalize(
+                record.reservation_id, record.result_commit.actual_cost_cents
+            )
+        except (ReservationNotFoundError, ReservationNotActiveError):
+            pass
 
     # ------------------------------------------------------------------
     # Lease heartbeat/renewal

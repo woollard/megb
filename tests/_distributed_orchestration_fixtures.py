@@ -135,6 +135,7 @@ def make_result_commit(attempt: ExecutionAttempt | None = None, **overrides: Any
         "lease_generation": attempt.lease_generation,
         "result_content_checksum": make_sha256("result-content"),
         "result_artifact_reference": make_result_artifact_reference(),
+        "actual_cost_cents": 0,
     }
     fields.update(overrides)
     return ResultCommit(**fields)

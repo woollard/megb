@@ -69,7 +69,7 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `PROMOTION_SUMMARY_SCHEMA_VERSION` | `megb-03h5-promotion-summary-v1` | `h5_promotion.py` | `PromotionSummary` field shape — the safe, allowlisted, committed-output-suitable promotion report. See "MEGB-03H.2B.2 addendum" below. |
 | `CALIBRATION_SCHEMA_VERSION` | `megb-03h-calibration-record-v2` | `calibration_schema.py` | `CalibrationRunContext`/`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` field shape. **v1→v2**: v1 had no persisted telemetry-collection-policy, host/runtime, or per-metric collector-method provenance — see "MEGB-03H.2C.2A addendum" below. (Introduced by MEGB-03H.2A; this row itself was missing from this registry until the H.2C.2A correction pass — a registry-currency gap, not a second schema change.) |
 | `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` | `megb-03h2c3b1-distributed-provenance-v1` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` provenance/identity type (`DistributedRunContext`, `WorkerExecutionContext`, `RetryLeasePolicy`, `MixedWorkerProvenanceSummary`, `QualificationIdentity`, `ProductionIdentityProjection`, `AggregateProductionIdentityProjection`, `SafeRedactedSummary`, `ProtectedOperationalMapping`). Introduced by MEGB-03H.2C.3B.1; this row itself was missing from this registry until this MEGB-03H.2C.3B.2A pass — a registry-currency gap, not a schema change. See "MEGB-03H.2C.3B addendum" below. |
-| `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` | `megb-03h2c3b2b1-distributed-orchestration-v2` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` orchestration-contract type (`ArtifactReference`, `WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`, `ExecutionAttempt`, `ResultCommit`, `Acknowledgement`, `TerminalDisposition`, `WorkerRegistration`, `Lease`, `LeaseRenewal`, `PersonalEnvironmentPolicy`, `SafeAuditEvent`) — a schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` above. **v1→v2**: v1's `PersonalEnvironmentPolicy.spending_ceiling_usd` was a `float`, and `ArtifactReference.artifact_checksum` bound content only, not classification metadata — see "MEGB-03H.2C.3B.2B.1 addendum" below. Introduced by MEGB-03H.2C.3B.2A; corrected by MEGB-03H.2C.3B.2B.1. See "MEGB-03H.2C.3B addendum" and "MEGB-03H.2C.3B.2B.1 addendum" below. |
+| `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` | `megb-03h2c3b2b2-distributed-orchestration-v3` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` orchestration-contract type (`ArtifactReference`, `WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`, `ExecutionAttempt`, `ResultCommit`, `Acknowledgement`, `TerminalDisposition`, `WorkerRegistration`, `Lease`, `LeaseRenewal`, `PersonalEnvironmentPolicy`, `SafeAuditEvent`) — a schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` above. **v1→v2**: v1's `PersonalEnvironmentPolicy.spending_ceiling_usd` was a `float`, and `ArtifactReference.artifact_checksum` bound content only, not classification metadata — see "MEGB-03H.2C.3B.2B.1 addendum" below. **v2→v3**: `TerminalDispositionReason` gained `NON_RETRYABLE_EXECUTOR_FAILURE`, and `ResultCommit` gained a required `actual_cost_cents` field — see "MEGB-03H.2C.3B.2B.2 correction addendum" below. Introduced by MEGB-03H.2C.3B.2A; corrected by MEGB-03H.2C.3B.2B.1 and MEGB-03H.2C.3B.2B.2's own correction. See "MEGB-03H.2C.3B addendum", "MEGB-03H.2C.3B.2B.1 addendum", and "MEGB-03H.2C.3B.2B.2 correction addendum" below. |
 | `CHECKSUM_ALGORITHM_VERSION` (`src.distributed`) | `sha256-canonical-json-v1` | `src/distributed/_checksums.py` | The one checksum-derivation algorithm identity shared by **both** `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped types — sha256 over `json.dumps(payload, sort_keys=True)`. Deliberately the same name as no other constant in this table (`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` is a distinct, unrelated identity scoped to G.4's own synthetic workload checksum) — the two never collide because they are different Python identifiers in different modules; this row exists so this document's own registry is not silently incomplete about which module's `CHECKSUM_ALGORITHM_VERSION` it is describing. Introduced by MEGB-03H.2C.3B.1; unchanged by MEGB-03H.2C.3B.2A, which reuses it rather than defining a second one. See "MEGB-03H.2C.3B addendum" below. |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
@@ -592,6 +592,85 @@ touches any `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped type's
 field shape, so neither contributes to, or is covered by, this v1→v2
 bump — recorded here only to make clear why *not* every change in this
 checkpoint required one.
+
+## MEGB-03H.2C.3B.2B.2 correction addendum: `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` v2→v3
+
+This registry's own "MEGB-03H.2C.3B.2B.1 addendum" above predates this
+addendum; recorded here rather than by rewriting that prose, per this
+project's established convention.
+
+**Why v3 exists.** The MEGB-03H.2C.3B.2B.2 checkpoint's own narrow
+correction (four semantic issues, authorized after the original B.2B.2
+checkpoint report but before its acceptance) found two more field-shape/
+legal-value-set changes to already-versioned orchestration types:
+
+1. `TerminalDispositionReason` (`work_contracts.py`) reused
+   `RETRY_CEILING_EXCEEDED` for both genuine retry-ceiling exhaustion *and*
+   a terminal (non-retryable) executor failure dead-lettered on its very
+   first attempt — a semantically false disposition reason for the latter
+   case, since no retry ceiling was ever actually exceeded. A new member,
+   `NON_RETRYABLE_EXECUTOR_FAILURE`, is added; `RETRY_CEILING_EXCEEDED` is
+   now reserved for genuine `retry_count >= retry_limit` exhaustion.
+2. `ResultCommit` (`work_contracts.py`) gained a new required field,
+   `actual_cost_cents: int` — the exact integer-cent amount to finalize
+   against the bound budget reservation, now carried directly on the
+   durable, checksum-bound committed-result record itself, so it is
+   recoverable from authoritative state after a crash between result
+   commit and budget finalization without re-deriving it from a separate,
+   independently-mutable budget store (whose own reservation may already
+   have moved to `FINALIZED`/`RELEASED` by the time a recovering caller
+   looks). `reconcile_result_commit` was correspondingly tightened: two
+   commits sharing the same `result_content_checksum` but claiming
+   different `actual_cost_cents` now raise `ConflictingResultCommitError`
+   rather than reconciling as an idempotent duplicate — a replay must
+   never be able to change the amount finalized against an
+   already-committed result.
+
+Both are field-shape changes to already-versioned, self-checksummed
+orchestration types, so this schema family bumps `v2`
+(`megb-03h2c3b2b1-distributed-orchestration-v2`) to `v3`
+(`megb-03h2c3b2b2-distributed-orchestration-v3`) rather than claiming
+either correction is additive.
+
+**No other orchestration type's field shape changed.** `ArtifactReference`,
+`WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`,
+`ExecutionAttempt`, `Acknowledgement`, `TerminalDisposition` (the type
+itself — only the closed set of legal `TerminalDispositionReason` values it
+may carry grew), `WorkerRegistration`, `Lease`, `LeaseRenewal`,
+`PersonalEnvironmentPolicy`, and `SafeAuditEvent` are unchanged by this
+correction; they are re-stamped with the same shared
+`DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` constant purely because it is
+one schema family with one shared version counter.
+
+**No migration performed; stale v2 is rejected, not reinterpreted.** A
+repository-wide search (`grep -rl` across every `.json`/`.jsonl` file for
+either literal schema-version string) confirmed no persisted
+`src/distributed/` orchestration artifact of v1, v2, or v3 exists anywhere
+— no queue, store, or coordinator implementation persists or transmits one
+across a process boundary yet (durable persistence remains out of scope
+until a separately authorized checkpoint). `require_orchestration_schema_version`
+rejects the literal prior v2 string
+(`megb-03h2c3b2b1-distributed-orchestration-v2`) exactly as it already
+rejects v1 and any other unrecognized version string; a dedicated
+regression test (`tests/test_distributed_work_contracts.py`) asserts this
+for `ResultCommit`, the type whose shape actually changed, alongside a
+companion v3 round-trip test.
+
+**Two additive, non-versioned changes in the same correction, recorded
+here only to make clear why they do *not* contribute to this v2→v3 bump:**
+(1) `CoordinatorConfig` (`coordinator_config.py`, never itself schema-
+versioned) no longer hardcodes the personal-bootstrap 2-worker ceiling —
+`max_admitted_workers` is now only required to be a positive int, with the
+personal-environment ceiling enforced independently by
+`PersonalEnvironmentPolicy`/`evaluate_admission` (unchanged) plus a new
+structural cross-check at `Coordinator.__init__` (`config.max_admitted_workers`
+must not exceed the injected policy's own ceiling); (2) `InMemoryAuditOutbox`
+(`audit_outbox.py`, never itself schema-versioned — in-process outbox
+bookkeeping) gained a third entry-lifecycle state, `ABANDONED`, alongside
+`PENDING`/`DELIVERED`, for a reconciliation clause made permanently
+impossible by a lost CAS/conflicting commit/cancellation/terminal
+transition. Neither touches any `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-
+stamped type's field shape.
 
 ## Cache key: complete field list
 

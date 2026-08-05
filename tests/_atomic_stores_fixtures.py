@@ -92,6 +92,7 @@ def make_result_commit(
         "lease_generation": attempt.lease_generation,
         "result_content_checksum": hashlib.sha256(content).hexdigest(),
         "result_artifact_reference": make_result_artifact_reference(content),
+        "actual_cost_cents": 0,
     }
     fields.update(overrides)
     return ResultCommit(**fields)

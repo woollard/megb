@@ -22,6 +22,7 @@ import pytest
 from src.distributed._checksums import InvalidDistributedProvenanceError
 from src.distributed.coordinator_config import CoordinatorConfig
 from src.distributed.executor import ExecutorInvocationResult, executor_success
+from src.distributed.provenance import EnvironmentClass
 from src.distributed.work_outcome import WorkOutcome, WorkOutcomeKind, build_run_summary
 from tests._coordinator_fixtures import (
     ScriptedExecutor,
@@ -36,18 +37,80 @@ from tests._coordinator_fixtures import (
 _TRIALS = 10
 
 
-def test_config_rejects_more_than_the_personal_ceiling() -> None:
-    """Test config rejects more than the personal ceiling -- two
-    workers, enforced technically at construction time."""
+def test_config_alone_permits_more_than_the_personal_ceiling() -> None:
+    """MEGB-03H.2C.3B.2B.2 correction: CoordinatorConfig itself is
+    provider-neutral and no longer hardcodes the personal-bootstrap
+    2-worker ceiling -- constructing one with max_admitted_workers=4
+    must not raise. The personal ceiling is enforced elsewhere (by
+    PersonalEnvironmentPolicy and the Coordinator construction-time
+    cross-check below), never by this config type alone."""
+    config = CoordinatorConfig(
+        max_admitted_workers=4,
+        max_in_flight_work=10,
+        lease_duration_ticks=5,
+        visibility_timeout_ticks=5,
+        heartbeat_interval_ticks=2,
+        audit_outbox_max_pending=10,
+    )
+    assert config.max_admitted_workers == 4
+
+
+def test_coordinator_construction_rejects_config_ceiling_above_personal_policy() -> None:
+    """A personal run configured above two is rejected before admission
+    -- at Coordinator construction time, before any admit() call, when
+    the config's own concurrency ceiling exceeds the injected
+    personal-bootstrap policy's own max_admitted_workers."""
+    env = build_environment(max_admitted_workers=2)
+    higher_config = make_default_config(max_admitted_workers=3, max_in_flight_work=10)
     with pytest.raises(InvalidDistributedProvenanceError):
-        CoordinatorConfig(
-            max_admitted_workers=3,
-            max_in_flight_work=10,
-            lease_duration_ticks=5,
-            visibility_timeout_ticks=5,
-            heartbeat_interval_ticks=2,
-            audit_outbox_max_pending=10,
-        )
+        env.make_coordinator(ScriptedExecutor(), config=higher_config)
+
+
+def test_coordinator_construction_accepts_matching_personal_ceiling() -> None:
+    """The companion positive case: a config exactly at the personal
+    ceiling constructs without error."""
+    env = build_environment(max_admitted_workers=2)
+    coordinator = env.make_coordinator(ScriptedExecutor())
+    assert coordinator is not None
+
+
+def test_generic_engine_runs_at_concurrency_four_while_personal_policy_still_refuses_it() -> None:
+    """The provider-neutral engine itself supports a bounded concurrency
+    greater than two: a coordinator wired to a non-personal-bootstrap
+    policy (a synthetic test fixture only -- not a company-authorization
+    policy, which remains separately gated and not authorized here) with
+    max_admitted_workers=4 constructs and runs four concurrent workers
+    successfully, while a personal-bootstrap policy at the same
+    CoordinatorConfig ceiling still refuses to construct at all."""
+    generic_env = build_environment(
+        max_admitted_workers=4,
+        max_in_flight_work=10,
+        policy_environment_class=EnvironmentClass.COMPANY_PLAYGROUND,
+    )
+    assert generic_env.policy.max_admitted_workers == 4
+    for worker_id in ("worker-a", "worker-b", "worker-c", "worker-d"):
+        generic_env.worker_registry.register(make_worker_registration(worker_id))
+    coordinator = generic_env.make_coordinator(ScriptedExecutor())
+
+    admissions = []
+    for ordinal in range(4):
+        work_id = f"work-{ordinal}"
+        content = make_synthetic_content(work_id)
+        reference = publish_candidate(generic_env.artifact_store, content, reference_id=work_id)
+        descriptor = make_work_descriptor(work_id, ordinal, reference)
+        admissions.append((descriptor, f"res-{ordinal}", 100, 1))
+
+    summary = coordinator.run(
+        admissions, ["worker-a", "worker-b", "worker-c", "worker-d"]
+    )
+    assert summary.count(WorkOutcomeKind.EXECUTED_AND_COMMITTED) == 4
+
+    # The same CoordinatorConfig ceiling (4) still cannot be paired with a
+    # personal-bootstrap policy (ceiling 2) -- rejected at construction.
+    personal_env = build_environment(max_admitted_workers=2)
+    higher_config = make_default_config(max_admitted_workers=4, max_in_flight_work=10)
+    with pytest.raises(InvalidDistributedProvenanceError):
+        personal_env.make_coordinator(ScriptedExecutor(), config=higher_config)
 
 
 def test_run_refuses_more_worker_ids_than_configured_ceiling() -> None:

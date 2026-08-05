@@ -18,6 +18,8 @@ from src.distributed.personal_policy import (
     DataClassification,
     WorkloadClass,
 )
+from src.distributed.safe_audit import SafeAuditEventType, build_safe_audit_event
+from src.distributed.state_machine import WorkItemState
 from src.distributed.work_outcome import WorkOutcomeKind
 from tests._coordinator_fixtures import (
     ScriptedExecutor,
@@ -251,6 +253,72 @@ def test_cancellation_before_admission_is_observed() -> None:
     assert outcome is not None
     assert outcome.outcome_kind == WorkOutcomeKind.CANCELLED_NOT_STARTED
     assert env.queue.in_flight_count() == 0
+
+
+def test_admission_audit_intent_exists_before_queue_publication() -> None:
+    """MEGB-03H.2C.3B.2B.2 correction: the admission audit intent is
+    enqueued BEFORE queue.publish, not after -- so once a work item is
+    queue-visible, a matching audit intent is already present. Proven
+    directly against the outbox's own entries."""
+    env = build_environment()
+    content = make_synthetic_content("l")
+    reference = publish_candidate(env.artifact_store, content)
+    descriptor = make_work_descriptor("work-1", 0, reference)
+    coordinator = env.make_coordinator(ScriptedExecutor())
+    outcome = coordinator.admit(
+        descriptor, reservation_id="res-1", requested_cost_cents=100, requested_worker_count=1
+    )
+    assert outcome is None
+    assert env.queue.in_flight_count() == 1
+    matching = [
+        entry for entry in env.audit_outbox.entries() if entry.outbox_key == "admitted:work-1"
+    ]
+    assert len(matching) == 1
+
+
+def test_admission_refused_when_audit_outbox_is_at_capacity_before_publication() -> None:
+    """MEGB-03H.2C.3B.2B.2 correction: a queue-visible work item must
+    never exist without either a matching audit intent or a typed,
+    recoverable reconciliation state. When the audit outbox is already at
+    capacity, admission is refused BEFORE queue.publish is ever called --
+    the authoritative work record is still created (idempotently
+    re-creatable) but never published, diagnosable as
+    ADMITTED_NOT_PUBLISHED, never left unaudited-but-queue-visible."""
+    env = build_environment(audit_outbox_max_pending=1)
+    filler_event = build_safe_audit_event(
+        event_type=SafeAuditEventType.WORK_ADMITTED,
+        work_reference="filler-work",
+        safe_run_identity="env-logical-0000000000000001",
+        state_after=WorkItemState.PENDING_AVAILABLE,
+        logical_timestamp=0,
+    )
+    env.audit_outbox.enqueue("filler-key", filler_event)  # occupies the only pending slot
+
+    content = make_synthetic_content("m")
+    reference = publish_candidate(env.artifact_store, content)
+    descriptor = make_work_descriptor("work-1", 0, reference)
+    coordinator = env.make_coordinator(ScriptedExecutor())
+    outcome = coordinator.admit(
+        descriptor, reservation_id="res-1", requested_cost_cents=100, requested_worker_count=1
+    )
+    assert outcome is not None
+    assert outcome.outcome_kind == WorkOutcomeKind.INFRASTRUCTURE_FAILURE
+    assert env.queue.in_flight_count() == 0
+    assert not any(
+        entry.outbox_key == "admitted:work-1" for entry in env.audit_outbox.entries()
+    )
+    assert (
+        diagnose_work_publication_binding(env.work_store, env.queue, "work-1")
+        == WorkPublicationDisposition.ADMITTED_NOT_PUBLISHED
+    )
+    # Recoverable: once outbox capacity frees up, re-admitting the same
+    # descriptor (create_if_absent is idempotent) proceeds to publish.
+    env.audit_outbox.dispatch_pending(env.audit_sink, env.work_store)
+    retry_outcome = coordinator.admit(
+        descriptor, reservation_id="res-1", requested_cost_cents=100, requested_worker_count=1
+    )
+    assert retry_outcome is None
+    assert env.queue.in_flight_count() == 1
 
 
 def test_worker_registration_is_independent_of_admission() -> None:

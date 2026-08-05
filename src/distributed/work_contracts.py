@@ -513,7 +513,17 @@ class ResultCommit:
     that produce byte-identical results share the same
     ``result_content_checksum`` -- the **result-content identity**,
     distinct from both the scientific work identity and the execution
-    attempt identity that produced it."""
+    attempt identity that produced it.
+
+    **MEGB-03H.2C.3B.2B.2 correction (``DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION``
+    v2->v3):** ``actual_cost_cents`` is new -- the exact integer-cent cost
+    to finalize against the bound budget reservation, now carried directly
+    on this durable, checksum-bound record rather than re-derived from a
+    separate, independently-mutable budget store after the fact. This is
+    what makes budget finalization recoverable: once a result is committed,
+    the exact amount to finalize is authoritative state, not something a
+    recovering caller must re-look-up (and could find already changed, or
+    gone, by the time it looks)."""
 
     distributed_orchestration_schema_version: str
     checksum_algorithm_version: str
@@ -522,6 +532,7 @@ class ResultCommit:
     lease_generation: int
     result_content_checksum: str
     result_artifact_reference: ArtifactReference
+    actual_cost_cents: int
     commit_checksum: str = ""
 
     def __post_init__(self) -> None:
@@ -541,6 +552,7 @@ class ResultCommit:
                 "result_artifact_reference must have artifact_kind=RESULT_ARTIFACT, got "
                 f"{self.result_artifact_reference.artifact_kind!r}"
             )
+        _require_non_negative_int(self, "actual_cost_cents")
         payload = _result_commit_payload(self)
         expected_checksum = _sha256_of(payload)
         if self.commit_checksum and self.commit_checksum != expected_checksum:
@@ -563,6 +575,7 @@ def _result_commit_payload(commit: ResultCommit) -> dict[str, Any]:
         "lease_generation": commit.lease_generation,
         "result_content_checksum": commit.result_content_checksum,
         "result_artifact_reference": artifact_reference_to_dict(commit.result_artifact_reference),
+        "actual_cost_cents": commit.actual_cost_cents,
     }
 
 
@@ -591,11 +604,17 @@ def reconcile_result_commit(
     """Reconcile ``incoming`` against ``existing`` (``None`` if this work
     item has no durable commit yet). Returns ``ACCEPTED_NEW`` when there
     is no prior commit; returns ``IDEMPOTENT_DUPLICATE`` when
-    ``incoming.result_content_checksum`` matches an existing commit's
-    (the crash-after-commit-before-ack / duplicate-delivery case,
-    reconciled idempotently); raises :class:`ConflictingResultCommitError`
-    when the two commits' ``result_content_checksum`` values differ --
-    conflicting commits must never silently overwrite one another."""
+    ``incoming.result_content_checksum`` **and** ``incoming.actual_cost_cents``
+    both match an existing commit's (the crash-after-commit-before-ack /
+    duplicate-delivery case, reconciled idempotently); raises
+    :class:`ConflictingResultCommitError` when the two commits'
+    ``result_content_checksum`` values differ, **or** when the content
+    checksum matches but ``actual_cost_cents`` differs -- two commits
+    claiming byte-identical results at two different costs is exactly as
+    much a conflict as two commits claiming different results, since
+    accepting either silently would let a replay change the amount
+    finalized against a durable, already-committed result. Conflicting
+    commits must never silently overwrite one another."""
     if existing is None:
         return ResultCommitReconciliation.ACCEPTED_NEW
     if existing.scientific_work_id != incoming.scientific_work_id:
@@ -604,13 +623,20 @@ def reconcile_result_commit(
             f"scientific_work_id, got {existing.scientific_work_id!r} and "
             f"{incoming.scientific_work_id!r}"
         )
-    if existing.result_content_checksum == incoming.result_content_checksum:
-        return ResultCommitReconciliation.IDEMPOTENT_DUPLICATE
-    raise ConflictingResultCommitError(
-        f"conflicting result commit for scientific_work_id {incoming.scientific_work_id!r}: "
-        f"existing result_content_checksum {existing.result_content_checksum!r} != incoming "
-        f"{incoming.result_content_checksum!r} -- refusing to overwrite"
-    )
+    if existing.result_content_checksum != incoming.result_content_checksum:
+        raise ConflictingResultCommitError(
+            f"conflicting result commit for scientific_work_id {incoming.scientific_work_id!r}: "
+            f"existing result_content_checksum {existing.result_content_checksum!r} != incoming "
+            f"{incoming.result_content_checksum!r} -- refusing to overwrite"
+        )
+    if existing.actual_cost_cents != incoming.actual_cost_cents:
+        raise ConflictingResultCommitError(
+            f"conflicting result commit for scientific_work_id {incoming.scientific_work_id!r}: "
+            f"identical result_content_checksum but existing actual_cost_cents "
+            f"{existing.actual_cost_cents!r} != incoming {incoming.actual_cost_cents!r} -- "
+            "refusing to overwrite"
+        )
+    return ResultCommitReconciliation.IDEMPOTENT_DUPLICATE
 
 
 @dataclass(frozen=True)
@@ -702,12 +728,26 @@ class TerminalDispositionReason(str, Enum):
     """Closed set of reasons a terminal disposition was reached -- never
     free-form diagnostic text, per the authorization's own "terminal
     disposition is typed and closed, with no free-form diagnostic in
-    safe records" requirement."""
+    safe records" requirement.
+
+    **MEGB-03H.2C.3B.2B.2 correction (``DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION``
+    v2->v3):** ``NON_RETRYABLE_EXECUTOR_FAILURE`` is new. The B.2B.2
+    checkpoint's own coordinator originally dead-lettered a *terminal*
+    (non-retryable) executor failure by reusing ``RETRY_CEILING_EXCEEDED`` --
+    a semantically false reason for a work item that never actually
+    exhausted a retry budget (it may dead-letter on its very first attempt).
+    ``RETRY_CEILING_EXCEEDED`` now means exactly what it says: retries were
+    genuinely attempted and exhausted (``retry_count >= retry_limit``);
+    ``NON_RETRYABLE_EXECUTOR_FAILURE`` means the executor itself reported a
+    failure its own closed taxonomy
+    (:class:`~src.distributed.executor.ExecutorFailureReason`) marks
+    non-retryable, regardless of how many attempts had been made."""
 
     NORMAL_COMPLETION = "NORMAL_COMPLETION"
     USER_REQUESTED_CANCELLATION = "USER_REQUESTED_CANCELLATION"
     RETRY_CEILING_EXCEEDED = "RETRY_CEILING_EXCEEDED"
     LEASE_REASSIGNMENT_LIMIT_EXCEEDED = "LEASE_REASSIGNMENT_LIMIT_EXCEEDED"
+    NON_RETRYABLE_EXECUTOR_FAILURE = "NON_RETRYABLE_EXECUTOR_FAILURE"
 
 
 @dataclass(frozen=True)

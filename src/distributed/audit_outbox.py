@@ -34,15 +34,44 @@ recoverable two-step protocol this project's own reservation/work-creation
 correction already established, applied to audit intent instead of budget
 reservation.
 
-**Consequence:** a crash between ``enqueue`` and the authoritative
-mutation leaves a permanently PENDING, never-reconciling, harmless orphan
-entry (analogous to an orphaned, unreferenced result artifact) -- it is
-never delivered, and its presence never implies the mutation happened.
-Audit-sink failure after a real, successful mutation leaves the entry
-PENDING for retry, without altering authoritative state or re-invoking any
-executor -- dispatch never calls any state-mutating method, only
-``read()``. No change to any accepted B.2A/B.2B.1 contract was needed."""
+**Consequence, before this checkpoint's own correction:** a crash between
+``enqueue`` and the authoritative mutation left a permanently PENDING,
+never-reconciling orphan entry -- never delivered, but also never freed
+from the outbox's own bounded ``max_pending`` capacity. That is harmless
+only if such orphans are rare relative to ``max_pending``; a build-up of
+genuinely-impossible-to-reconcile entries could, in principle, exhaust
+outbox capacity and deadlock the coordinator's own admission-audit path
+(``enqueue`` raising :class:`AuditOutboxFullError` forever). Audit-sink
+failure after a real, successful mutation leaves the entry PENDING for
+retry, without altering authoritative state or re-invoking any executor --
+dispatch never calls any state-mutating method, only ``read()``. No change
+to any accepted B.2A/B.2B.1 contract was needed for either.
 
+**MEGB-03H.2C.3B.2B.2 correction: a third lifecycle state,** ``ABANDONED``,
+closes this gap. :meth:`InMemoryAuditOutbox.dispatch_pending` now
+distinguishes, for each PENDING entry with a reconciliation clause, three
+outcomes rather than two: **reconciled** (deliver now), **still possible**
+(leave PENDING -- the authoritative record has not yet reached, and could
+still reach, a state that would satisfy the clause), and **permanently
+impossible** (mark ``ABANDONED`` -- the record has already reached a
+terminal or result-locked state -- ``CANCELLED``, ``DEAD_LETTERED``,
+``ACKNOWLEDGED_COMPLETED``, or ``RESULT_COMMITTED`` with a *different*
+result-content checksum than the clause names -- that can never again
+change to satisfy this clause, since the state machine has no outgoing
+edge from any of those back toward one that could). ``ABANDONED`` entries
+no longer count toward ``pending_count()``/backpressure, closing the
+deadlock risk, while never retroactively delivering an event whose
+authoritative mutation never durably happened -- abandonment is
+determined lazily, at dispatch time, from the *authoritative record's own
+current state*, never guessed eagerly by the caller that enqueued the
+intent. This mirrors, rather than contradicts, the "orphaned intent for a
+lost CAS is harmless" finding above: an entry bound to a work item that
+never leaves a non-terminal state (e.g. the CAS was simply never attempted)
+correctly remains PENDING forever, exactly as originally documented; only
+an entry whose authoritative record has *provably* moved somewhere that
+forecloses the clause is now reclassified out of PENDING."""
+
+import dataclasses
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -51,11 +80,18 @@ from src.distributed._checksums import (
     InvalidDistributedProvenanceError,
     require_nonempty_str as _require_nonempty_str,
 )
-from src.distributed.atomic_work_store import WorkRecordNotFoundError
+from src.distributed.atomic_work_store import AuthoritativeWorkRecord, WorkRecordNotFoundError
 from src.distributed.audit_sink_store import AuditSinkFailureError
 from src.distributed.protocols import AtomicWorkStoreProtocol, AuditSinkProtocol
 from src.distributed.safe_audit import SafeAuditEvent
-from src.distributed.state_machine import WorkItemState
+from src.distributed.state_machine import WorkItemState, is_terminal
+
+# States a reconciliation clause can never escape once the authoritative
+# record reaches one of them -- see this module's own docstring for why
+# each is a dead end for every clause shape this outbox supports.
+_RESULT_LOCKED_STATES = frozenset(
+    {WorkItemState.RESULT_COMMITTED, WorkItemState.ACKNOWLEDGED_COMPLETED}
+)
 
 
 class AuditOutboxFullError(InvalidDistributedProvenanceError):
@@ -65,10 +101,24 @@ class AuditOutboxFullError(InvalidDistributedProvenanceError):
 
 
 class AuditOutboxEntryStatus(str, Enum):
-    """Closed set of outbox entry states."""
+    """Closed set of outbox entry states.
+
+    **MEGB-03H.2C.3B.2B.2 correction:** ``ABANDONED`` is new -- see this
+    module's own docstring for the lifecycle-deadlock gap it closes."""
 
     PENDING = "PENDING"
     DELIVERED = "DELIVERED"
+    ABANDONED = "ABANDONED"
+
+
+class _ReconciliationOutcome(str, Enum):
+    """Internal, non-persisted tri-state result of evaluating one entry's
+    reconciliation clause against the authoritative record's current
+    state -- never itself stored or serialized."""
+
+    RECONCILED = "RECONCILED"
+    STILL_POSSIBLE = "STILL_POSSIBLE"
+    IMPOSSIBLE = "IMPOSSIBLE"
 
 
 @dataclass(frozen=True)
@@ -120,11 +170,14 @@ class AuditOutboxEntry:
 @dataclass(frozen=True)
 class AuditDispatchSummary:
     """The outcome of one :meth:`InMemoryAuditOutbox.dispatch_pending`
-    call."""
+    call. ``abandoned_keys`` (MEGB-03H.2C.3B.2B.2 correction) lists
+    entries newly marked ``ABANDONED`` during this call -- their
+    reconciliation clause became permanently impossible to satisfy."""
 
     delivered_keys: tuple[str, ...]
     still_pending_keys: tuple[str, ...]
     sink_failed_keys: tuple[str, ...]
+    abandoned_keys: tuple[str, ...] = ()
 
 
 class InMemoryAuditOutbox:
@@ -180,41 +233,81 @@ class InMemoryAuditOutbox:
             self._entries[outbox_key] = entry
             return entry
 
-    def _reconciles_locked(
+    def _evaluate_reconciliation_locked(  # pylint: disable=too-many-return-statements
         self, entry: AuditOutboxEntry, work_store: AtomicWorkStoreProtocol
-    ) -> bool:
+    ) -> _ReconciliationOutcome:
+        """Determine, deterministically and idempotently, whether
+        ``entry``'s reconciliation clause is currently satisfied, still
+        possibly satisfiable in the future, or permanently impossible --
+        based solely on ``work_store``'s own current authoritative state
+        for the named work item, read fresh via ``read()`` (never
+        mutated)."""
         if entry.reconciliation_scientific_work_id is None:
-            return True
+            return _ReconciliationOutcome.RECONCILED
         try:
             record = work_store.read(entry.reconciliation_scientific_work_id)
         except WorkRecordNotFoundError:
-            return False
-        if (
-            entry.reconciliation_expected_state is not None
-            and record.state != entry.reconciliation_expected_state
-        ):
-            return False
+            # Not yet created -- may still be created later (or never,
+            # which is the harmless, permanently-PENDING orphan case this
+            # module's own docstring already documents).
+            return _ReconciliationOutcome.STILL_POSSIBLE
+        state_satisfied = self._expected_state_satisfied(entry, record)
+        if not state_satisfied:
+            # A terminal/result-locked state that does not satisfy the
+            # clause can never later satisfy it -- no outgoing edge leads
+            # back toward a state that could.
+            if is_terminal(record.state) or record.state in _RESULT_LOCKED_STATES:
+                return _ReconciliationOutcome.IMPOSSIBLE
+            return _ReconciliationOutcome.STILL_POSSIBLE
         if entry.reconciliation_expected_result_content_checksum is not None:
+            if record.result_commit is None:
+                if is_terminal(record.state):
+                    # Reached a terminal state (CANCELLED/DEAD_LETTERED)
+                    # without ever committing a result -- this checksum
+                    # clause can never be satisfied now.
+                    return _ReconciliationOutcome.IMPOSSIBLE
+                return _ReconciliationOutcome.STILL_POSSIBLE
             if (
-                record.result_commit is None
-                or record.result_commit.result_content_checksum
+                record.result_commit.result_content_checksum
                 != entry.reconciliation_expected_result_content_checksum
             ):
-                return False
-        return True
+                # A different result was already durably, permanently
+                # committed for this work item -- this checksum clause
+                # can never be satisfied.
+                return _ReconciliationOutcome.IMPOSSIBLE
+        return _ReconciliationOutcome.RECONCILED
+
+    @staticmethod
+    def _expected_state_satisfied(
+        entry: AuditOutboxEntry, record: AuthoritativeWorkRecord
+    ) -> bool:
+        expected = entry.reconciliation_expected_state
+        if expected is None:
+            return True
+        if expected == WorkItemState.RESULT_COMMITTED:
+            # A result, once committed, remains committed under
+            # ACKNOWLEDGED_COMPLETED too (same result_commit, per the
+            # state machine's own RESULT_COMMITTED -> ACKNOWLEDGED_COMPLETED
+            # edge) -- the clause means "the result was committed," not
+            # "the record is captured mid-transition."
+            return record.state in _RESULT_LOCKED_STATES
+        return record.state == expected
 
     def dispatch_pending(
         self, sink: AuditSinkProtocol, work_store: AtomicWorkStoreProtocol
     ) -> AuditDispatchSummary:
         """Attempt to deliver every currently PENDING, reconciling entry
         to ``sink``. Never mutates ``work_store`` -- only ``read()``.
-        A sink failure leaves that entry PENDING (retryable later);
-        an entry whose reconciliation clause does not (yet, or ever)
+        A sink failure leaves that entry PENDING (retryable later); an
+        entry whose reconciliation clause does not yet, but still could,
         match ``work_store``'s current state is left PENDING without
-        even attempting delivery."""
+        attempting delivery; an entry whose clause has become permanently
+        impossible to satisfy is marked ``ABANDONED`` -- freed from
+        pending capacity, never delivered."""
         delivered: list[str] = []
         still_pending: list[str] = []
         sink_failed: list[str] = []
+        abandoned: list[str] = []
         with self._lock:
             pending_keys = [
                 key
@@ -223,7 +316,14 @@ class InMemoryAuditOutbox:
             ]
             for key in pending_keys:
                 entry = self._entries[key]
-                if not self._reconciles_locked(entry, work_store):
+                outcome = self._evaluate_reconciliation_locked(entry, work_store)
+                if outcome == _ReconciliationOutcome.IMPOSSIBLE:
+                    self._entries[key] = dataclasses.replace(
+                        entry, status=AuditOutboxEntryStatus.ABANDONED
+                    )
+                    abandoned.append(key)
+                    continue
+                if outcome == _ReconciliationOutcome.STILL_POSSIBLE:
                     still_pending.append(key)
                     continue
                 try:
@@ -231,31 +331,26 @@ class InMemoryAuditOutbox:
                 except AuditSinkFailureError:
                     sink_failed.append(key)
                     continue
-                self._entries[key] = AuditOutboxEntry(
-                    outbox_key=entry.outbox_key,
-                    event=entry.event,
-                    status=AuditOutboxEntryStatus.DELIVERED,
-                    reconciliation_scientific_work_id=entry.reconciliation_scientific_work_id,
-                    reconciliation_expected_state=entry.reconciliation_expected_state,
-                    reconciliation_expected_result_content_checksum=(
-                        entry.reconciliation_expected_result_content_checksum
-                    ),
+                self._entries[key] = dataclasses.replace(
+                    entry, status=AuditOutboxEntryStatus.DELIVERED
                 )
                 delivered.append(key)
         return AuditDispatchSummary(
             delivered_keys=tuple(delivered),
             still_pending_keys=tuple(still_pending),
             sink_failed_keys=tuple(sink_failed),
+            abandoned_keys=tuple(abandoned),
         )
 
     def entries(self) -> tuple[AuditOutboxEntry, ...]:
-        """Every entry, delivered or pending, for reconciliation/
-        inspection."""
+        """Every entry, delivered, pending, or abandoned, for
+        reconciliation/inspection."""
         with self._lock:
             return tuple(self._entries.values())
 
     def pending_count(self) -> int:
-        """The current number of PENDING entries."""
+        """The current number of PENDING entries -- ``ABANDONED`` and
+        ``DELIVERED`` entries never count against backpressure."""
         with self._lock:
             return sum(
                 1

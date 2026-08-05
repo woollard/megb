@@ -43,7 +43,26 @@ CHECKSUM_ALGORITHM_VERSION = "sha256-canonical-json-v1"
 # to v2 rather than claiming the correction is additive. See
 # docs/reference/version-registry.md's "MEGB-03H.2C.3B addendum" for the
 # full v1->v2 reason and compatibility stance.
-DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION = "megb-03h2c3b2b1-distributed-orchestration-v2"
+#
+# MEGB-03H.2C.3B.2B.2 correction, v2->v3: this checkpoint's own narrow
+# correction found two more field-shape/legal-value-set changes to
+# already-versioned orchestration types: (1) TerminalDispositionReason
+# (src/distributed/work_contracts.py) gains a new member,
+# NON_RETRYABLE_EXECUTOR_FAILURE, distinguishing a terminal (non-retryable)
+# executor failure from genuine retry-ceiling exhaustion -- reusing
+# RETRY_CEILING_EXCEEDED for both was a semantically false disposition
+# reason for a work item dead-lettered on its very first attempt; (2)
+# ResultCommit gains a new required field, actual_cost_cents (exact integer
+# cents), so the authoritative, checksum-bound committed-result record
+# itself carries the exact amount to finalize -- recoverable after a crash
+# between result commit and budget finalization without re-deriving it from
+# a separately-locked, independently-mutable budget store. Both are
+# field-shape changes to already-versioned types, not merely additive ones,
+# so this schema family bumps to v3. See
+# docs/reference/version-registry.md's "MEGB-03H.2C.3B.2B.2 correction
+# addendum" for the full v2->v3 reason, the persisted-artifact search, and
+# the no-migration decision.
+DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION = "megb-03h2c3b2b2-distributed-orchestration-v3"
 
 
 class InvalidDistributedProvenanceError(ValueError):

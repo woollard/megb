@@ -15,11 +15,23 @@ from src.distributed._checksums import (
     DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
 )
 from src.distributed.atomic_work_store import AtomicWorkStore
-from src.distributed.audit_outbox import AuditOutboxFullError, InMemoryAuditOutbox
+from src.distributed.audit_outbox import (
+    AuditOutboxEntryStatus,
+    AuditOutboxFullError,
+    InMemoryAuditOutbox,
+)
 from src.distributed.audit_sink_store import InMemoryAuditSink
 from src.distributed.safe_audit import SafeAuditEvent, SafeAuditEventType, build_safe_audit_event
 from src.distributed.state_machine import WorkItemState
-from src.distributed.work_contracts import ExecutionAttempt, ResultCommit
+from src.distributed.work_contracts import (
+    CancellationRequest,
+    CancellationScope,
+    ExecutionAttempt,
+    ResultCommit,
+    TerminalDisposition,
+    TerminalDispositionKind,
+    TerminalDispositionReason,
+)
 from src.distributed.worker_contracts import Lease
 from tests._atomic_stores_fixtures import make_result_commit
 from tests._distributed_orchestration_fixtures import make_execution_attempt, make_sha256
@@ -154,7 +166,10 @@ def test_dispatch_never_delivers_an_orphaned_intent_for_a_lost_cas() -> None:
     """Test that an outbox intent written before a CAS that ultimately
     loses (a revision conflict) remains permanently pending -- harmless,
     never delivered, exactly mirroring an orphaned unreferenced result
-    artifact."""
+    artifact. The work item never leaves a non-terminal state here (the
+    CAS is simply never attempted), so this clause is still possible in
+    principle -- distinct from the genuinely-impossible cases below,
+    which correctly become ABANDONED instead."""
     outbox = InMemoryAuditOutbox(max_pending=5)
     sink = InMemoryAuditSink()
     work_store = AtomicWorkStore()
@@ -167,4 +182,205 @@ def test_dispatch_never_delivers_an_orphaned_intent_for_a_lost_cas() -> None:
     )
     summary = outbox.dispatch_pending(sink, work_store)
     assert summary.still_pending_keys == ("key-1",)
+    assert not summary.abandoned_keys
     assert not sink.events()
+
+
+# ---------------------------------------------------------------------------
+# MEGB-03H.2C.3B.2B.2 correction: ABANDONED lifecycle -- a reconciliation
+# clause made permanently impossible by a lost CAS/conflicting commit/
+# cancellation/terminal transition/replacement is reclassified out of
+# PENDING, freeing outbox capacity, never delivered.
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_abandons_entry_when_a_different_result_is_already_committed() -> None:
+    """A losing duplicate/competing commit's own pre-enqueued audit intent
+    (bound to a checksum that will never now occur, since a *different*
+    result was already durably, permanently committed) becomes ABANDONED,
+    not permanently PENDING -- the genuinely-impossible case this
+    correction distinguishes from the still-possible orphan above."""
+    outbox = InMemoryAuditOutbox(max_pending=5)
+    sink = InMemoryAuditSink()
+    work_store = AtomicWorkStore()
+    work_store.create_if_absent("work-1", _RUN_CTX, "res-1", lambda _rid: True)
+    lease = _make_lease("work-1")
+    work_store.acquire_lease("work-1", 0, lease, reservation_validator=lambda _rid: True)
+    work_store.transition_to_executing("work-1", 1)
+
+    # The losing side's own intent, enqueued before its commit attempt
+    # (which will never now succeed against the already-committed record).
+    outbox.enqueue(
+        "losing-key",
+        _event(),
+        reconciliation_scientific_work_id="work-1",
+        reconciliation_expected_state=WorkItemState.RESULT_COMMITTED,
+        reconciliation_expected_result_content_checksum="b" * 64,
+    )
+
+    # The winning commit actually lands, with a different result content
+    # (and therefore a different result_content_checksum) than "b" * 64.
+    winning_attempt = make_execution_attempt(
+        scientific_work_id="work-1",
+        worker_participant_id="worker-a",
+        lease_generation=1,
+        distributed_run_context_checksum=_RUN_CTX,
+    )
+    winning_commit = make_result_commit(winning_attempt, b"synthetic-winning-content")
+    work_store.commit_result(
+        "work-1", 2, winning_attempt, winning_commit, artifact_resolver=lambda _ref: True
+    )
+
+    summary = outbox.dispatch_pending(sink, work_store)
+    assert summary.abandoned_keys == ("losing-key",)
+    assert not summary.delivered_keys
+    assert not sink.events()
+    abandoned_entry = next(
+        entry for entry in outbox.entries() if entry.outbox_key == "losing-key"
+    )
+    assert abandoned_entry.status == AuditOutboxEntryStatus.ABANDONED
+
+
+def test_dispatch_abandons_entry_foreclosed_by_cancellation() -> None:
+    """An intent expecting RESULT_COMMITTED becomes ABANDONED once the
+    work item is cancelled instead -- CANCELLED is terminal and can never
+    transition to RESULT_COMMITTED."""
+    outbox = InMemoryAuditOutbox(max_pending=5)
+    sink = InMemoryAuditSink()
+    work_store = AtomicWorkStore()
+    work_store.create_if_absent("work-1", _RUN_CTX, "res-1", lambda _rid: True)
+    outbox.enqueue(
+        "key-1",
+        _event(),
+        reconciliation_scientific_work_id="work-1",
+        reconciliation_expected_state=WorkItemState.RESULT_COMMITTED,
+    )
+    request = CancellationRequest(
+        distributed_orchestration_schema_version=DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
+        checksum_algorithm_version=CHECKSUM_ALGORITHM_VERSION,
+        scientific_work_id="work-1",
+        cancellation_scope=CancellationScope.BEFORE_ADMISSION,
+        requested_at_logical_clock=0,
+    )
+    work_store.request_cancellation("work-1", 0, request)
+
+    summary = outbox.dispatch_pending(sink, work_store)
+    assert summary.abandoned_keys == ("key-1",)
+    assert not sink.events()
+
+
+def test_dispatch_abandons_entry_foreclosed_by_dead_lettering() -> None:
+    """An intent expecting a committed result becomes ABANDONED once the
+    work item dead-letters instead -- DEAD_LETTERED is terminal."""
+    outbox = InMemoryAuditOutbox(max_pending=5)
+    sink = InMemoryAuditSink()
+    work_store = AtomicWorkStore()
+    work_store.create_if_absent("work-1", _RUN_CTX, "res-1", lambda _rid: True)
+    outbox.enqueue(
+        "key-1",
+        _event(),
+        reconciliation_scientific_work_id="work-1",
+        reconciliation_expected_result_content_checksum="a" * 64,
+    )
+    lease = _make_lease("work-1")
+    work_store.acquire_lease("work-1", 0, lease, reservation_validator=lambda _rid: True)
+    work_store.mark_retryable("work-1", 1)
+    disposition = TerminalDisposition(
+        distributed_orchestration_schema_version=DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
+        checksum_algorithm_version=CHECKSUM_ALGORITHM_VERSION,
+        scientific_work_id="work-1",
+        disposition=TerminalDispositionKind.DEAD_LETTERED,
+        disposition_reason=TerminalDispositionReason.NON_RETRYABLE_EXECUTOR_FAILURE,
+        attempt_count=1,
+    )
+    work_store.dead_letter("work-1", 2, disposition)
+
+    summary = outbox.dispatch_pending(sink, work_store)
+    assert summary.abandoned_keys == ("key-1",)
+    assert not sink.events()
+
+
+def test_abandoned_entries_free_pending_capacity_never_deadlocking_backpressure() -> None:
+    """ABANDONED entries no longer count against max_pending -- an
+    accumulation of genuinely-impossible-to-reconcile intents cannot
+    permanently deadlock the outbox's own backpressure, which is exactly
+    the gap this correction closes."""
+    outbox = InMemoryAuditOutbox(max_pending=1)
+    sink = InMemoryAuditSink()
+    work_store = AtomicWorkStore()
+    work_store.create_if_absent("work-1", _RUN_CTX, "res-1", lambda _rid: True)
+    outbox.enqueue(
+        "key-1",
+        _event("work-1"),
+        reconciliation_scientific_work_id="work-1",
+        reconciliation_expected_state=WorkItemState.RESULT_COMMITTED,
+    )
+    # At capacity -- a second enqueue would refuse right now.
+    with pytest.raises(AuditOutboxFullError):
+        outbox.enqueue("key-2", _event("work-2"))
+
+    request = CancellationRequest(
+        distributed_orchestration_schema_version=DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
+        checksum_algorithm_version=CHECKSUM_ALGORITHM_VERSION,
+        scientific_work_id="work-1",
+        cancellation_scope=CancellationScope.BEFORE_ADMISSION,
+        requested_at_logical_clock=0,
+    )
+    work_store.request_cancellation("work-1", 0, request)
+    summary = outbox.dispatch_pending(sink, work_store)
+    assert summary.abandoned_keys == ("key-1",)
+    assert outbox.pending_count() == 0
+
+    # Capacity is now free -- a fresh enqueue succeeds.
+    entry = outbox.enqueue("key-2", _event("work-2"))
+    assert entry.outbox_key == "key-2"
+
+
+def test_abandonment_is_idempotent_and_never_delivers_on_a_later_dispatch() -> None:
+    """Re-running dispatch_pending after an entry is already ABANDONED
+    neither re-abandons it (no duplicate entry in abandoned_keys) nor
+    ever delivers it -- abandonment is deterministic and permanent, never
+    erasing evidence by later resurrecting a foreclosed intent."""
+    outbox = InMemoryAuditOutbox(max_pending=5)
+    sink = InMemoryAuditSink()
+    work_store = AtomicWorkStore()
+    work_store.create_if_absent("work-1", _RUN_CTX, "res-1", lambda _rid: True)
+    outbox.enqueue(
+        "key-1",
+        _event(),
+        reconciliation_scientific_work_id="work-1",
+        reconciliation_expected_state=WorkItemState.RESULT_COMMITTED,
+    )
+    request = CancellationRequest(
+        distributed_orchestration_schema_version=DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
+        checksum_algorithm_version=CHECKSUM_ALGORITHM_VERSION,
+        scientific_work_id="work-1",
+        cancellation_scope=CancellationScope.BEFORE_ADMISSION,
+        requested_at_logical_clock=0,
+    )
+    work_store.request_cancellation("work-1", 0, request)
+
+    first = outbox.dispatch_pending(sink, work_store)
+    assert first.abandoned_keys == ("key-1",)
+    second = outbox.dispatch_pending(sink, work_store)
+    assert not second.abandoned_keys  # already ABANDONED -- not re-evaluated
+    assert not second.delivered_keys
+    assert not sink.events()
+
+
+def test_abandonment_cannot_erase_an_already_delivered_event() -> None:
+    """A DELIVERED entry is never re-examined by dispatch_pending (it only
+    scans PENDING keys), so it can never be retroactively marked
+    ABANDONED regardless of what the authoritative record does next."""
+    outbox = InMemoryAuditOutbox(max_pending=5)
+    sink = InMemoryAuditSink()
+    work_store = AtomicWorkStore()
+    outbox.enqueue("key-1", _event())  # unconditional -- delivers immediately
+    first = outbox.dispatch_pending(sink, work_store)
+    assert first.delivered_keys == ("key-1",)
+
+    second = outbox.dispatch_pending(sink, work_store)
+    assert not second.abandoned_keys
+    assert not second.delivered_keys
+    delivered_entry = next(entry for entry in outbox.entries() if entry.outbox_key == "key-1")
+    assert delivered_entry.status == AuditOutboxEntryStatus.DELIVERED

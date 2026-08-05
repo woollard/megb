@@ -133,15 +133,20 @@ def test_artifact_reference_rejects_the_stale_v1_schema_version_literal() -> Non
         )
 
 
-def test_artifact_reference_v2_round_trips_with_current_schema_version() -> None:
+def test_artifact_reference_round_trips_with_current_schema_version() -> None:
     """Test artifact reference round-trips cleanly under the current
-    (v2) schema version -- the companion positive case to the stale-v1
-    rejection test above."""
+    schema version -- the companion positive case to the stale-v1
+    rejection test above. ``ArtifactReference``'s own shape has not
+    changed since the v1->v2 bump; it is stamped with the current (v3)
+    version purely because the shared schema-family constant advanced
+    again for MEGB-03H.2C.3B.2B.2's own correction (see
+    ``tests.test_result_commit_v3_round_trips_with_current_schema_version``
+    for the type whose shape actually changed this round)."""
     reference = make_candidate_artifact_reference()
     assert reference.distributed_orchestration_schema_version == (
         DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION
     )
-    assert DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION.endswith("-v2")
+    assert DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION.endswith("-v3")
     data = artifact_reference_to_dict(reference)
     rebuilt = ArtifactReference(
         distributed_orchestration_schema_version=data["distributed_orchestration_schema_version"],
@@ -515,6 +520,7 @@ def test_result_commit_round_trips() -> None:
                 "artifact_kind": ArtifactKind(data["result_artifact_reference"]["artifact_kind"]),
             }
         ),
+        actual_cost_cents=data["actual_cost_cents"],
         commit_checksum=data["commit_checksum"],
     )
     assert rebuilt == commit
@@ -570,6 +576,95 @@ def test_reconcile_result_commit_rejects_mismatched_scientific_work_id() -> None
     commit_b = make_result_commit(scientific_work_id="work-b")
     with pytest.raises(InvalidDistributedProvenanceError):
         reconcile_result_commit(commit_a, commit_b)
+
+
+def test_reconcile_result_commit_conflicting_actual_cost_replay_blocks() -> None:
+    """MEGB-03H.2C.3B.2B.2 correction: two commits sharing the same
+    result_content_checksum but claiming different actual_cost_cents must
+    block, never idempotently accept -- a replay must not be able to
+    change the amount finalized against an already-committed result."""
+    attempt = make_execution_attempt()
+    first_commit = make_result_commit(attempt, actual_cost_cents=100)
+    conflicting_cost_commit = make_result_commit(attempt, actual_cost_cents=200)
+    assert (
+        first_commit.result_content_checksum
+        == conflicting_cost_commit.result_content_checksum
+    )
+    with pytest.raises(ConflictingResultCommitError):
+        reconcile_result_commit(first_commit, conflicting_cost_commit)
+
+
+def test_reconcile_result_commit_identical_actual_cost_duplicate_is_idempotent() -> None:
+    """The companion positive case: an identical duplicate (same content
+    checksum, same actual_cost_cents) still reconciles idempotently."""
+    attempt = make_execution_attempt()
+    first_commit = make_result_commit(attempt, actual_cost_cents=100)
+    duplicate_commit = make_result_commit(attempt, actual_cost_cents=100)
+    assert (
+        reconcile_result_commit(first_commit, duplicate_commit)
+        == ResultCommitReconciliation.IDEMPOTENT_DUPLICATE
+    )
+
+
+def test_result_commit_rejects_the_stale_v2_schema_version_literal() -> None:
+    """MEGB-03H.2C.3B.2B.2 correction: DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION
+    bumped v2->v3 because ResultCommit's own field shape changed (gained
+    the required actual_cost_cents field); a payload still stamped with
+    the exact prior v2 string must be rejected, never silently
+    reinterpreted under v3."""
+    with pytest.raises(UnsupportedDistributedOrchestrationSchemaVersionError):
+        make_result_commit(
+            distributed_orchestration_schema_version="megb-03h2c3b2b1-distributed-orchestration-v2"
+        )
+
+
+def test_result_commit_v3_round_trips_with_current_schema_version() -> None:
+    """Companion positive case to the stale-v2 rejection test above."""
+    commit = make_result_commit()
+    assert commit.distributed_orchestration_schema_version == (
+        DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION
+    )
+    assert DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION.endswith("-v3")
+    data = result_commit_to_dict(commit)
+    rebuilt = ResultCommit(
+        distributed_orchestration_schema_version=data["distributed_orchestration_schema_version"],
+        checksum_algorithm_version=data["checksum_algorithm_version"],
+        scientific_work_id=data["scientific_work_id"],
+        attempt_checksum=data["attempt_checksum"],
+        lease_generation=data["lease_generation"],
+        result_content_checksum=data["result_content_checksum"],
+        result_artifact_reference=ArtifactReference(
+            **{
+                **data["result_artifact_reference"],
+                "artifact_kind": ArtifactKind(data["result_artifact_reference"]["artifact_kind"]),
+            }
+        ),
+        actual_cost_cents=data["actual_cost_cents"],
+        commit_checksum=data["commit_checksum"],
+    )
+    assert rebuilt == commit
+
+
+def test_result_commit_rejects_negative_actual_cost_cents() -> None:
+    """actual_cost_cents must be a non-negative int -- never a float,
+    never negative."""
+    with pytest.raises(InvalidDistributedProvenanceError):
+        make_result_commit(actual_cost_cents=-1)
+
+
+def test_terminal_disposition_accepts_non_retryable_executor_failure_reason() -> None:
+    """MEGB-03H.2C.3B.2B.2 correction: TerminalDispositionReason gained
+    NON_RETRYABLE_EXECUTOR_FAILURE, distinct from RETRY_CEILING_EXCEEDED --
+    a terminal disposition may now be constructed with either, and they
+    remain distinguishable values."""
+    non_retryable = make_terminal_disposition(
+        disposition_reason=TerminalDispositionReason.NON_RETRYABLE_EXECUTOR_FAILURE
+    )
+    ceiling_exceeded = make_terminal_disposition(
+        disposition_reason=TerminalDispositionReason.RETRY_CEILING_EXCEEDED
+    )
+    assert non_retryable.disposition_reason != ceiling_exceeded.disposition_reason
+    assert non_retryable.disposition_checksum != ceiling_exceeded.disposition_checksum
 
 
 # ---------------------------------------------------------------------------

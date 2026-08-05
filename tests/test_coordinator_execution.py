@@ -8,9 +8,12 @@ from src.distributed._checksums import (
     DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
 )
 from src.distributed.artifact_store import ArtifactMetadata
+from src.distributed.audit_sink_store import InMemoryAuditSink
 from src.distributed.budget_store import ReservationStatus
+from src.distributed.coordinator import Coordinator
 from src.distributed.personal_policy import DataClassification, WorkloadClass
 from src.distributed.state_machine import WorkItemState
+from src.distributed.work_contracts import TerminalDispositionReason
 from src.distributed.work_outcome import WorkOutcomeKind
 from src.distributed.worker_contracts import Lease
 from tests._atomic_stores_fixtures import make_result_commit
@@ -280,6 +283,15 @@ def test_retry_exhaustion_dead_letters() -> None:
     ]
     assert env.work_store.read("work-1").state == WorkItemState.DEAD_LETTERED
     assert env.queue.receive() is None  # acked on dead-letter -- no redelivery
+    # MEGB-03H.2C.3B.2B.2 correction: genuine retry-ceiling exhaustion is
+    # tagged RETRY_CEILING_EXCEEDED -- retries really were attempted and
+    # really were exhausted here.
+    terminal_disposition = env.work_store.read("work-1").terminal_disposition
+    assert terminal_disposition is not None
+    assert (
+        terminal_disposition.disposition_reason
+        == TerminalDispositionReason.RETRY_CEILING_EXCEEDED
+    )
 
 
 def test_terminal_executor_failure_dead_letters_immediately() -> None:
@@ -297,6 +309,16 @@ def test_terminal_executor_failure_dead_letters_immediately() -> None:
     outcome = coordinator.invoke_worker("worker-a")
     assert outcome is not None
     assert outcome.outcome_kind == WorkOutcomeKind.RETRY_EXHAUSTED
+    # MEGB-03H.2C.3B.2B.2 correction: a terminal (non-retryable) failure on
+    # the very first attempt must never be tagged RETRY_CEILING_EXCEEDED --
+    # no retry ceiling was ever exceeded, since no retry was ever attempted.
+    terminal_disposition = env.work_store.read("work-1").terminal_disposition
+    assert terminal_disposition is not None
+    assert (
+        terminal_disposition.disposition_reason
+        == TerminalDispositionReason.NON_RETRYABLE_EXECUTOR_FAILURE
+    )
+    assert terminal_disposition.attempt_count == 1
     assert env.work_store.read("work-1").state == WorkItemState.DEAD_LETTERED
 
 
@@ -385,3 +407,127 @@ def test_committed_result_content_checksum_is_present_and_stable() -> None:
     final = env.work_store.read("work-1")
     assert final.result_commit is not None
     assert final.result_commit.result_content_checksum == outcome.result_content_checksum
+
+
+# ---------------------------------------------------------------------------
+# MEGB-03H.2C.3B.2B.2 correction: committed-result/budget/ack recovery --
+# actual_cost_cents is carried on the durable ResultCommit itself, budget
+# finalization is retried idempotently on redelivery, and queue
+# acknowledgement happens only once finalize has been (re)attempted.
+# ---------------------------------------------------------------------------
+
+
+def test_actual_cost_cents_is_carried_on_the_durable_commit() -> None:
+    """The committed result's own ResultCommit carries the exact
+    actual_cost_cents that was (or will be) finalized -- recoverable from
+    authoritative, checksum-bound state alone, never a separate lookup."""
+    env = build_environment()
+    content = make_synthetic_content("q")
+    reference = publish_candidate(env.artifact_store, content)
+    descriptor = make_work_descriptor("work-1", 0, reference)
+    env.worker_registry.register(make_worker_registration("worker-a"))
+    coordinator = env.make_coordinator(ScriptedExecutor())
+    coordinator.admit(descriptor, reservation_id="res-1", requested_cost_cents=250)
+    outcome = coordinator.invoke_worker("worker-a")
+    assert outcome is not None and outcome.outcome_kind == WorkOutcomeKind.EXECUTED_AND_COMMITTED
+
+    record = env.work_store.read("work-1")
+    assert record.result_commit is not None
+    assert record.result_commit.actual_cost_cents == 250
+    reservation = env.budget_store.get("res-1")
+    assert reservation.actual_cost_cents == 250
+
+
+def test_budget_finalization_succeeds_but_ack_never_happens_then_redelivery_recovers() -> None:
+    """Simulates a crash exactly between budget finalization succeeding
+    and queue acknowledgement completing: redelivery recovers the
+    existing committed result without invoking the executor again, and
+    retrying finalize on an already-FINALIZED reservation is a harmless,
+    idempotent no-op -- never a double-finalization error."""
+    env = build_environment()
+    content = make_synthetic_content("r")
+    reference = publish_candidate(env.artifact_store, content)
+    descriptor = make_work_descriptor("work-1", 0, reference)
+    env.worker_registry.register(make_worker_registration("worker-a"))
+    executor = ScriptedExecutor()
+    coordinator = env.make_coordinator(executor)
+    coordinator.admit(descriptor, reservation_id="res-1", requested_cost_cents=100)
+
+    message = env.queue.receive()
+    assert message is not None
+    record = env.work_store.read("work-1")
+    record = env.work_store.acquire_lease(
+        "work-1", record.revision, _make_lease("worker-a"), reservation_validator=lambda _rid: True
+    )
+    record = env.work_store.transition_to_executing("work-1", record.revision)
+
+    attempt = make_execution_attempt(
+        scientific_work_id="work-1",
+        worker_participant_id="worker-a",
+        lease_generation=1,
+        distributed_run_context_checksum=RUN_CTX,
+    )
+    result_content = b"synthetic-manually-committed-result"
+    commit = make_result_commit(attempt, result_content, actual_cost_cents=100)
+    env.artifact_store.put(commit.result_artifact_reference, result_content, _DEFAULT_METADATA)
+    env.work_store.commit_result(
+        "work-1", record.revision, attempt, commit, artifact_resolver=env.artifact_store.resolve
+    )
+    # Budget finalization succeeds here (simulating it completed before
+    # the crash)...
+    env.budget_store.finalize("res-1", 100)
+    # ...but queue.ack("work-1") deliberately NOT called -- the crash
+    # window this test targets.
+
+    env.clock.advance(10)  # elapse visibility timeout -> redelivery
+    outcome = coordinator.invoke_worker("worker-a")
+    assert outcome is not None
+    assert outcome.outcome_kind == WorkOutcomeKind.RECOVERED_COMMITTED_RESULT
+    assert executor.invocation_count == 0  # never invoked -- no re-execution
+
+    reservation = env.budget_store.get("res-1")
+    assert reservation.status == ReservationStatus.FINALIZED
+    assert reservation.actual_cost_cents == 100  # unchanged -- no double-charge
+
+
+def test_audit_sink_failure_during_dispatch_never_causes_re_execution() -> None:
+    """A failing audit sink at dispatch time leaves the result-committed
+    audit entry pending for retry, without altering authoritative state
+    or ever re-invoking the executor -- dispatch_pending never mutates
+    work_store."""
+    env = build_environment()
+    content = make_synthetic_content("s")
+    reference = publish_candidate(env.artifact_store, content)
+    descriptor = make_work_descriptor("work-1", 0, reference)
+    env.worker_registry.register(make_worker_registration("worker-a"))
+    failing_sink = InMemoryAuditSink(fail_after=0)
+    executor = ScriptedExecutor()
+    coordinator = Coordinator(
+        config=env.config,
+        clock=env.clock,
+        work_store=env.work_store,
+        artifact_reader=env.artifact_store,
+        artifact_writer=env.artifact_store,
+        budget_store=env.budget_store,
+        policy=env.policy,
+        worker_registry=env.worker_registry,
+        queue=env.queue,
+        audit_sink=failing_sink,
+        audit_outbox=env.audit_outbox,
+        cancellation=env.cancellation,
+        executor=executor,
+    )
+    coordinator.admit(descriptor, reservation_id="res-1", requested_cost_cents=100)
+    outcome = coordinator.invoke_worker("worker-a")
+    assert outcome is not None
+    assert outcome.outcome_kind == WorkOutcomeKind.EXECUTED_AND_COMMITTED
+    assert executor.invocation_count == 1
+
+    summary = coordinator.dispatch_audit()
+    committed_record = env.work_store.read("work-1")
+    assert committed_record.result_commit is not None
+    expected_key = f"result-committed:work-1:{committed_record.result_commit.attempt_checksum}"
+    assert expected_key in summary.sink_failed_keys
+    assert executor.invocation_count == 1  # unchanged
+    assert env.work_store.read("work-1").state == WorkItemState.RESULT_COMMITTED
+    assert not failing_sink.events()

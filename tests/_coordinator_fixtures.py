@@ -223,11 +223,17 @@ class CoordinatorEnvironment:  # pylint: disable=too-many-instance-attributes
     cancellation: CancellationController
     config: CoordinatorConfig
 
-    def make_coordinator(self, executor: WorkExecutorProtocol) -> Coordinator:
+    def make_coordinator(
+        self, executor: WorkExecutorProtocol, *, config: CoordinatorConfig | None = None
+    ) -> Coordinator:
         """Build a Coordinator wired to every store/adapter in this
-        environment, plus the given (synthetic) executor."""
+        environment, plus the given (synthetic) executor. ``config``
+        (MEGB-03H.2C.3B.2B.2 correction) optionally overrides this
+        environment's own default config -- e.g. to test a mismatched
+        config/policy concurrency-ceiling pairing without rebuilding a
+        whole new environment."""
         return Coordinator(
-            config=self.config,
+            config=config if config is not None else self.config,
             clock=self.clock,
             work_store=self.work_store,
             artifact_reader=self.artifact_store,
@@ -248,12 +254,23 @@ def build_environment(
     max_admitted_workers: int = PERSONAL_BOOTSTRAP_MAX_WORKERS,
     max_in_flight_work: int = 10,
     budget_ceiling_cents: int = PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS,
+    policy_environment_class: EnvironmentClass = EnvironmentClass.PERSONAL_BOOTSTRAP,
+    audit_outbox_max_pending: int = 10,
 ) -> CoordinatorEnvironment:
     """One fully-wired, synthetic coordinator environment -- fresh stores,
     a fresh queue/outbox/registry, and one shared fresh logical clock at
     tick 0 (the coordinator and its queue must observe the exact same
     clock, or visibility-timeout/lease-duration ticks would drift out of
-    sync)."""
+    sync).
+
+    ``policy_environment_class`` (MEGB-03H.2C.3B.2B.2 correction)
+    defaults to ``PERSONAL_BOOTSTRAP``, whose own
+    ``PersonalEnvironmentPolicy`` construction-time ceiling check applies.
+    A test proving the provider-neutral engine itself is not structurally
+    limited to two workers may pass ``EnvironmentClass.COMPANY_PLAYGROUND``
+    with a higher ``max_admitted_workers`` -- a synthetic test fixture
+    only, never a real company-authorization policy (which remains a
+    separately-gated, not-yet-authorized concern)."""
     clock = LogicalClock()
     return CoordinatorEnvironment(
         clock=clock,
@@ -262,7 +279,9 @@ def build_environment(
         budget_store=AtomicBudgetStore(
             budget_ceiling_cents=budget_ceiling_cents, max_admitted_workers=max_admitted_workers
         ),
-        policy=make_default_policy(max_admitted_workers=max_admitted_workers),
+        policy=make_default_policy(
+            environment_class=policy_environment_class, max_admitted_workers=max_admitted_workers
+        ),
         worker_registry=InMemoryWorkerRegistry(),
         queue=InMemoryAtLeastOnceQueue(
             clock,
@@ -272,7 +291,7 @@ def build_environment(
             routing_logical_environment_id=ROUTING_LOGICAL_ENVIRONMENT_ID,
         ),
         audit_sink=InMemoryAuditSink(),
-        audit_outbox=InMemoryAuditOutbox(max_pending=10),
+        audit_outbox=InMemoryAuditOutbox(max_pending=audit_outbox_max_pending),
         cancellation=CancellationController(),
         config=make_default_config(
             max_admitted_workers=max_admitted_workers, max_in_flight_work=max_in_flight_work
