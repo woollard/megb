@@ -1,0 +1,252 @@
+{
+  "entries": [
+    {
+      "attempt_count": 1,
+      "fault_point": "A1_BEFORE_BUDGET_RESERVATION",
+      "invariant": "I11_EVERY_ITEM_ENDS_DEFINED_DISPOSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "A2_AFTER_RESERVATION_BEFORE_WORK_CREATION",
+      "invariant": "I7_NO_LOST_QUEUE_VISIBLE_WORK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "A3_AFTER_WORK_CREATION_BEFORE_AUDIT_INTENT",
+      "invariant": "I8_NO_UNAUDITED_AUTHORITATIVE_TRANSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "A4_AFTER_AUDIT_INTENT_BEFORE_PUBLICATION",
+      "invariant": "I7_NO_LOST_QUEUE_VISIBLE_WORK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "A5_AFTER_PUBLICATION_BEFORE_RETURN",
+      "invariant": "I11_EVERY_ITEM_ENDS_DEFINED_DISPOSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C10_CONFLICTING_RESULT_AND_COST",
+      "invariant": "I1_AT_MOST_ONE_COMMITTED_RESULT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C11_COORDINATOR_RECREATION",
+      "invariant": "I7_NO_LOST_QUEUE_VISIBLE_WORK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C12_RESERVATION_WITHOUT_WORK",
+      "invariant": "I6_NO_SILENT_BUDGET_LEAK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C13_BUDGET_EXHAUSTION_ORPHAN_RECOVERY",
+      "invariant": "I6_NO_SILENT_BUDGET_LEAK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C1_AUDIT_SINK_FAILURE",
+      "invariant": "I2_NO_EXECUTION_AFTER_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C2_OUTBOX_FULL",
+      "invariant": "I8_NO_UNAUDITED_AUTHORITATIVE_TRANSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C3_ORPHAN_INTENT_ABANDONED",
+      "invariant": "I9_NO_PERMANENT_IMPOSSIBLE_INTENT_CAPACITY",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C4_QUEUE_DUPLICATE_REDELIVERY",
+      "invariant": "I3_NO_STALE_LEASE_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C5_QUEUE_ACK_FAILURE",
+      "invariant": "I10_NO_TERMINAL_EVIDENCE_ERASED",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C6_LEASE_EXPIRY_REASSIGNMENT",
+      "invariant": "I3_NO_STALE_LEASE_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C7_STALE_FUTURE_FENCING",
+      "invariant": "I3_NO_STALE_LEASE_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C8_CANCELLATION_AT_EACH_PHASE",
+      "invariant": "I10_NO_TERMINAL_EVIDENCE_ERASED",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "C9_RETRY_SUCCESS_AND_EXHAUSTION",
+      "invariant": "I11_EVERY_ITEM_ENDS_DEFINED_DISPOSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 15,
+      "fault_point": "R10_CONCURRENT_RESERVATIONS_AT_CEILING",
+      "invariant": "I6_NO_SILENT_BUDGET_LEAK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "R1_CONCURRENCY_ONE",
+      "invariant": "I12_DETERMINISTIC_RESULT_ORDERING",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "R2_CONCURRENCY_TWO",
+      "invariant": "I12_DETERMINISTIC_RESULT_ORDERING",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "R3_CONCURRENCY_FOUR",
+      "invariant": "I12_DETERMINISTIC_RESULT_ORDERING",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "R4_PERSONAL_POLICY_REJECTS_ABOVE_TWO",
+      "invariant": "I11_EVERY_ITEM_ENDS_DEFINED_DISPOSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 15,
+      "fault_point": "R5_REVERSED_COMPLETION_ORDER",
+      "invariant": "I12_DETERMINISTIC_RESULT_ORDERING",
+      "passed": true
+    },
+    {
+      "attempt_count": 15,
+      "fault_point": "R6_DUPLICATE_DELIVERIES_RACING",
+      "invariant": "I3_NO_STALE_LEASE_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 15,
+      "fault_point": "R7_CANCELLATION_RACING_COMMIT",
+      "invariant": "I10_NO_TERMINAL_EVIDENCE_ERASED",
+      "passed": true
+    },
+    {
+      "attempt_count": 15,
+      "fault_point": "R8_LEASE_EXPIRY_RACING_COMMIT",
+      "invariant": "I3_NO_STALE_LEASE_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 15,
+      "fault_point": "R9_OUTBOX_DISPATCH_RACING_RECONCILIATION",
+      "invariant": "I8_NO_UNAUDITED_AUTHORITATIVE_TRANSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W1_AFTER_DELIVERY_BEFORE_LEASE",
+      "invariant": "I7_NO_LOST_QUEUE_VISIBLE_WORK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W2_AFTER_LEASE_BEFORE_EXECUTOR",
+      "invariant": "I3_NO_STALE_LEASE_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W3_EXECUTOR_RETRYABLE_FAILURE",
+      "invariant": "I11_EVERY_ITEM_ENDS_DEFINED_DISPOSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W4_EXECUTOR_NON_RETRYABLE_FAILURE",
+      "invariant": "I11_EVERY_ITEM_ENDS_DEFINED_DISPOSITION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W4_EXECUTOR_NON_RETRYABLE_FAILURE",
+      "invariant": "I13_NO_UNSAFE_LEAKAGE",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W5_AFTER_ARTIFACT_WRITE_BEFORE_OUTBOX_INTENT",
+      "invariant": "I1_AT_MOST_ONE_COMMITTED_RESULT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W6_AFTER_OUTBOX_INTENT_BEFORE_COMMIT",
+      "invariant": "I9_NO_PERMANENT_IMPOSSIBLE_INTENT_CAPACITY",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W7_AFTER_COMMIT_BEFORE_FINALIZATION",
+      "invariant": "I5_NO_DOUBLE_BUDGET_FINALIZATION",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W7_AFTER_COMMIT_BEFORE_FINALIZATION",
+      "invariant": "I6_NO_SILENT_BUDGET_LEAK",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W8_AFTER_FINALIZATION_BEFORE_ACK",
+      "invariant": "I2_NO_EXECUTION_AFTER_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W8_AFTER_FINALIZATION_BEFORE_ACK",
+      "invariant": "I4_NO_ACK_BEFORE_COMMIT",
+      "passed": true
+    },
+    {
+      "attempt_count": 1,
+      "fault_point": "W9_AFTER_ACK_BEFORE_RETURN",
+      "invariant": "I12_DETERMINISTIC_RESULT_ORDERING",
+      "passed": true
+    }
+  ],
+  "failed_count": 0,
+  "passed_count": 40,
+  "plan_git_blob_sha1": "b037ed68292ed06fc226453ed07130992783db6b",
+  "plan_sha256": "9bf39c6bae0b43e3ce0807d9ca1bd6f08f892b7356f563c73e75376b7bbd9891",
+  "readiness": "IN_PROCESS_RECOVERY_READY_FOR_B2C",
+  "report_checksum": "3a0d6e71cf7162144f193b534b64eef6f604a5e3cd2276f70ef954e60b148b56",
+  "schema_version": "megb-03h2c3b2b3-fault-conformance-v1",
+  "total_attempts": 124
+}
