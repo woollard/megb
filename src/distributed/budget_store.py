@@ -1,0 +1,324 @@
+"""MEGB-03H.2C.3B.2B.1: atomic personal-environment admission/budget
+reservation store.
+
+**Canonical integer currency units (cents) throughout -- never a Python
+``float``** for this store's own accumulation/enforcement logic, per this
+checkpoint's own explicit "never binary floating-point comparison"
+requirement. Python's arbitrary-precision ``int`` makes overflow
+structurally impossible here, and there is no way to represent NaN or
+infinity in an ``int`` at all -- eliminating the entire class of
+imprecise/overflowing/non-finite values by construction, not by runtime
+validation alone.
+
+Reservation identity, workload identity, and actual-cost observation are
+kept as three distinct concepts throughout: ``reservation_id`` identifies
+one admission attempt (idempotent on exact replay, rejected on
+conflicting replay); the workload/artifact a reservation is *for* is the
+caller's own concern (this store does not itself hold a workload
+reference field, precisely so it cannot be confused with reservation
+identity); ``actual_cost_cents`` (recorded only via
+:meth:`AtomicBudgetStore.finalize`) is a measured outcome, never assumed
+equal to the reservation's own ``requested_cost_cents``.
+
+:func:`evaluate_and_reserve` composes this store with
+:mod:`~src.distributed.artifact_store`'s own classification-verification
+and the already-accepted
+:func:`~src.distributed.personal_policy.evaluate_admission` into the one
+required policy-plus-budget admission decision -- artifact classification
+is verified against the artifact store's own immutably-bound metadata
+first (never trusted solely from a caller's claim), and only once that
+passes does the (already-accepted, unmodified) policy check and this
+store's own exact-integer ledger check run. `evaluate_admission`'s own
+``estimated_cost_usd: float`` parameter is bridged from cents (a single,
+non-accumulating conversion for that one already-accepted comparison);
+the real, exact, concurrency-safe ceiling enforcement is entirely this
+module's own integer ledger in :meth:`AtomicBudgetStore.reserve`, never
+that float comparison."""
+
+import threading
+from dataclasses import dataclass
+from enum import Enum
+
+from src.distributed._checksums import InvalidDistributedProvenanceError
+from src.distributed.artifact_store import InMemoryArtifactStore
+from src.distributed.personal_policy import (
+    AdmissionDecision,
+    DataClassification,
+    PersonalEnvironmentPolicy,
+    WorkloadClass,
+    evaluate_admission,
+)
+from src.distributed.work_contracts import ArtifactReference
+
+
+def _require_nonempty_str(value: object, field_name: str) -> None:
+    if not isinstance(value, str) or value == "":
+        raise InvalidDistributedProvenanceError(
+            f"{field_name} must be a nonempty string, got {value!r}"
+        )
+
+
+def _require_non_negative_int(value: object, field_name: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise InvalidDistributedProvenanceError(
+            f"{field_name} must be a non-negative int, got {value!r}"
+        )
+
+
+def _require_positive_int(value: object, field_name: str) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise InvalidDistributedProvenanceError(
+            f"{field_name} must be a positive int, got {value!r}"
+        )
+
+
+class ReservationStatus(str, Enum):
+    """Closed set of reservation lifecycle states."""
+
+    RESERVED = "RESERVED"
+    RELEASED = "RELEASED"
+    FINALIZED = "FINALIZED"
+
+
+class ReservationConflictError(InvalidDistributedProvenanceError):
+    """Raised when the same ``reservation_id`` is submitted a second time
+    with a different ``requested_cost_cents``/``requested_worker_count``
+    than its first, already-accepted reservation."""
+
+
+class ReservationNotFoundError(InvalidDistributedProvenanceError):
+    """Raised when ``release``/``finalize`` names an unknown
+    ``reservation_id``."""
+
+
+class ReservationNotActiveError(InvalidDistributedProvenanceError):
+    """Raised when ``release``/``finalize`` is called on a reservation
+    that is no longer ``RESERVED`` (already released or finalized)."""
+
+
+class BudgetCeilingExceededError(InvalidDistributedProvenanceError):
+    """Raised when admitting a new reservation would push the sum of all
+    currently ``RESERVED`` reservations' ``requested_cost_cents`` above
+    the store's own ``budget_ceiling_cents``."""
+
+
+class WorkerCeilingExceededError(InvalidDistributedProvenanceError):
+    """Raised when admitting a new reservation would push the sum of all
+    currently ``RESERVED`` reservations' ``requested_worker_count`` above
+    the store's own ``max_admitted_workers``."""
+
+
+@dataclass(frozen=True)
+class BudgetReservation:
+    """One admission reservation. Not a wire/schema type (no
+    ``distributed_orchestration_schema_version``/self-checksum field):
+    purely in-process ledger state, keyed by ``reservation_id``."""
+
+    reservation_id: str
+    requested_cost_cents: int
+    requested_worker_count: int
+    status: ReservationStatus
+    actual_cost_cents: int | None
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self.reservation_id, "reservation_id")
+        _require_non_negative_int(self.requested_cost_cents, "requested_cost_cents")
+        _require_positive_int(self.requested_worker_count, "requested_worker_count")
+        if not isinstance(self.status, ReservationStatus):
+            raise InvalidDistributedProvenanceError(
+                f"status must be a ReservationStatus, got {self.status!r}"
+            )
+        if self.actual_cost_cents is not None:
+            _require_non_negative_int(self.actual_cost_cents, "actual_cost_cents")
+        if (self.status == ReservationStatus.FINALIZED) != (self.actual_cost_cents is not None):
+            raise InvalidDistributedProvenanceError(
+                "actual_cost_cents must be present if and only if status is FINALIZED"
+            )
+
+
+class AtomicBudgetStore:
+    """Synthetic, single-process, lock-protected admission-ledger store.
+    Every mutating method performs its entire read-check-write sequence
+    while holding one internal lock, so concurrent reservations can never
+    oversubscribe either ceiling -- the sum check and the write happen
+    as one indivisible step, never a separate check followed by a
+    separate write."""
+
+    def __init__(self, *, budget_ceiling_cents: int, max_admitted_workers: int) -> None:
+        _require_positive_int(budget_ceiling_cents, "budget_ceiling_cents")
+        _require_positive_int(max_admitted_workers, "max_admitted_workers")
+        self._budget_ceiling_cents = budget_ceiling_cents
+        self._max_admitted_workers = max_admitted_workers
+        self._lock = threading.Lock()
+        self._reservations: dict[str, BudgetReservation] = {}
+
+    def _active_reserved_cents(self) -> int:
+        return sum(
+            reservation.requested_cost_cents
+            for reservation in self._reservations.values()
+            if reservation.status == ReservationStatus.RESERVED
+        )
+
+    def _active_reserved_workers(self) -> int:
+        return sum(
+            reservation.requested_worker_count
+            for reservation in self._reservations.values()
+            if reservation.status == ReservationStatus.RESERVED
+        )
+
+    def reserve(
+        self, reservation_id: str, requested_cost_cents: int, requested_worker_count: int
+    ) -> BudgetReservation:
+        """Atomically admit a new reservation, or idempotently return an
+        exact-match existing one. Raises
+        :class:`ReservationConflictError` for a same-id, different-amount
+        replay; :class:`BudgetCeilingExceededError`/
+        :class:`WorkerCeilingExceededError` if admitting would
+        oversubscribe either ceiling -- checked and written as one
+        indivisible step, so no two concurrent callers can ever both
+        succeed past the ceiling."""
+        _require_nonempty_str(reservation_id, "reservation_id")
+        _require_non_negative_int(requested_cost_cents, "requested_cost_cents")
+        _require_positive_int(requested_worker_count, "requested_worker_count")
+        with self._lock:
+            existing = self._reservations.get(reservation_id)
+            if existing is not None:
+                if (
+                    existing.requested_cost_cents != requested_cost_cents
+                    or existing.requested_worker_count != requested_worker_count
+                ):
+                    raise ReservationConflictError(
+                        f"reservation_id {reservation_id!r} already reserved with different "
+                        f"terms (requested_cost_cents={existing.requested_cost_cents}, "
+                        f"requested_worker_count={existing.requested_worker_count}) than this "
+                        f"replay (requested_cost_cents={requested_cost_cents}, "
+                        f"requested_worker_count={requested_worker_count})"
+                    )
+                return existing
+            projected_cents = self._active_reserved_cents() + requested_cost_cents
+            if projected_cents > self._budget_ceiling_cents:
+                raise BudgetCeilingExceededError(
+                    f"reserving {requested_cost_cents} cents would bring active reservations to "
+                    f"{projected_cents} cents, exceeding the {self._budget_ceiling_cents}-cent "
+                    f"ceiling"
+                )
+            projected_workers = self._active_reserved_workers() + requested_worker_count
+            if projected_workers > self._max_admitted_workers:
+                raise WorkerCeilingExceededError(
+                    f"reserving {requested_worker_count} worker(s) would bring active "
+                    f"reservations to {projected_workers}, exceeding the "
+                    f"{self._max_admitted_workers}-worker ceiling"
+                )
+            reservation = BudgetReservation(
+                reservation_id=reservation_id,
+                requested_cost_cents=requested_cost_cents,
+                requested_worker_count=requested_worker_count,
+                status=ReservationStatus.RESERVED,
+                actual_cost_cents=None,
+            )
+            self._reservations[reservation_id] = reservation
+            return reservation
+
+    def release(self, reservation_id: str) -> BudgetReservation:
+        """Atomically release a still-``RESERVED`` reservation, freeing
+        its slot against both ceilings."""
+        with self._lock:
+            existing = self._reservations.get(reservation_id)
+            if existing is None:
+                raise ReservationNotFoundError(f"no reservation for {reservation_id!r}")
+            if existing.status != ReservationStatus.RESERVED:
+                raise ReservationNotActiveError(
+                    f"reservation {reservation_id!r} is {existing.status.value}, not RESERVED"
+                )
+            released = BudgetReservation(
+                reservation_id=existing.reservation_id,
+                requested_cost_cents=existing.requested_cost_cents,
+                requested_worker_count=existing.requested_worker_count,
+                status=ReservationStatus.RELEASED,
+                actual_cost_cents=None,
+            )
+            self._reservations[reservation_id] = released
+            return released
+
+    def finalize(self, reservation_id: str, actual_cost_cents: int) -> BudgetReservation:
+        """Atomically finalize a still-``RESERVED`` reservation, recording
+        ``actual_cost_cents`` as a measured outcome distinct from
+        ``requested_cost_cents``."""
+        _require_non_negative_int(actual_cost_cents, "actual_cost_cents")
+        with self._lock:
+            existing = self._reservations.get(reservation_id)
+            if existing is None:
+                raise ReservationNotFoundError(f"no reservation for {reservation_id!r}")
+            if existing.status != ReservationStatus.RESERVED:
+                raise ReservationNotActiveError(
+                    f"reservation {reservation_id!r} is {existing.status.value}, not RESERVED"
+                )
+            finalized = BudgetReservation(
+                reservation_id=existing.reservation_id,
+                requested_cost_cents=existing.requested_cost_cents,
+                requested_worker_count=existing.requested_worker_count,
+                status=ReservationStatus.FINALIZED,
+                actual_cost_cents=actual_cost_cents,
+            )
+            self._reservations[reservation_id] = finalized
+            return finalized
+
+    def get(self, reservation_id: str) -> BudgetReservation:
+        """The current reservation of record."""
+        with self._lock:
+            existing = self._reservations.get(reservation_id)
+        if existing is None:
+            raise ReservationNotFoundError(f"no reservation for {reservation_id!r}")
+        return existing
+
+
+def evaluate_and_reserve(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    policy: PersonalEnvironmentPolicy,
+    budget_store: AtomicBudgetStore,
+    artifact_store: InMemoryArtifactStore,
+    artifact_reference: ArtifactReference,
+    claimed_workload_class: WorkloadClass,
+    claimed_data_classification: DataClassification,
+    reservation_id: str,
+    requested_cost_cents: int,
+    requested_worker_count: int,
+) -> AdmissionDecision:
+    """The one composed admission decision this checkpoint's own
+    requirements ask for: verify ``claimed_workload_class``/
+    ``claimed_data_classification`` against the artifact store's own
+    immutably-bound metadata (never trusted from the caller alone),
+    then evaluate the already-accepted personal-environment policy, and
+    only if both pass, atomically reserve budget/worker capacity.
+    Returns a refusing :class:`~src.distributed.personal_policy.AdmissionDecision`
+    (never raises) for a policy-level refusal; raises
+    :class:`~src.distributed.artifact_store.ArtifactMetadataMismatchError`
+    for a classification-verification failure (an integrity violation,
+    not an ordinary refusal) and the budget store's own ceiling errors
+    for a ledger-level refusal."""
+    artifact_store.verify_artifact_classification(
+        artifact_reference, claimed_workload_class, claimed_data_classification
+    )
+    decision = evaluate_admission(
+        policy,
+        claimed_workload_class,
+        claimed_data_classification,
+        requested_worker_count,
+        requested_cost_cents / 100,
+    )
+    if not decision.admitted:
+        return decision
+    budget_store.reserve(reservation_id, requested_cost_cents, requested_worker_count)
+    return decision
+
+
+__all__ = [
+    "ReservationStatus",
+    "ReservationConflictError",
+    "ReservationNotFoundError",
+    "ReservationNotActiveError",
+    "BudgetCeilingExceededError",
+    "WorkerCeilingExceededError",
+    "BudgetReservation",
+    "AtomicBudgetStore",
+    "evaluate_and_reserve",
+]
