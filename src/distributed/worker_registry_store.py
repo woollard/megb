@@ -7,7 +7,14 @@ concrete, in-memory, duplicate-rejecting, retirable registry around it.
 Raw infrastructure mappings (real instance IDs, hostnames) remain
 entirely outside this store -- ``WorkerRegistration`` itself has no such
 field, the same structural-absence guarantee established throughout
-``src/distributed/``."""
+``src/distributed/``.
+
+**MEGB-03H.2C.3B.2B.2 addition:** :meth:`InMemoryWorkerRegistry.get_registration`
+-- a read-only getter for the full registration record, added purely
+additively (no existing method's behavior changes) so the coordinator/
+worker engine can validate a delivered queue message's
+``distributed_run_context_checksum`` against the worker's own registered
+one, never trusting the queue message alone for that binding."""
 
 import threading
 from enum import Enum
@@ -98,6 +105,15 @@ class InMemoryWorkerRegistry:
                     if status == WorkerRegistrationStatus.ACTIVE
                 )
             )
+
+    def get_registration(self, worker_participant_id: str) -> WorkerRegistration:
+        """The full, currently-registered :class:`WorkerRegistration` for
+        ``worker_participant_id`` (whether ``ACTIVE`` or ``RETIRED``)."""
+        with self._lock:
+            registration = self._registrations.get(worker_participant_id)
+        if registration is None:
+            raise WorkerNotRegisteredError(f"no registration for {worker_participant_id!r}")
+        return registration
 
     def registration_status(self, worker_participant_id: str) -> WorkerRegistrationStatus:
         """The current :class:`WorkerRegistrationStatus` for

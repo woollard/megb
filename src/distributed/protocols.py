@@ -18,11 +18,32 @@ atomicity audit found :class:`ResultStoreProtocol` and
 :class:`LeaseStateStoreProtocol` cannot express by composition. Those two
 Protocols are retained, unmodified in method shape, but their docstrings
 now mark them non-authoritative for the commit path -- see each one's own
-docstring below."""
+docstring below.
+
+**MEGB-03H.2C.3B.2B.2 addition:** adds :class:`ArtifactReaderProtocol`,
+:class:`ArtifactWriterProtocol`, and :class:`BudgetReservationProtocol` --
+the coordinator/worker engine's own additional dependency-injection
+boundaries, additive to every Protocol above (the minimal
+:class:`ArtifactStoreProtocol` B.2A already defined is untouched). Also
+completes two Protocol declarations that were incomplete relative to
+their own already-accepted concrete implementations --
+:meth:`AtomicWorkStoreProtocol.transition_to_executing` (already present
+on ``AtomicWorkStore`` since B.2B.1; simply never declared on the
+Protocol, since no B.2B.1 caller needed it) and
+:meth:`WorkerRegistryProtocol.registration_status` (already present on
+``InMemoryWorkerRegistry`` since B.2B.1, same reason). Neither change
+alters any concrete class's behavior or any existing test; both are
+Protocol-declaration completeness fixes the coordinator engine's own use
+surfaced, not schema/data-shape changes (Protocols carry no
+``distributed_orchestration_schema_version``/self-checksum field to bump
+in the first place)."""
 
 from typing import Callable, Protocol
 
+from src.distributed.artifact_store import ArtifactMetadata
 from src.distributed.atomic_work_store import AuthoritativeWorkRecord
+from src.distributed.budget_store import BudgetReservation
+from src.distributed.personal_policy import DataClassification, WorkloadClass
 from src.distributed.state_machine import WorkItemState
 from src.distributed.work_contracts import (
     Acknowledgement,
@@ -217,6 +238,12 @@ class AtomicWorkStoreProtocol(Protocol):
         valid reservation."""
         raise NotImplementedError  # pragma: no cover -- Protocol method
 
+    def transition_to_executing(
+        self, scientific_work_id: str, expected_revision: int
+    ) -> AuthoritativeWorkRecord:
+        """Atomic CAS transition to ``EXECUTING``."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
     def renew_lease(
         self, scientific_work_id: str, expected_revision: int, renewal: LeaseRenewal
     ) -> AuthoritativeWorkRecord:
@@ -279,10 +306,91 @@ class AtomicWorkStoreProtocol(Protocol):
         raise NotImplementedError  # pragma: no cover -- Protocol method
 
 
+class ArtifactReaderProtocol(Protocol):
+    """**MEGB-03H.2C.3B.2B.2 addition.** The trusted, read-only artifact
+    boundary the coordinator's admission path and every worker's
+    execution path depend on -- additive to, and a superset of,
+    :class:`ArtifactStoreProtocol` above (which the accepted B.2A
+    execution-plane contracts deliberately kept minimal, ``resolve``
+    only). Returns checksum-verified immutable content and metadata on
+    every call; never trusts a caller-supplied classification claim.
+    Carries no ``put``/write method at all -- capability separation for
+    read-only callers (workers resolving already-published candidate
+    artifacts) is expressed by simply never handing them anything more
+    than this Protocol, not by convention alone."""
+
+    def resolve(self, reference: ArtifactReference) -> bool:
+        """``True`` iff ``reference`` names content this store actually
+        holds under its exact composite content/metadata identity."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+    def get(self, reference: ArtifactReference) -> tuple[bytes, ArtifactMetadata]:
+        """Checksum-verified ``(content, metadata)`` for ``reference``."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+    def verify_artifact_classification(
+        self,
+        reference: ArtifactReference,
+        claimed_workload_class: WorkloadClass,
+        claimed_data_classification: DataClassification,
+    ) -> None:
+        """Raise unless the claim matches the artifact's own immutably-
+        bound metadata."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+
+class ArtifactWriterProtocol(Protocol):
+    """**MEGB-03H.2C.3B.2B.2 addition.** The narrow, write-only artifact
+    boundary -- deliberately just ``put``, so a capability-separated view
+    (see :mod:`~src.distributed.artifact_capabilities`) can compose this
+    with :class:`ArtifactReaderProtocol` while still enforcing, at the
+    view layer, which ``artifact_kind`` a given caller may ever write."""
+
+    def put(
+        self, reference: ArtifactReference, content: bytes, metadata: ArtifactMetadata
+    ) -> ArtifactReference:
+        """Durably store ``content`` under ``reference``, bound to
+        ``metadata`` -- see
+        :meth:`~src.distributed.artifact_store.InMemoryArtifactStore.put`."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+
+class BudgetReservationProtocol(Protocol):
+    """**MEGB-03H.2C.3B.2B.2 addition.** The exact-integer-cent budget
+    reservation boundary the coordinator's admission path depends on --
+    every method here operates on ``int`` cents only, never a ``float``."""
+
+    def reserve(
+        self, reservation_id: str, requested_cost_cents: int, requested_worker_count: int
+    ) -> BudgetReservation:
+        """Atomically admit a new reservation, or idempotently return an
+        exact-match existing one."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+    def release(self, reservation_id: str) -> BudgetReservation:
+        """Atomically release a still-``RESERVED`` reservation."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+    def finalize(self, reservation_id: str, actual_cost_cents: int) -> BudgetReservation:
+        """Atomically finalize a still-``RESERVED`` reservation with its
+        measured actual cost."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+    def get(self, reservation_id: str) -> BudgetReservation:
+        """The current reservation of record."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+
 class WorkerRegistryProtocol(Protocol):
     """The worker-fleet membership boundary. Mirrors the
     "Worker-fleet control" abstraction named in
-    ``docs/architecture/gcp-distributed-reference-execution.md`` §3."""
+    ``docs/architecture/gcp-distributed-reference-execution.md`` §3.
+
+    **MEGB-03H.2C.3B.2B.2 addition:** ``get_registration``/
+    ``registration_status`` -- both additive, read-only; no existing
+    method's behavior changes. (``registration_status`` already existed
+    on the concrete B.2B.1 ``InMemoryWorkerRegistry``; this Protocol had
+    simply not yet declared it, since no B.2A/B.2B.1 caller needed it.)"""
 
     def register(self, registration: WorkerRegistration) -> WorkerRegistration:
         """Admit ``registration`` and return the registry's own record of
@@ -292,6 +400,20 @@ class WorkerRegistryProtocol(Protocol):
     def active_worker_participant_ids(self) -> tuple[str, ...]:
         """Every currently active worker's ``worker_participant_id``,
         deterministically ordered."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+    def registration_status(self, worker_participant_id: str):  # type: ignore[no-untyped-def]
+        """The current registration status for ``worker_participant_id``
+        -- typed as a bare return (rather than importing
+        :mod:`~src.distributed.worker_registry_store`, avoiding a needless
+        import-direction dependency from this contract module onto a
+        concrete store module) -- callers compare against
+        :class:`~src.distributed.worker_registry_store.WorkerRegistrationStatus.ACTIVE`."""
+        raise NotImplementedError  # pragma: no cover -- Protocol method
+
+    def get_registration(self, worker_participant_id: str) -> WorkerRegistration:
+        """The full, currently-registered :class:`WorkerRegistration` for
+        ``worker_participant_id``."""
         raise NotImplementedError  # pragma: no cover -- Protocol method
 
 
@@ -314,6 +436,9 @@ __all__ = [
     "ResultStoreProtocol",
     "LeaseStateStoreProtocol",
     "AtomicWorkStoreProtocol",
+    "ArtifactReaderProtocol",
+    "ArtifactWriterProtocol",
+    "BudgetReservationProtocol",
     "WorkerRegistryProtocol",
     "AuditSinkProtocol",
 ]
