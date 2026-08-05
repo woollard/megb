@@ -22,7 +22,14 @@ convention, incapable of:
 
 A caller holding only this capability object has no way to reach the
 backing store's unrestricted ``put`` at all -- there is no attribute or
-method on this class that exposes it."""
+method on this class that exposes it.
+
+**MEGB-03H.2C.3B.2C addition:** :class:`GenerationPlaneArtifactCapability`
+is the structural mirror image, formalizing the trusted publisher named
+above as a real capability-separated class rather than a raw test
+helper calling the store directly. See
+:mod:`~src.distributed.candidate_manifest` for the immutable,
+checksummed manifest this capability's publications are recorded into."""
 
 from src.distributed._checksums import InvalidDistributedProvenanceError
 from src.distributed.artifact_store import ArtifactMetadata
@@ -36,6 +43,38 @@ class ArtifactCapabilityViolationError(InvalidDistributedProvenanceError):
     outside what it structurally permits -- here, publishing anything
     other than a ``RESULT_ARTIFACT``-kind reference through
     :meth:`WorkerArtifactCapability.publish_result`."""
+
+
+class GenerationPlaneArtifactCapability:
+    """**MEGB-03H.2C.3B.2C addition.** The one object a trusted candidate
+    publisher uses to create candidate-manifest artifacts. Composes only
+    a bare :class:`~src.distributed.protocols.ArtifactWriterProtocol` --
+    no reference to any read boundary, work store, budget store, worker
+    registry, or audit sink is ever held. This is the structural mirror
+    image of :class:`WorkerArtifactCapability`: where that class can
+    publish only ``RESULT_ARTIFACT`` and never read/write a candidate,
+    this class can publish only ``CANDIDATE_MANIFEST_ENTRY`` and has no
+    read method of any kind -- it cannot resolve a result artifact,
+    inspect a work record, or observe budget/audit state, because it
+    holds no such reference at all, not merely by convention."""
+
+    def __init__(self, writer: ArtifactWriterProtocol) -> None:
+        self._writer = writer
+
+    def publish_candidate(
+        self, reference: ArtifactReference, content: bytes, metadata: ArtifactMetadata
+    ) -> ArtifactReference:
+        """Publish ``content``/``metadata`` under ``reference`` -- but
+        only if ``reference.artifact_kind == ArtifactKind.CANDIDATE_MANIFEST_ENTRY``.
+        Raises :class:`ArtifactCapabilityViolationError` for any other
+        kind, including ``RESULT_ARTIFACT`` -- the generation plane can
+        never author or overwrite a result artifact."""
+        if reference.artifact_kind != ArtifactKind.CANDIDATE_MANIFEST_ENTRY:
+            raise ArtifactCapabilityViolationError(
+                f"generation-plane artifact capability may only publish artifact_kind="
+                f"CANDIDATE_MANIFEST_ENTRY, got {reference.artifact_kind!r}"
+            )
+        return self._writer.put(reference, content, metadata)
 
 
 class WorkerArtifactCapability:
@@ -88,5 +127,6 @@ class WorkerArtifactCapability:
 
 __all__ = [
     "ArtifactCapabilityViolationError",
+    "GenerationPlaneArtifactCapability",
     "WorkerArtifactCapability",
 ]
