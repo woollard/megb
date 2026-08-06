@@ -2,6 +2,8 @@
 for this checkpoint's own new modules
 (``src/distributed/provenance_manifest.py``,
 ``src/distributed/calibration_provenance_report.py``,
+``src/distributed/provenance_manifest_lock.py`` (added by this
+checkpoint's own correction),
 ``src/reference/distributed_provenance_reconciliation.py``). Extends,
 without modifying, ``tests/test_distributed_dependency_direction.py``'s
 and ``tests/test_offline_e2e_qualification_boundaries.py``'s own
@@ -22,7 +24,11 @@ from src.distributed.provenance_manifest import DistributedProvenanceManifest
 from tests.test_distributed_dependency_direction import _distributed_files
 from tests.test_execution_dependency_direction import _imported_module_names
 
-_DISTRIBUTED_MODULE_STEMS = ("provenance_manifest", "calibration_provenance_report")
+_DISTRIBUTED_MODULE_STEMS = (
+    "provenance_manifest",
+    "calibration_provenance_report",
+    "provenance_manifest_lock",
+)
 
 _REFERENCE_MODULE_PATH = pathlib.Path(
     "src/reference/distributed_provenance_reconciliation.py"

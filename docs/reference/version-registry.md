@@ -73,8 +73,9 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `CHECKSUM_ALGORITHM_VERSION` (`src.distributed`) | `sha256-canonical-json-v1` | `src/distributed/_checksums.py` | The one checksum-derivation algorithm identity shared by **both** `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped types — sha256 over `json.dumps(payload, sort_keys=True)`. Deliberately the same name as no other constant in this table (`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` is a distinct, unrelated identity scoped to G.4's own synthetic workload checksum) — the two never collide because they are different Python identifiers in different modules; this row exists so this document's own registry is not silently incomplete about which module's `CHECKSUM_ALGORITHM_VERSION` it is describing. Introduced by MEGB-03H.2C.3B.1; unchanged by MEGB-03H.2C.3B.2A, which reuses it rather than defining a second one. See "MEGB-03H.2C.3B addendum" below. |
 | `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b2b3-fault-conformance-v1` | `src/distributed/fault_conformance.py` | `FaultConformanceReport`/`ConformanceEntry` field shape — the safe, committed MEGB-03H.2C.3B.2B.3 in-process fault-injection/recovery conformance report (mirrors `H2C2B_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, explicitly-allowlisted pattern). A schema family independent of both `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` above — this report proves conformance of code stamped with those schemas, but is not itself stamped with either. Introduced by MEGB-03H.2C.3B.2B.3; persisted at `docs/measurement/megb-03h2c3b2b3-fault-conformance-report.{json,md}`. |
 | `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` | `megb-03h2c3b2c-offline-e2e-qualification-v2` | `src/distributed/offline_e2e_qualification_report.py` | `OfflineE2EQualificationReport` field shape — the safe, committed MEGB-03H.2C.3B.2C offline end-to-end synthetic distributed qualification report (mirrors `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, exact-count-validated, derived-readiness pattern). A schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION` above — this report references the fault-conformance report's own checksum by value rather than being stamped with it. Introduced by MEGB-03H.2C.3B.2C; persisted at `docs/measurement/megb-03h2c3b2c-offline-e2e-qualification-report.{json,md}`. Scoped explicitly to offline, provider-neutral, in-process recovery — makes no H.2C.3D, GCP, durable-process, cross-host, or Docker/native-Linux-equivalence claim. **v1→v2 (MEGB-03H.2C.3B.2C correction):** v1 (never accepted or pushed — superseded, preserved only in git history at commit `edbda37`) recorded only the qualification gate's own output checksums, with no field checking that the *workload class actually used* was the qualification-candidate class rather than the smoke class. v2 adds `distributed_run_intent`, `qualifying_workload_class`, and `qualification_gate_ready` as explicit, safe, closed-enum-validated fields, plus `qualification_workload_consistent` as a fourth, wholly-derived field (never caller-settable) folded into `readiness`. No `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` bump was required for this correction — `WorkloadClass.SYNTHETIC_QUALIFICATION_CANDIDATE` already existed in the accepted v3 enum before this correction; using it correctly is not a legal-value-set expansion. |
-| `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-v1` | `src/distributed/provenance_manifest.py` | `DistributedProvenanceManifest` field shape — the typed, immutable, versioned, self-checksummed, **protected** (never committed as-is) artifact bundling a `DistributedRunContext`, its full `WorkerExecutionContext` set, their `MixedWorkerProvenanceSummary`/`QualificationIdentity`/qualification-gate readiness, `generation_command`/`code_revision`, and a `SafeRedactedSummary`. A fourth, independent `src/distributed/` schema family (alongside `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` above). Introduced by MEGB-03H.2C.3B.3; never persisted to a fixed repository path (caller-managed temporary/synthetic path only, per this checkpoint's own frozen design). See "MEGB-03H.2C.3B.3 addendum" below. |
-| `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b3-calibration-provenance-report-v1` | `src/distributed/calibration_provenance_report.py` | `CalibrationProvenanceReport` field shape — the safe, committed MEGB-03H.2C.3B.3 calibration-provenance qualification-evidence report (mirrors `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, derived-readiness pattern). A fifth, independent `src/distributed/` schema family. Binds the provenance-manifest checksum, calibration run-context checksum, participating worker-context checksums, a safe topology histogram, intended-vs-measured peak concurrency, and invocation counts; `readiness`/`blocker_reasons` are always derived, never independently caller-settable. Introduced by MEGB-03H.2C.3B.3; persisted at `docs/measurement/megb-03h2c3b3-calibration-provenance-report.{json,md}`. Scoped explicitly to the offline calibration-provenance evidence chain — makes no GCP or H.2C.3C credential-boundary readiness claim. See "MEGB-03H.2C.3B.3 addendum" below. |
+| `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-v1` | `src/distributed/provenance_manifest.py` | `DistributedProvenanceManifest` field shape — the typed, immutable, versioned, self-checksummed, **protected** (never committed as-is) artifact bundling a `DistributedRunContext`, its full `WorkerExecutionContext` set, their `MixedWorkerProvenanceSummary`/`QualificationIdentity`/qualification-gate readiness, `generation_command`/`code_revision`, and a `SafeRedactedSummary`. A fourth, independent `src/distributed/` schema family (alongside `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` above). Introduced by MEGB-03H.2C.3B.3. Field shape unchanged by the B.3 correction, but its persistence disposition is: as of the correction, the full manifest IS persisted — as **synthetic protected evidence**, never real HumanEval/candidate evidence — under the gitignored `artifacts/privileged/distributed_provenance/` path, anchored by the new committed `MANIFEST_LOCK_SCHEMA_VERSION` lock below (superseding the original checkpoint's "never persisted to a fixed repository path" design, which left the safe report's `provenance_manifest_checksum` a dangling, unverifiable reference). See "MEGB-03H.2C.3B.3 addendum" and "MEGB-03H.2C.3B.3 correction addendum" below. |
+| `MANIFEST_LOCK_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-lock-v1` | `src/distributed/provenance_manifest_lock.py` | `ManifestLockEntry`/`ManifestLockFile` field shape — the small, committed, non-privileged lock anchoring the protected `DistributedProvenanceManifest`'s identity (artifact ID, protected path, schema/checksum-algorithm versions, full manifest checksum, distributed-run-context checksum, expected worker count, safe topology-summary checksum, size, generation command, generating code revision/dirty state, authorized consumers) without embedding the manifest's own bytes. A sixth, independent `src/distributed/` schema family. Mirrors `src/reference/partition_lock.py`'s already-established privileged-artifact-lock pattern exactly. Committed at `artifacts/reference/distributed_provenance/calibration_provenance_manifest.lock.json`; the protected manifest itself lives at `artifacts/privileged/distributed_provenance/calibration_provenance_manifest.json` (gitignored). Introduced by the MEGB-03H.2C.3B.3 correction. See "MEGB-03H.2C.3B.3 correction addendum" below. |
+| `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b3-calibration-provenance-report-v2` | `src/distributed/calibration_provenance_report.py` | `CalibrationProvenanceReport` field shape — the safe, committed MEGB-03H.2C.3B.3 calibration-provenance qualification-evidence report (mirrors `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, derived-readiness pattern). A fifth, independent `src/distributed/` schema family. Binds the provenance-manifest checksum, calibration run-context checksum, participating worker-context checksums, a safe topology histogram, intended-vs-measured peak concurrency, and invocation counts; `readiness`/`blocker_reasons` are always derived, never independently caller-settable. **v1→v2 (correction)**: v1 raised a hard constructor error when `measured_peak_concurrency` exceeded `intended_concurrency` or the personal-bootstrap ceiling, conflating a *failed qualification result* (valid evidence, bad outcome) with a *structural defect* (malformed data) — v2 adds three closed blocker-reason members (`MEASURED_CONCURRENCY_EXCEEDS_INTENDED`, `MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY`, `PERSONAL_CONCURRENCY_CEILING_EXCEEDED`) and folds all three concurrency criteria into ordinary derived blocker reasons, never a raised error. The one real persisted v1 artifact (`docs/measurement/megb-03h2c3b3-calibration-provenance-report.{json,md}`, committed at `232d0af`) is superseded by this correction's regenerated v2 report at the same path. Stale v1 reports are rejected outright (regression-tested). Scoped explicitly to the offline calibration-provenance evidence chain — makes no GCP or H.2C.3C credential-boundary readiness claim. See "MEGB-03H.2C.3B.3 addendum" and "MEGB-03H.2C.3B.3 correction addendum" below. |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
 `BENCHMARK_PLAN_VERSION`, `SYNTHETIC_WORKLOAD_VERSION`,
@@ -775,3 +776,86 @@ confirmed unchanged. `ReferenceRunContext`, `ReferenceResultCacheKey`,
 and `ReferenceAuditRecord` remain untouched, per this checkpoint's own
 explicit scope (their distributed-production integration remains a
 pre-H.2C.3F requirement, per the integration map's own summary table).
+
+## MEGB-03H.2C.3B.3 correction addendum: `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` v1→v2, and the protected-manifest lock
+
+This registry's own "MEGB-03H.2C.3B.3 addendum" above predates this
+addendum; recorded here rather than by rewriting that prose, per this
+project's established convention. This correction was authorized after
+the original B.3 checkpoint report but before its acceptance.
+
+**Why v2 exists (qualification-failure semantics).** The original v1
+`CalibrationProvenanceReport.__post_init__` raised
+`InvalidCalibrationProvenanceReportError` — a hard construction-time
+error — whenever `measured_peak_concurrency` exceeded
+`intended_concurrency` or, under `EnvironmentClass.PERSONAL_BOOTSTRAP`,
+`PERSONAL_BOOTSTRAP_MAX_WORKERS` (2). This conflated two fundamentally
+different things: a genuinely malformed/inconsistent report (wrong
+schema version, tampered checksum, an invocation-count partition that
+does not sum) versus a **structurally valid measurement that simply
+fails a qualification criterion** — real evidence, a failed result, not
+malformed data. Hiding a failed criterion behind a raised constructor
+error also meant no safe, checksummed record of the failure could ever
+be retained as negative evidence.
+
+v2 adds three new closed `CalibrationProvenanceBlockerReason` members —
+`MEASURED_CONCURRENCY_EXCEEDS_INTENDED`,
+`MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY` (measured concurrency
+exceeding the admitted worker-topology size, i.e.
+`len(participating_worker_context_checksums)` — a new check; v1 checked
+only against `intended_concurrency`), and
+`PERSONAL_CONCURRENCY_CEILING_EXCEEDED` — and folds all three
+concurrency criteria into `_compute_blocker_reasons` alongside the
+existing gate/provenance/reconciliation/count-partition checks. Each now
+produces a valid, self-checksummed `BLOCKED_CALIBRATION_PROVENANCE`
+report with the measured counts preserved, exactly like every other
+qualification criterion. The `__post_init__` invariants that remain hard
+construction errors are unchanged: unsupported schema version, tampered
+`report_checksum`, a malformed/out-of-range count, and an invocation
+count partition that does not sum to `admitted_invocation_count`.
+
+**Persisted-artifact search and disposition.** Repository-wide grep for
+`megb-03h2c3b3-calibration-provenance-report-v1` found exactly one real
+persisted artifact pair:
+`docs/measurement/megb-03h2c3b3-calibration-provenance-report.{json,md}`,
+committed at `232d0af`. That v1 report is superseded by this
+correction's regenerated v2 report at the same path (same underlying
+synthetic evidence, re-derived under the v2 schema — the report content
+does not otherwise change, since the original synthetic run's measured
+concurrency never actually exceeded any bound). The superseded v1
+content remains recoverable from git history at `232d0af` and is never
+rewritten in place. A stale-v1-schema-version rejection test and a v2
+round-trip test proving a `BLOCKED_CALIBRATION_PROVENANCE` report is
+safely retained as negative evidence were both added to
+`tests/test_calibration_provenance_report.py`.
+
+**Protected-manifest lock (new `MANIFEST_LOCK_SCHEMA_VERSION`).** The
+original B.3 checkpoint's own design explicitly stated the full
+`DistributedProvenanceManifest` is "never persisted to any file — only
+the safe report is written" (`docs/reference/megb-03h2c3b3-calibration-provenance-integration-design.md`).
+This meant the committed safe report's `provenance_manifest_checksum`
+field could never actually be verified against a real, persisted
+artifact — a dangling checksum, contradicting this same design's own
+stated principle that "a checksum without a persisted, verifiable
+referenced manifest is insufficient." This correction implements the
+already-established `src/reference/partition_lock.py` protected-artifact
+pattern for the manifest: a new schema family,
+`MANIFEST_LOCK_SCHEMA_VERSION` = `megb-03h2c3b3-distributed-provenance-manifest-lock-v1`
+(`src/distributed/provenance_manifest_lock.py`) — the full manifest is
+written under a gitignored `artifacts/privileged/distributed_provenance/`
+path (explicitly labeled synthetic protected evidence, never real
+HumanEval/candidate evidence); a small, committed, non-privileged lock
+file at `artifacts/reference/distributed_provenance/calibration_provenance_manifest.lock.json`
+anchors the protected artifact's identity via checksums, counts, and
+generation provenance, without embedding the manifest's own bytes.
+`DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION`'s own row above (still
+`megb-03h2c3b3-distributed-provenance-manifest-v1`, unchanged — the
+manifest's own field shape did not change, only where/how it is
+persisted) is updated by this correction to reflect the new lock-backed
+persistence path; see that row's own text for the current disposition.
+
+No modification to `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`,
+`DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, `CALIBRATION_SCHEMA_VERSION`,
+`RESULT_SCHEMA_VERSION`, `CACHE_KEY_SCHEMA_VERSION`, or
+`AUDIT_RECORD_SCHEMA_VERSION` — all confirmed unchanged by this
+correction.

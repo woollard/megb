@@ -74,10 +74,13 @@ def test_report_round_trips() -> None:
 
 
 def test_current_schema_version() -> None:
-    """Confirms the exact, intentional new schema-family identity."""
+    """Confirms the exact, intentional new schema-family identity. Bumped
+    v1->v2 by the qualification-failure-semantics correction: v1 treated
+    an excessive-but-valid measured_peak_concurrency as a construction
+    error; v2 folds it into blocker_reasons like every other criterion."""
     assert (
         CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION
-        == "megb-03h2c3b3-calibration-provenance-report-v1"
+        == "megb-03h2c3b3-calibration-provenance-report-v2"
     )
 
 
@@ -141,23 +144,77 @@ def test_smoke_intent_gate_blocked_cannot_qualify() -> None:
     )
 
 
-def test_measured_peak_concurrency_cannot_exceed_intended() -> None:
-    """Actual concurrency exceeding admitted topology is a construction-
-    time hard error, never merely a readiness input."""
-    with pytest.raises(InvalidCalibrationProvenanceReportError):
-        _build(intended_concurrency=2, measured_peak_concurrency=3)
+def test_measured_peak_concurrency_exceeding_intended_blocks_not_raises() -> None:
+    """A structurally valid measurement exceeding intended_concurrency is
+    a failed qualification result, not malformed data: it must yield a
+    valid, self-checksummed BLOCKED_CALIBRATION_PROVENANCE report --
+    never a raised constructor error -- with the measured counts
+    preserved as negative evidence."""
+    three_workers = _WORKER_CHECKSUMS + ("7" * 64,)
+    report = _build(
+        participating_worker_context_checksums=three_workers,
+        intended_concurrency=2,
+        measured_peak_concurrency=3,
+    )
+    assert report.readiness == CalibrationProvenanceReadiness.BLOCKED_CALIBRATION_PROVENANCE
+    assert (
+        CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_INTENDED.value
+        in report.blocker_reasons
+    )
+    assert (
+        CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY.value
+        not in report.blocker_reasons
+    )
+    assert report.measured_peak_concurrency == 3
+    assert report.intended_concurrency == 2
+    assert len(report.report_checksum) == 64
 
 
-def test_measured_peak_concurrency_cannot_exceed_personal_ceiling() -> None:
-    """Personal qualification concurrency must never exceed the
-    PERSONAL_BOOTSTRAP_MAX_WORKERS ceiling (2), even if intended
-    concurrency itself is (incorrectly) claimed higher."""
-    with pytest.raises(InvalidCalibrationProvenanceReportError):
-        _build(
-            environment_class=EnvironmentClass.PERSONAL_BOOTSTRAP.value,
-            intended_concurrency=PERSONAL_BOOTSTRAP_MAX_WORKERS + 1,
-            measured_peak_concurrency=PERSONAL_BOOTSTRAP_MAX_WORKERS + 1,
-        )
+def test_measured_peak_concurrency_exceeding_admitted_topology_blocks() -> None:
+    """A measurement exceeding the admitted worker-topology size (the
+    count of participating_worker_context_checksums, i.e. two workers by
+    the default fixture) is likewise a failed qualification result, not
+    a construction error -- distinct from exceeding intended_concurrency."""
+    report = _build(intended_concurrency=10, measured_peak_concurrency=3)
+    assert report.readiness == CalibrationProvenanceReadiness.BLOCKED_CALIBRATION_PROVENANCE
+    assert (
+        CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY.value
+        in report.blocker_reasons
+    )
+    assert (
+        CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_INTENDED.value
+        not in report.blocker_reasons
+    )
+    assert report.measured_peak_concurrency == 3
+
+
+def test_measured_peak_concurrency_exceeding_personal_ceiling_blocks() -> None:
+    """Personal qualification concurrency exceeding the
+    PERSONAL_BOOTSTRAP_MAX_WORKERS ceiling (2) blocks rather than raises,
+    even when intended concurrency itself is (incorrectly) claimed
+    higher -- isolated from the other two concurrency checks by keeping
+    the admitted worker-topology size equal to the measured value."""
+    three_workers = _WORKER_CHECKSUMS + ("7" * 64,)
+    report = _build(
+        environment_class=EnvironmentClass.PERSONAL_BOOTSTRAP.value,
+        participating_worker_context_checksums=three_workers,
+        intended_concurrency=PERSONAL_BOOTSTRAP_MAX_WORKERS + 1,
+        measured_peak_concurrency=PERSONAL_BOOTSTRAP_MAX_WORKERS + 1,
+    )
+    assert report.readiness == CalibrationProvenanceReadiness.BLOCKED_CALIBRATION_PROVENANCE
+    assert (
+        CalibrationProvenanceBlockerReason.PERSONAL_CONCURRENCY_CEILING_EXCEEDED.value
+        in report.blocker_reasons
+    )
+    assert (
+        CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_INTENDED.value
+        not in report.blocker_reasons
+    )
+    assert (
+        CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY.value
+        not in report.blocker_reasons
+    )
+    assert report.measured_peak_concurrency == PERSONAL_BOOTSTRAP_MAX_WORKERS + 1
 
 
 def test_measured_peak_concurrency_above_personal_ceiling_allowed_non_personal() -> None:
@@ -272,6 +329,35 @@ def test_report_rejects_stale_schema_version() -> None:
     )
     with pytest.raises(InvalidDistributedProvenanceError):
         calibration_provenance_report_from_dict(data)
+
+
+def test_report_rejects_stale_v1_schema_version() -> None:
+    """A report stamped with the superseded v1 schema version -- which
+    predates the qualification-failure-semantics correction and could
+    have hidden a failed concurrency criterion behind a raised
+    constructor error -- is rejected outright, never silently accepted
+    as current."""
+    report = _build()
+    data = calibration_provenance_report_to_dict(report)
+    data["calibration_provenance_report_schema_version"] = (
+        "megb-03h2c3b3-calibration-provenance-report-v1"
+    )
+    with pytest.raises(InvalidDistributedProvenanceError):
+        calibration_provenance_report_from_dict(data)
+
+
+def test_v2_round_trip_preserves_blocked_report_as_negative_evidence() -> None:
+    """A BLOCKED_CALIBRATION_PROVENANCE report arising from valid
+    evidence that simply failed a qualification criterion round-trips
+    exactly under schema v2, proving it can be safely retained as
+    negative evidence rather than discarded or hidden."""
+    report = _build(intended_concurrency=10, measured_peak_concurrency=3)
+    assert report.readiness == CalibrationProvenanceReadiness.BLOCKED_CALIBRATION_PROVENANCE
+    data = calibration_provenance_report_to_dict(report)
+    rebuilt = calibration_provenance_report_from_dict(data)
+    assert rebuilt == report
+    assert rebuilt.blocker_reasons == report.blocker_reasons
+    assert rebuilt.measured_peak_concurrency == 3
 
 
 def test_report_rejects_unsorted_topology_histogram() -> None:

@@ -14,11 +14,17 @@ established shape exactly.
     Read-only: reloads the already-committed JSON report and
     re-validates it. Schema version, checksum, peak-concurrency
     invariants, and derived readiness/blocker-reasons are all enforced
-    by the report's own constructor. Runs no test and builds no
+    by the report's own constructor. Also completes the
+    report -> lock -> protected-manifest artifact-verification chain:
+    loads the committed manifest lock, confirms its own
+    ``manifest_checksum`` matches the safe report's
+    ``provenance_manifest_checksum`` (never a dangling reference), and
+    re-verifies the (gitignored, synthetic-protected-evidence) manifest
+    bytes on disk against that lock. Runs no test and builds no new
     synthetic manifest/calibration evidence.
 
 Neither command runs Docker, touches the network, or accesses any cloud
-resource. Prints only safe report fields -- never manifest or
+resource. Prints only safe report/lock fields -- never manifest or
 calibration-record contents."""
 
 # This module's build/verify/main shape intentionally mirrors
@@ -34,19 +40,29 @@ from pathlib import Path
 
 import pytest
 
+from src.distributed._checksums import InvalidDistributedProvenanceError
 from src.distributed.calibration_provenance_report import (
     InvalidCalibrationProvenanceReportError,
     calibration_provenance_report_from_dict,
+)
+from src.distributed.provenance_manifest_lock import (
+    DEFAULT_MANIFEST_LOCK_PATH,
+    load_lock_file,
+    verify_against_lock,
 )
 
 DEFAULT_JSON = Path("docs/measurement/megb-03h2c3b3-calibration-provenance-report.json")
 _SUITE_PATH = Path("tests/test_calibration_provenance_integration.py")
 
 
-def verify(json_path: Path = DEFAULT_JSON) -> int:
-    """Reload and re-validate the committed report. Returns 0 and prints
-    a one-line summary if it is valid; returns 1 and prints the specific
-    validation failure otherwise."""
+def verify(  # pylint: disable=too-many-return-statements
+    json_path: Path = DEFAULT_JSON, lock_path: Path = DEFAULT_MANIFEST_LOCK_PATH
+) -> int:
+    """Reload and re-validate the committed report, then complete the
+    report -> lock -> protected-manifest artifact-verification chain.
+    Returns 0 and prints a one-line summary if everything is valid;
+    returns 1 and prints the specific validation failure otherwise.
+    Never prints protected manifest contents."""
     data = json.loads(json_path.read_text(encoding="utf-8"))
     try:
         report = calibration_provenance_report_from_dict(data)
@@ -56,11 +72,35 @@ def verify(json_path: Path = DEFAULT_JSON) -> int:
             file=sys.stderr,
         )
         return 1
+
+    lock = load_lock_file(lock_path)
+    if not lock.entries:
+        print(f"Protected-manifest lock {lock_path} has no entries", file=sys.stderr)
+        return 1
+    lock_entry = lock.entries[0]
+    if lock_entry.manifest_checksum != report.provenance_manifest_checksum:
+        print(
+            "Protected-manifest lock checksum does not match the safe report's own "
+            f"provenance_manifest_checksum ({lock_entry.manifest_checksum!r} != "
+            f"{report.provenance_manifest_checksum!r})",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        manifest_results = verify_against_lock(lock)
+    except InvalidDistributedProvenanceError as exc:
+        print(f"Protected manifest INVALID ({lock_path}): {exc}", file=sys.stderr)
+        return 1
+    if not all(result.passed for result in manifest_results):
+        print(f"Protected-manifest verification FAILED: {manifest_results}", file=sys.stderr)
+        return 1
+
     print(
         f"Calibration-provenance report OK: readiness={report.readiness.value}, "
         f"admitted={report.admitted_invocation_count}, "
         f"completed={report.completed_invocation_count}, "
-        f"checksum={report.report_checksum}"
+        f"checksum={report.report_checksum}, "
+        f"protected_manifest_checksum={lock_entry.manifest_checksum}"
     )
     return 0
 

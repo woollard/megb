@@ -2,6 +2,7 @@
 the full calibration-provenance evidence chain end-to-end, in-process:
 
 1. creates a synthetic distributed provenance manifest;
+1b. persists it as synthetic protected evidence plus a committed lock;
 2. creates a calibration run context bound to it;
 3. creates invocation records across (at least) two workers, with a
    real, ``threading.Barrier``-forced concurrent overlap measuring
@@ -10,13 +11,23 @@ the full calibration-provenance evidence chain end-to-end, in-process:
 5. constructs the safe qualification-evidence report;
 6. writes safe JSON/Markdown output;
 7. verifies the artifact chain from the report back to the manifest and
-   invocation records.
+   invocation records;
+8. verifies the report -> lock -> protected-manifest chain completes,
+   with no dangling manifest checksum.
 
 No candidate code, HumanEval cases, oracle values, Docker, or cloud
-resources anywhere in this file. The full (protected) manifest and
-calibration records are never persisted to any file -- only the safe
-report is written, to ``docs/measurement/``, mirroring the already-
-accepted B.2C offline-E2E-qualification report's own precedent.
+resources anywhere in this file. Calibration records are never
+persisted to any file. The full ``DistributedProvenanceManifest`` IS
+persisted -- as **synthetic protected evidence**, never real
+HumanEval/candidate evidence -- to the gitignored
+``artifacts/privileged/distributed_provenance/`` path via
+``src.distributed.provenance_manifest_lock``, with a small, committed,
+non-privileged lock file anchoring its identity; this correction closes
+the original B.3 checkpoint's own dangling-checksum gap (the safe
+report's ``provenance_manifest_checksum`` previously referenced a
+manifest that was never actually written anywhere verifiable). The safe
+report itself is written to ``docs/measurement/``, mirroring the
+already-accepted B.2C offline-E2E-qualification report's own precedent.
 """
 
 # This file's own _PeakConcurrencyTracker inherently mirrors
@@ -30,6 +41,7 @@ accepted B.2C offline-E2E-qualification report's own precedent.
 # pylint: disable=duplicate-code
 
 import json
+import subprocess
 import threading
 from pathlib import Path
 
@@ -46,6 +58,14 @@ from src.distributed.provenance_manifest import (
     build_distributed_provenance_manifest,
     resolve_worker_context,
 )
+from src.distributed.provenance_manifest_lock import (
+    DEFAULT_MANIFEST_LOCK_PATH,
+    DEFAULT_PROTECTED_MANIFEST_PATH,
+    load_lock_file,
+    verify_against_lock,
+    write_lock_file,
+    write_protected_manifest,
+)
 from src.reference.calibration_schema import CalibrationInvocationRecord, reconcile_all
 from src.reference.distributed_provenance_reconciliation import (
     reconcile_all_invocations,
@@ -56,6 +76,38 @@ from tests._distributed_fixtures import make_run_context, make_two_region_worker
 
 REPORT_JSON_PATH = Path("docs/measurement/megb-03h2c3b3-calibration-provenance-report.json")
 REPORT_MD_PATH = Path("docs/measurement/megb-03h2c3b3-calibration-provenance-report.md")
+
+_GENERATION_COMMAND = "pytest tests/test_calibration_provenance_integration.py"
+
+
+def _git_head_sha() -> tuple[str, bool]:
+    """Return (HEAD commit SHA, whether the working tree has uncommitted
+    changes). Best-effort: returns ("unknown", True) if git is
+    unavailable, never raises. Mirrors
+    ``src.reference.partition_lock``'s own ``_git_head_sha()`` exactly;
+    duplicated here (rather than imported) because
+    ``src/distributed/provenance_manifest_lock.py`` itself must never
+    import ``subprocess``, per this package's own established
+    no-subprocess boundary -- git-revision computation is the caller's
+    responsibility, and ``tests/`` is unconstrained by that rule."""
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout
+        return sha, bool(status.strip())
+    except Exception:  # pylint: disable=broad-exception-caught
+        return "unknown", True
 
 
 class _PeakConcurrencyTracker:
@@ -83,7 +135,7 @@ class _PeakConcurrencyTracker:
             self._active -= 1
 
 
-def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: disable=too-many-locals
+def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: disable=too-many-locals,too-many-statements
     """Build the full evidence chain from a synthetic distributed run
     through a safe, committed calibration-provenance report, verifying
     every link back to the manifest and invocation records."""
@@ -93,10 +145,26 @@ def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: dis
     manifest = build_distributed_provenance_manifest(
         run_context,
         (worker_a, worker_b),
-        generation_command="pytest tests/test_calibration_provenance_integration.py",
+        generation_command=_GENERATION_COMMAND,
         code_revision="f" * 40,
     )
     assert manifest.qualification_gate_readiness == "READY"
+
+    # 1b. Persist the full manifest as synthetic protected evidence under
+    # a gitignored path, plus a small committed lock anchoring its
+    # identity -- closes the dangling-checksum gap where the safe
+    # report's provenance_manifest_checksum previously referenced a
+    # manifest that was never written anywhere verifiable.
+    code_revision, code_dirty = _git_head_sha()
+    lock_entry = write_protected_manifest(
+        manifest,
+        generation_command=_GENERATION_COMMAND,
+        generating_code_revision=code_revision,
+        generating_code_dirty=code_dirty,
+        authorized_consumers=("MEGB-03H.2C.3B.3",),
+        protected_path=DEFAULT_PROTECTED_MANIFEST_PATH,
+    )
+    write_lock_file(lock_entry, DEFAULT_MANIFEST_LOCK_PATH)
 
     # 2. Calibration run context bound to the manifest.
     calibration_context = make_context(
@@ -195,9 +263,11 @@ def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: dis
     )
     assert report.readiness == CalibrationProvenanceReadiness.CALIBRATION_PROVENANCE_READY_FOR_3C
 
-    # 6. Safe JSON/Markdown output -- only the safe report is ever
-    # persisted; the full manifest/calibration records above are never
-    # written to any file.
+    # 6. Safe JSON/Markdown output. The safe report is the only artifact
+    # committed to docs/measurement/; the full manifest was already
+    # persisted in step 1b as synthetic protected evidence under a
+    # gitignored path, anchored by the committed lock -- calibration
+    # records themselves are still never written to any file.
     REPORT_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_JSON_PATH.write_text(
         json.dumps(calibration_provenance_report_to_dict(report), indent=2, sort_keys=True) + "\n",
@@ -216,3 +286,16 @@ def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: dis
     assert reloaded.calibration_run_context_checksum == calibration_context.context_checksum
     for worker_checksum in reloaded.participating_worker_context_checksums:
         resolve_worker_context(manifest, worker_checksum)
+
+    # 8. Complete the report -> lock -> protected-manifest chain: the
+    # safe report's own provenance_manifest_checksum must never be a
+    # dangling reference -- it must match the committed lock's own
+    # manifest_checksum, and the lock must itself verify against the
+    # actual protected bytes on disk.
+    reloaded_lock = load_lock_file(DEFAULT_MANIFEST_LOCK_PATH)
+    assert len(reloaded_lock.entries) == 1
+    assert reloaded_lock.entries[0].manifest_checksum == reloaded.provenance_manifest_checksum
+    manifest_verification_results = verify_against_lock(reloaded_lock)
+    assert len(manifest_verification_results) == 1
+    assert manifest_verification_results[0].passed
+    assert manifest_verification_results[0].on_disk_present

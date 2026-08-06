@@ -33,12 +33,21 @@ scientific-result validity -- both are scoped entirely to the offline
 calibration-provenance evidence chain proven by this checkpoint.
 
 **Measured peak concurrency is genuine evidence, never a caller-supplied
-provenance label.** Its bound against ``intended_concurrency`` and,
-under ``EnvironmentClass.PERSONAL_BOOTSTRAP``, against
+provenance label -- but a valid measurement that simply exceeds a
+criterion is a failed qualification result, not malformed data.**
+A structurally valid ``measured_peak_concurrency`` that exceeds
+``intended_concurrency``, exceeds the admitted worker-topology size (the
+count of ``participating_worker_context_checksums``), or -- under
+``EnvironmentClass.PERSONAL_BOOTSTRAP`` -- exceeds
 :data:`~src.distributed.personal_policy.PERSONAL_BOOTSTRAP_MAX_WORKERS`,
-is enforced in ``__post_init__`` as a hard construction-time error --
-an impossible measurement is a construction error, never merely a
-readiness input a caller could otherwise silently accept.
+never raises a construction error. Each instead folds into
+``blocker_reasons``/``readiness`` exactly like every other qualification
+criterion, producing a valid, self-checksummed
+``BLOCKED_CALIBRATION_PROVENANCE`` report that safely retains the
+measured counts as negative evidence. Only genuine structural/integrity
+defects (unsupported schema version, checksum tampering, a malformed or
+out-of-range count, an inconsistent count partition, an unsafe field) are
+construction errors.
 """
 
 from dataclasses import dataclass
@@ -57,14 +66,18 @@ from src.distributed.personal_policy import PERSONAL_BOOTSTRAP_MAX_WORKERS
 from src.distributed.provenance import DISTRIBUTED_PROVENANCE_SCHEMA_VERSION, EnvironmentClass
 from src.distributed.qualification_gate import ProvenanceGateFailureReason, ProvenanceGateReadiness
 
-CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION = "megb-03h2c3b3-calibration-provenance-report-v1"
+CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION = "megb-03h2c3b3-calibration-provenance-report-v2"
 
 
 class InvalidCalibrationProvenanceReportError(InvalidDistributedProvenanceError):
     """Raised when a :class:`CalibrationProvenanceReport`'s fields are
-    internally inconsistent, its own self-checksum does not match its
-    recomputed contents, or a measured-peak-concurrency invariant is
-    violated."""
+    structurally invalid -- an unsupported schema version, a tampered or
+    corrupted self-checksum, a malformed or out-of-range count, an
+    inconsistent invocation-count partition, or a ``blocker_reasons``/
+    ``readiness`` value inconsistent with the recomputed derivation.
+    Never raised for a merely-failed qualification criterion (e.g. an
+    excessive but structurally valid measured peak concurrency) -- those
+    instead produce a valid ``BLOCKED_CALIBRATION_PROVENANCE`` report."""
 
 
 class CalibrationProvenanceReadiness(str, Enum):
@@ -81,11 +94,21 @@ class CalibrationProvenanceBlockerReason(str, Enum):
     specific ways readiness can block, distinct from
     :class:`~src.distributed.qualification_gate.ProvenanceGateFailureReason`
     (which this report also folds in when the manifest's own gate is not
-    READY)."""
+    READY).
+
+    The three ``*_CONCURRENCY_*`` members below were added in schema v2:
+    each covers a structurally valid measurement that simply fails a
+    qualification criterion -- never a construction-time error (see
+    :class:`InvalidCalibrationProvenanceReportError`)."""
 
     INVOCATION_PROVENANCE_UNRESOLVED = "INVOCATION_PROVENANCE_UNRESOLVED"
     TASK_RECONCILIATION_FAILED = "TASK_RECONCILIATION_FAILED"
     INCOMPLETE_INVOCATION_EVIDENCE = "INCOMPLETE_INVOCATION_EVIDENCE"
+    MEASURED_CONCURRENCY_EXCEEDS_INTENDED = "MEASURED_CONCURRENCY_EXCEEDS_INTENDED"
+    MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY = (
+        "MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY"
+    )
+    PERSONAL_CONCURRENCY_CEILING_EXCEEDED = "PERSONAL_CONCURRENCY_CEILING_EXCEEDED"
 
 
 _VALID_GATE_READINESS = frozenset(member.value for member in ProvenanceGateReadiness)
@@ -262,22 +285,11 @@ class CalibrationProvenanceReport:  # pylint: disable=too-many-instance-attribut
                 f"({self.incomplete_invocation_count})"
             )
 
-        # Hard invariant: measured peak concurrency is genuine evidence,
-        # never a caller-supplied provenance label -- an impossible
-        # measurement is rejected outright, not merely blocked.
-        if self.measured_peak_concurrency > self.intended_concurrency:
-            raise InvalidCalibrationProvenanceReportError(
-                f"measured_peak_concurrency ({self.measured_peak_concurrency}) exceeds "
-                f"intended_concurrency ({self.intended_concurrency}) -- impossible measurement"
-            )
-        if (
-            self.environment_class == EnvironmentClass.PERSONAL_BOOTSTRAP.value
-            and self.measured_peak_concurrency > PERSONAL_BOOTSTRAP_MAX_WORKERS
-        ):
-            raise InvalidCalibrationProvenanceReportError(
-                f"measured_peak_concurrency ({self.measured_peak_concurrency}) exceeds the "
-                f"personal-bootstrap ceiling ({PERSONAL_BOOTSTRAP_MAX_WORKERS})"
-            )
+        # Measured peak concurrency exceeding intended_concurrency, the
+        # admitted worker-topology size, or (under PERSONAL_BOOTSTRAP) the
+        # personal-bootstrap ceiling is a *failed qualification result*,
+        # not malformed data -- it is folded into
+        # expected_blocker_reasons below, never raised here.
 
         expected_blocker_reasons = _expected_blocker_reasons(self)
         if not isinstance(self.blocker_reasons, tuple) or not all(
@@ -325,7 +337,7 @@ class CalibrationProvenanceReport:  # pylint: disable=too-many-instance-attribut
         object.__setattr__(self, "report_checksum", expected_checksum)
 
 
-def _compute_blocker_reasons(  # pylint: disable=too-many-arguments
+def _compute_blocker_reasons(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     *,
     qualification_gate_readiness: str,
     qualification_gate_missing_dimensions: tuple[str, ...],
@@ -335,6 +347,10 @@ def _compute_blocker_reasons(  # pylint: disable=too-many-arguments
     completed_invocation_count: int,
     invalid_invocation_count: int,
     incomplete_invocation_count: int,
+    measured_peak_concurrency: int,
+    intended_concurrency: int,
+    admitted_worker_count: int,
+    environment_class: str,
 ) -> tuple[str, ...]:
     """Compute the exact, sorted set of blocker reasons these raw facts
     imply -- the single source of truth both
@@ -342,7 +358,15 @@ def _compute_blocker_reasons(  # pylint: disable=too-many-arguments
     ``CalibrationProvenanceReport.__post_init__`` (validating an already-
     constructed instance) call, so the two can never drift apart. Empty
     if and only if every requirement for
-    ``CALIBRATION_PROVENANCE_READY_FOR_3C`` holds."""
+    ``CALIBRATION_PROVENANCE_READY_FOR_3C`` holds.
+
+    A structurally valid ``measured_peak_concurrency`` that exceeds
+    ``intended_concurrency``, exceeds ``admitted_worker_count`` (the
+    admitted worker-topology size), or -- under
+    ``EnvironmentClass.PERSONAL_BOOTSTRAP`` -- exceeds
+    :data:`~src.distributed.personal_policy.PERSONAL_BOOTSTRAP_MAX_WORKERS`,
+    is a failed qualification criterion, not malformed data: each folds
+    in here as an ordinary blocker reason, never a construction error."""
     reasons: set[str] = set()
     if qualification_gate_readiness != ProvenanceGateReadiness.READY.value:
         reasons.update(qualification_gate_missing_dimensions)
@@ -356,6 +380,17 @@ def _compute_blocker_reasons(  # pylint: disable=too-many-arguments
         or completed_invocation_count != admitted_invocation_count
     ):
         reasons.add(CalibrationProvenanceBlockerReason.INCOMPLETE_INVOCATION_EVIDENCE.value)
+    if measured_peak_concurrency > intended_concurrency:
+        reasons.add(CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_INTENDED.value)
+    if measured_peak_concurrency > admitted_worker_count:
+        reasons.add(
+            CalibrationProvenanceBlockerReason.MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY.value
+        )
+    if (
+        environment_class == EnvironmentClass.PERSONAL_BOOTSTRAP.value
+        and measured_peak_concurrency > PERSONAL_BOOTSTRAP_MAX_WORKERS
+    ):
+        reasons.add(CalibrationProvenanceBlockerReason.PERSONAL_CONCURRENCY_CEILING_EXCEEDED.value)
     return tuple(sorted(reasons))
 
 
@@ -372,6 +407,10 @@ def _expected_blocker_reasons(report: "CalibrationProvenanceReport") -> tuple[st
         completed_invocation_count=report.completed_invocation_count,
         invalid_invocation_count=report.invalid_invocation_count,
         incomplete_invocation_count=report.incomplete_invocation_count,
+        measured_peak_concurrency=report.measured_peak_concurrency,
+        intended_concurrency=report.intended_concurrency,
+        admitted_worker_count=len(report.participating_worker_context_checksums),
+        environment_class=report.environment_class,
     )
 
 
@@ -527,6 +566,10 @@ def build_calibration_provenance_report(  # pylint: disable=too-many-arguments,t
         completed_invocation_count=completed_invocation_count,
         invalid_invocation_count=invalid_invocation_count,
         incomplete_invocation_count=incomplete_invocation_count,
+        measured_peak_concurrency=measured_peak_concurrency,
+        intended_concurrency=intended_concurrency,
+        admitted_worker_count=len(participating_worker_context_checksums),
+        environment_class=environment_class,
     )
     readiness = (
         CalibrationProvenanceReadiness.BLOCKED_CALIBRATION_PROVENANCE
