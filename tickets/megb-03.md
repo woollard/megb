@@ -2239,6 +2239,238 @@ qualification) and **MEGB-03H.2C.3B.3** (calibration/qualification
 provenance integration) remain unaffected by this further 1/2/3
 decomposition of B.2B itself — both unchanged in scope and sequencing.
 
+### Approved MEGB-03H.2C.3 Company-Playground-First Amendment
+
+Authorized as a **ticket-only** planning amendment, positioned here per
+this ticket's own established amendment-precedence convention: it
+supplements the "Approved MEGB-03H.2C.3 Planning Amendment" above
+(specifically §3's two-environment promotion model and §7's checkpoint
+decomposition table, both of which **remain preserved verbatim above as
+historical context** and are not rewritten) and does not disturb the
+"Approved MEGB-03H.2C.3B[.2/.2B] Decomposition Amendment" sections, which
+govern only the already-accepted B.1–B.3 sub-sequence and are unaffected.
+**This amendment installs a sequencing/scope change only.** It does not
+authorize `gcloud` invocation, authentication, inspection of the company
+project, billing access, API enablement, IAM change, resource creation,
+Docker execution, privileged-evidence access, or beginning MEGB-03H.2C.3E
+or MEGB-03H.2C.3F — each still requires its own separate, explicit
+authorization, per this ticket's own established discipline.
+
+#### 1. Reason for the amendment
+
+A Standard AI company GCP playground is now available. The two-environment
+promotion model in the "Approved MEGB-03H.2C.3 Planning Amendment" §3 was
+designed around a **temporary personal-account bootstrap** used to prove
+distributed-execution mechanics before a company environment existed, and
+a later **personal-to-company promotion** carrying that proof forward. With
+the company playground already available, that temporary environment and
+its promotion step serve no remaining purpose: every mechanic the personal
+environment was meant to de-risk (Spot recovery, at-least-once idempotency,
+deterministic ordering, container cleanup, telemetry-collector
+selection/quality, cost-enforcement) can be qualified directly in the
+company playground, which is the only environment ever eligible to
+produce real scientific evidence in the first place (§3's own "Standard AI
+company playground" row, unchanged). Skipping the personal environment
+removes an entire class of promotion risk
+(`docs/operations/gcp-environment-promotion.md` §1.4's "what may never be
+promoted" list, and the "zero personal-resource imports" qualification-gate
+item) by never creating anything to import from.
+
+#### 2. Corrected checkpoint sequence (supersedes §7's `H.2C.3C`–`H.2C.3H` rows for sequencing purposes; §7's own table remains unedited above as the historical record of what was originally planned)
+
+| Checkpoint | Disposition | Scope |
+|---|---|---|
+| **H.2C.3C** | **SKIPPED BY APPROVED SCOPE CHANGE.** Personal GCP bootstrap will not be performed. | Not "complete" — no checkpoint report, no acceptance record, no qualification evidence of any kind is or will be produced under this identifier. |
+| **H.2C.3D** | **SKIPPED BY APPROVED SCOPE CHANGE.** Personal-environment distributed qualification will not be performed. | Not "complete" — no checkpoint report, no acceptance record, no qualification evidence of any kind is or will be produced under this identifier. Nothing from the accepted B.1–B.3 offline/synthetic chain is invalidated by this skip — B.1–B.3 were always provider-neutral and environment-agnostic by design (see §4 below). |
+| **H.2C.3E** | **Next checkpoint; requires its own separate authorization.** Company-playground access, credential, IAM, API, quota, networking, billing/cost-control, and SRE-readiness review. | No deployment, no workload execution, no resource creation. Produces the deliverables in §6 below and an explicit READY/BLOCKED decision for H.2C.3F. |
+| **H.2C.3F** | **Unchanged in scientific purpose; scope clarified.** Clean IaC deployment directly into the company playground, followed by synthetic distributed and native-Linux qualification. | Company playground, post-promotion-gate only (§8 of the Planning Amendment, unchanged). **Must satisfy every relevant qualification criterion the original H.2C.3D would otherwise have exercised** (Spot interruption/resumption without duplicate/missing coordinates, deterministic ordered results under concurrency, cross-invocation writable-state isolation, cache/trace/audit reconciliation, zero leftover containers, exact-or-classified telemetry, status/return-value noninterference) — skipping D must not weaken F's own evidentiary completeness. |
+| **H.2C.3G** | **Unchanged.** Managed-model scientific portfolio freeze and minimal provenance pilot. | Company playground, post-freeze only. Separately authorized. |
+| **H.2C.3H** | **Unchanged.** Reconciliation and readiness decision for H.3/H.4/H.5/H.6. | No new cloud access. Separately authorized. |
+
+#### 3. Explicit non-actions and structural guarantees
+
+- **No personal GCP project, billing account, service account, storage,
+  state, credentials, or cloud resource of any kind will be created.**
+  Nothing exists to authenticate to, tear down, or leak from.
+- **No migration or import from a personal environment will occur** —
+  the "what may never be promoted" list in
+  `docs/operations/gcp-environment-promotion.md` §1.4 (Terraform state,
+  credentials, service-account keys, bucket contents, resource IDs, logs,
+  audit/trace/calibration records, cached candidate results, any
+  personal-environment-generated scientific evidence) is satisfied
+  vacuously, not merely followed.
+- **The "zero personal-resource imports" company-promotion requirement
+  (`docs/operations/gcp-environment-promotion.md` §1.4, and implicitly
+  Planning Amendment §8 item 2: "no personal-account credentials or
+  resources involved") is satisfied
+  structurally because no personal environment will ever exist** — but
+  this satisfies exactly that one item. **Every other company
+  qualification-gate item (§8 items 1, 3–16, and
+  `docs/operations/gcp-environment-promotion.md` §2's identical
+  16-item list) remains fully mandatory and unaffected** — SRE-reviewed
+  IAM/networking, pinned runner-image provenance, candidate network
+  isolation, exact/classified telemetry, noninterference,
+  deterministic-ordering, cross-invocation isolation, Spot
+  interruption/resumption, cache/trace/audit reconciliation, zero
+  leftover containers, bounded/leak-tested logging, measured
+  throughput/cost, and the READY/BLOCKED classification are all still
+  evaluated for real, in the company playground, at H.2C.3F.
+- **Existing offline personal-policy test coverage remains valid and is
+  not removed** merely because the real deployment path no longer
+  exercises a personal environment. `src/distributed/personal_policy.py`
+  (`PersonalEnvironmentPolicy`, `WorkloadClass`, `DataClassification`,
+  `evaluate_admission`, `PERSONAL_BOOTSTRAP_MAX_WORKERS = 2`,
+  `PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS = 5000`) and every test
+  exercising it (offline, synthetic, provider-neutral by construction)
+  remain accepted, correct coverage of the `EnvironmentClass.PERSONAL_BOOTSTRAP`
+  code path this codebase still implements — they document and enforce a
+  real policy contract, independent of whether any checkpoint currently
+  plans to deploy that environment for real.
+- **Personal-policy constants and protections must not silently
+  constrain or authorize the company deployment.** `PERSONAL_BOOTSTRAP_MAX_WORKERS`
+  and `PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS` are scoped exclusively
+  to `EnvironmentClass.PERSONAL_BOOTSTRAP`; no future H.2C.3E/F design may
+  reuse, default to, or silently inherit either value for
+  `EnvironmentClass.COMPANY_PLAYGROUND` admission or budget decisions —
+  the company environment requires its own explicit, independently
+  frozen worker-ceiling and budget policy (see next item), never a
+  personal-bootstrap value carried over by omission.
+- **The accepted $1,500 company ceiling is an absolute planning ceiling,
+  not permission to spend that amount.** It bounds what a full campaign
+  may *not* exceed; it authorizes nothing by itself. **H.2C.3E must
+  freeze a much smaller initial deployment/qualification budget**
+  (order-of-magnitude below $1,500) **before H.2C.3F** is authorized to
+  spend anything — mirroring the personal-bootstrap $50 ceiling's own
+  discipline of a small, explicit, pre-frozen number, just independently
+  derived for the company environment rather than inherited from it.
+- **GCP budget alerts are not hard caps.** They remain a monitoring
+  signal only. Repository-side technical refusal (a required maximum
+  invocation count, a required estimated-cost preflight, refusal to
+  start above a checkpoint's own authorized cost, frozen
+  candidate/token/retry/concurrency limits, a run-scoped circuit
+  breaker — Planning Amendment §5, unchanged) and explicit
+  per-resource authorization (the credential/permissioning protocol,
+  §5 below) remain required regardless of any alert configuration.
+- **The company playground's actual project ID, billing identity, user
+  email, organization/folder identifiers, network names,
+  service-account addresses, and other operational identifiers are
+  protected metadata and must not appear in committed safe
+  documentation** — mirroring this project's own established
+  provider-neutrality and safe-field-allowlist discipline (Planning
+  Amendment §1's "provider-neutrality requirement";
+  `docs/reference/megb-03h2c3a-gcp-provenance-audit.md`). Any future
+  H.2C.3E/F artifact referencing such an identifier must redact or
+  reference it only by a safe, non-identifying label.
+
+#### 4. Nothing in the accepted B.1–B.3 chain is affected
+
+`MEGB-03H.2C.3B.1` (provenance schema/identity semantics),
+`MEGB-03H.2C.3B.2A` (provider-neutral orchestration contracts),
+`MEGB-03H.2C.3B.2B.1–3` (atomic stores, coordinator/worker engine,
+fault-injection conformance), `MEGB-03H.2C.3B.2C` (offline E2E synthetic
+qualification), and `MEGB-03H.2C.3B.3` (calibration/qualification
+provenance integration, including both its correction rounds) were all
+designed, per the Planning Amendment's own §1 provider-neutrality
+requirement, to be entirely offline, synthetic, and environment-agnostic
+— none of them assumed, required, or produced evidence tied to a personal
+GCP environment. All remain accepted exactly as recorded in their own
+acceptance rows; this amendment changes nothing about their scope,
+evidence, or status.
+
+#### 5. Credential-walkthrough protocol — preserved, reassigned to H.2C.3E
+
+The Planning Amendment §4 credential/permissioning interaction protocol
+(the mandatory 10-item walkthrough, and its associated credential rules)
+remains in force **verbatim, unedited** — this amendment only changes
+*which checkpoint first exercises it*. Since H.2C.3C (previously the
+first point at which any authentication or resource provisioning could
+occur, per `docs/operations/gcp-environment-promotion.md` §4's "First
+credential boundary" note — that note is superseded by this amendment,
+without editing that document in this checkpoint) is skipped, **H.2C.3E
+is now the first checkpoint at which this protocol applies.** Before
+every authentication, account selection, project selection, API
+enablement, IAM change, quota request, networking change,
+service-account action, billing action, or resource creation at H.2C.3E
+or any later checkpoint, the assistant must stop before taking the
+action and explain, interactively:
+
+1. Why the credential or permission is needed.
+2. The exact identity, exact permissions, and purpose involved.
+3. Persistence (how long it lasts, where it is stored).
+4. Cost consequence, if any.
+5. Credential-storage mechanism (never a downloaded long-lived key
+   unless an independently documented blocker proves no keyless option
+   works and the user explicitly authorizes it).
+6. A verification command and the expected safe output.
+7. The exact rollback/revocation procedure.
+8. Then **wait for explicit user approval** before proceeding.
+
+Restated without weakening, from the Planning Amendment §4 and
+`docs/operations/gcp-environment-promotion.md` §3, both unedited:
+
+- **Never** request secrets, passwords, access tokens, private keys, or
+  service-account JSON in chat.
+- Never print or commit secrets.
+- **Follow the company's existing SSO/federation and
+  service-account-impersonation practices where available** — prefer
+  service-account impersonation, attached-VM service accounts, or
+  Workload Identity Federation over any downloaded key.
+- **Do not create or download long-lived service-account keys.**
+- **Do not broaden permissions merely to bypass an organizational
+  restriction** — if SRE or organization-admin action is required,
+  produce a minimal handoff checklist instead (this ticket's own
+  `docs/operations/gcp-environment-promotion.md` §3's existing rule,
+  reaffirmed, not weakened).
+- Never reuse personal credentials in the company environment (vacuously
+  satisfied — no personal environment will exist to hold any).
+- Never silently use ambient company credentials merely because they
+  happen to be present.
+- Never enable paid APIs, accept publisher/model terms, request quota,
+  or create billable resources without that specific checkpoint's
+  explicit authorization.
+
+#### 6. H.2C.3E required deliverables (before H.2C.3F authorization)
+
+H.2C.3E must produce all of the following, and reach an explicit
+READY/BLOCKED decision, before H.2C.3F may be authorized:
+
+1. A redacted current-access inventory.
+2. A human/coordinator/worker IAM matrix.
+3. A required-versus-enabled API matrix.
+4. A network and egress-policy determination.
+5. A quota and regional-capacity assessment.
+6. Artifact Registry, storage, queue, logging, and secret-management
+   decisions.
+7. An IaC state/backend decision.
+8. A technical cost-refusal design (the run-scoped circuit breaker and
+   preflight-cost-estimation mechanism named in §3 above and Planning
+   Amendment §5).
+9. A proposed initial qualification budget — the "much smaller than
+   $1,500" figure required by §3 above, explicitly frozen before any
+   H.2C.3F spending is authorized.
+10. A resource cleanup/TTL policy.
+11. SRE-owned actions and blockers.
+12. An explicit READY/BLOCKED decision for H.2C.3F.
+
+**No H.2C.3F work — deployment, workload execution, or resource
+creation of any kind — may begin until H.2C.3E's own checkpoint report
+records a READY decision and receives separate acceptance.**
+
+#### 7. Scope of this amendment
+
+This is a **ticket-only sequencing amendment**. No source file, test,
+CI workflow, IaC definition, or existing architecture/security/cost/
+promotion document (`docs/architecture/gcp-distributed-reference-execution.md`,
+`docs/security/gcp-distributed-execution-threat-model.md`,
+`docs/measurement/gcp-experiment-cost-model.md`,
+`docs/operations/gcp-environment-promotion.md`,
+`docs/reference/megb-03h2c3a-gcp-provenance-audit.md`) was modified to
+produce it. No `gcloud` invocation, authentication, company-project
+inspection, billing access, API enablement, IAM change, resource
+creation, Docker execution, or privileged-evidence access occurred in
+producing this amendment. MEGB-03H.2C.3E and MEGB-03H.2C.3F remain not
+begun and each require their own separate, explicit authorization.
+
 ### Objective
 
 Calibrate and freeze the evaluator's execution profile using corrected canonical solutions, then demonstrate stable classifications under repeated execution.
