@@ -100,6 +100,26 @@ def test_reserve_rejects_worker_count_one_above_ceiling() -> None:
         store.reserve("res-1", 1000, PERSONAL_BOOTSTRAP_MAX_WORKERS + 1)
 
 
+def test_reservations_do_not_cumulatively_consume_a_worker_slot_pool() -> None:
+    """MEGB-03H.2C.3B.2C correction regression: a budget reservation
+    identifies an admitted *work item*, not an active *worker* -- many
+    more reservations than the worker ceiling may be simultaneously
+    RESERVED (never finalized/released) without ever raising
+    WorkerCeilingExceededError, each individually requesting only 1
+    worker. Two workers processing far more than two outstanding work
+    items sequentially must never be budget-blocked by this alone."""
+    store = _budget_store()
+    for i in range(50):
+        reservation = store.reserve(f"res-{i}", 1, 1)
+        assert reservation.status == ReservationStatus.RESERVED
+    # All 50 remain simultaneously RESERVED -- far more than the
+    # 2-worker ceiling -- and a 51st single-worker reservation still
+    # succeeds (only the 5000-cent budget ceiling, not any worker
+    # count, would ever stop this).
+    reservation = store.reserve("res-50", 1, 1)
+    assert reservation.status == ReservationStatus.RESERVED
+
+
 def test_concurrent_reservations_cannot_together_oversubscribe_the_ceiling() -> None:
     """Test two separate, individually-valid reservations that together
     would exceed the ceiling -- the second is refused."""

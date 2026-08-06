@@ -147,9 +147,28 @@ class BudgetCeilingExceededError(InvalidDistributedProvenanceError):
 
 
 class WorkerCeilingExceededError(InvalidDistributedProvenanceError):
-    """Raised when admitting a new reservation would push the sum of all
-    currently ``RESERVED`` reservations' ``requested_worker_count`` above
-    the store's own ``max_admitted_workers``."""
+    """Raised when a single reservation's own ``requested_worker_count``
+    exceeds the store's own ``max_admitted_workers``.
+
+    **MEGB-03H.2C.3B.2C correction:** this was previously a *cumulative*
+    check -- the sum of every currently ``RESERVED`` reservation's
+    ``requested_worker_count`` was compared against the ceiling, which
+    conflated the number of admitted (reserved-but-not-yet-finalized)
+    *work items* with the number of concurrently active *workers*. Two
+    workers processing 164 sequential work items would have driven that
+    sum arbitrarily high even though at most two workers were ever
+    simultaneously active, incorrectly exhausting the ceiling after only
+    a handful of admissions. A budget reservation no longer consumes a
+    shared worker-slot pool at all; actual concurrent worker
+    participation is bounded elsewhere, by
+    :class:`~src.distributed.coordinator.Coordinator`'s own construction-
+    time policy check and its bounded-concurrency semaphore in
+    :meth:`~src.distributed.coordinator.Coordinator.run`. This check now
+    only rejects a single admission request that, by itself, asks for
+    more workers than the ceiling ever permits -- a defense-in-depth
+    duplicate of :func:`~src.distributed.personal_policy.evaluate_admission`'s
+    own per-call ``WORKER_COUNT_CEILING_EXCEEDED`` check, not a
+    cumulative ledger."""
 
 
 @dataclass(frozen=True)
@@ -184,9 +203,18 @@ class AtomicBudgetStore:
     """Synthetic, single-process, lock-protected admission-ledger store.
     Every mutating method performs its entire read-check-write sequence
     while holding one internal lock, so concurrent reservations can never
-    oversubscribe either ceiling -- the sum check and the write happen
+    oversubscribe the cost ceiling -- the sum check and the write happen
     as one indivisible step, never a separate check followed by a
-    separate write."""
+    separate write.
+
+    **MEGB-03H.2C.3B.2C correction:** ``max_admitted_workers`` bounds
+    only a single reservation's own ``requested_worker_count`` (a
+    per-call sanity check); it is no longer accumulated across
+    outstanding reservations. Budget reservations identify admitted
+    *work items*, not active *workers* -- an unbounded number of work
+    items may be validly reserved and awaiting two workers to drain them
+    sequentially. See :class:`WorkerCeilingExceededError`'s own
+    docstring for the full rationale."""
 
     def __init__(self, *, budget_ceiling_cents: int, max_admitted_workers: int) -> None:
         _require_positive_int(budget_ceiling_cents, "budget_ceiling_cents")
@@ -203,24 +231,20 @@ class AtomicBudgetStore:
             if reservation.status == ReservationStatus.RESERVED
         )
 
-    def _active_reserved_workers(self) -> int:
-        return sum(
-            reservation.requested_worker_count
-            for reservation in self._reservations.values()
-            if reservation.status == ReservationStatus.RESERVED
-        )
-
     def reserve(
         self, reservation_id: str, requested_cost_cents: int, requested_worker_count: int
     ) -> BudgetReservation:
         """Atomically admit a new reservation, or idempotently return an
         exact-match existing one. Raises
         :class:`ReservationConflictError` for a same-id, different-amount
-        replay; :class:`BudgetCeilingExceededError`/
-        :class:`WorkerCeilingExceededError` if admitting would
-        oversubscribe either ceiling -- checked and written as one
-        indivisible step, so no two concurrent callers can ever both
-        succeed past the ceiling."""
+        replay; :class:`BudgetCeilingExceededError` if admitting would
+        oversubscribe the cumulative cost ceiling (checked and written as
+        one indivisible step, so no two concurrent callers can ever both
+        succeed past it); :class:`WorkerCeilingExceededError` if this
+        single reservation's own ``requested_worker_count`` alone exceeds
+        the worker ceiling -- never a cumulative check across other
+        outstanding reservations, which never consume a shared worker-
+        slot pool."""
         _require_nonempty_str(reservation_id, "reservation_id")
         _require_non_negative_int(requested_cost_cents, "requested_cost_cents")
         _require_positive_int(requested_worker_count, "requested_worker_count")
@@ -246,12 +270,12 @@ class AtomicBudgetStore:
                     f"{projected_cents} cents, exceeding the {self._budget_ceiling_cents}-cent "
                     f"ceiling"
                 )
-            projected_workers = self._active_reserved_workers() + requested_worker_count
-            if projected_workers > self._max_admitted_workers:
+            if requested_worker_count > self._max_admitted_workers:
                 raise WorkerCeilingExceededError(
-                    f"reserving {requested_worker_count} worker(s) would bring active "
-                    f"reservations to {projected_workers}, exceeding the "
-                    f"{self._max_admitted_workers}-worker ceiling"
+                    f"requested_worker_count {requested_worker_count} exceeds the "
+                    f"{self._max_admitted_workers}-worker ceiling on its own -- this check is "
+                    "a single-request sanity check only, never cumulative across other "
+                    "outstanding reservations"
                 )
             reservation = BudgetReservation(
                 reservation_id=reservation_id,

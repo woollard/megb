@@ -39,6 +39,9 @@ class QualificationRunAccumulator:
     generic_concurrency4_equivalent: bool | None = None
     run_context_checksum: str = ""
     qualification_identity_checksum: str = ""
+    distributed_run_intent: str = ""
+    qualifying_workload_class: str = ""
+    qualification_gate_ready: bool | None = None
     worker_topology_provisioning_class_counts: tuple[tuple[str, int], ...] = field(
         default_factory=tuple
     )

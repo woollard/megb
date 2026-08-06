@@ -85,7 +85,7 @@ from src.distributed.work_contracts import (
 from src.distributed.work_contracts import ArtifactReference
 from src.distributed.work_outcome import CoordinatorRunSummary, WorkOutcome, WorkOutcomeKind
 from src.distributed.worker_contracts import Lease
-from tests._atomic_stores_fixtures import make_result_commit
+from tests._atomic_stores_fixtures import make_result_artifact_reference, make_result_commit
 from tests._coordinator_fixtures import (
     RUN_CTX,
     CoordinatorEnvironment,
@@ -104,7 +104,6 @@ from tests._distributed_orchestration_fixtures import make_execution_attempt
 from tests._offline_e2e_qualification_fixtures import (
     BarrierSynchronizedTransformExecutor,
     EQUIVALENCE_ITEM_IDS,
-    GENERIC_EQUIVALENCE_ITEM_IDS,
     PeakConcurrencyTrackingExecutor,
     TransformExecutor,
     compute_workload_checksum,
@@ -116,14 +115,17 @@ from tests._offline_e2e_qualification_fixtures import (
 from tests._offline_e2e_qualification_harness import ACCUMULATOR
 
 _METADATA = ArtifactMetadata(
-    # SYNTHETIC_SMOKE, not SYNTHETIC_QUALIFICATION_CANDIDATE: the shared
-    # build_environment() test fixture's default personal policy only
-    # allowlists SYNTHETIC_SMOKE (tests/_coordinator_fixtures.py's own
-    # make_default_policy()). A narrow implementation adjustment from the
-    # frozen plan's own descriptive prose, not a weakening of any
-    # acceptance criterion -- reported in this checkpoint's own final
-    # report.
-    workload_class=WorkloadClass.SYNTHETIC_SMOKE,
+    # MEGB-03H.2C.3B.2C correction: a qualifying run must never use
+    # WorkloadClass.SYNTHETIC_SMOKE for its candidate metadata --
+    # SYNTHETIC_QUALIFICATION_CANDIDATE, exactly as the frozen plan
+    # specifies, is now used throughout. The earlier substitution of
+    # SYNTHETIC_SMOKE was itself a defect (the shared build_environment()
+    # test fixture's default personal policy narrowly allowlisted only
+    # SYNTHETIC_SMOKE, not the full accepted
+    # PERSONAL_BOOTSTRAP_ALLOWED_WORKLOAD_CLASSES set) -- corrected at
+    # its root in tests/_coordinator_fixtures.py::make_default_policy,
+    # not worked around here.
+    workload_class=WorkloadClass.SYNTHETIC_QUALIFICATION_CANDIDATE,
     data_classification=DataClassification.SYNTHETIC,
 )
 
@@ -186,6 +188,9 @@ def test_e2e_gate_ready_for_complete_provenance() -> None:
     )
     ACCUMULATOR.worker_topology_region_counts = result.worker_summary.region_counts
     ACCUMULATOR.worker_topology_machine_type_counts = result.worker_summary.machine_type_counts
+    ACCUMULATOR.distributed_run_intent = run_context.run_intent.value
+    ACCUMULATOR.qualifying_workload_class = WorkloadClass.SYNTHETIC_QUALIFICATION_CANDIDATE.value
+    ACCUMULATOR.qualification_gate_ready = result.readiness == ProvenanceGateReadiness.READY
 
 
 def test_e2e_gate_blocked_for_smoke_test_intent() -> None:
@@ -525,7 +530,12 @@ def test_e2e_06_committed_result_recovery_and_abandoned_orphan_intent() -> None:
     )
     result_content = path_coverage_content("06")
     transformed = synthetic_transform(result_content)
-    commit = make_result_commit(attempt, transformed, actual_cost_cents=100)
+    commit = make_result_commit(
+        attempt,
+        transformed,
+        actual_cost_cents=100,
+        result_artifact_reference=make_result_artifact_reference(transformed, metadata=_METADATA),
+    )
     env.artifact_store.put(commit.result_artifact_reference, transformed, _METADATA)
     env.work_store.commit_result(
         "e2e-06", record.revision, attempt, commit, artifact_resolver=env.artifact_store.resolve
@@ -599,7 +609,9 @@ def test_e2e_equivalence_serial_vs_concurrency_1_and_2() -> None:  # pylint: dis
     agreement on scientific work identity, typed terminal outcome,
     result-content checksum, retry count (frozen at 0), input ordering,
     and aggregate outcome counts."""
-    env = build_environment(max_admitted_workers=2, max_in_flight_work=10)
+    env = build_environment(
+        max_admitted_workers=2, max_in_flight_work=10, audit_outbox_max_pending=40
+    )
     env.worker_registry.register(make_worker_registration("worker-a"))
     env.worker_registry.register(make_worker_registration("worker-b"))
     capability = GenerationPlaneArtifactCapability(env.artifact_store)
@@ -678,8 +690,7 @@ def test_e2e_generic_concurrency_4_comparison_labeled_non_personal() -> None:
         env.worker_registry.register(make_worker_registration(worker_id))
     capability = GenerationPlaneArtifactCapability(env.artifact_store)
     contents = {
-        f"eq-gen-cand-{item_id}": equivalence_content(item_id)
-        for item_id in GENERIC_EQUIVALENCE_ITEM_IDS
+        f"eq-gen-cand-{item_id}": equivalence_content(item_id) for item_id in EQUIVALENCE_ITEM_IDS
     }
     manifest = build_candidate_manifest(capability, contents, metadata=_METADATA)
     refs = {entry.artifact_reference_id: entry for entry in manifest.manifest_entries}
@@ -688,7 +699,7 @@ def test_e2e_generic_concurrency_4_comparison_labeled_non_personal() -> None:
     tracker = PeakConcurrencyTrackingExecutor(BarrierSynchronizedTransformExecutor(generic_barrier))
     coordinator = env.make_coordinator(tracker)
     admissions = []
-    for ordinal, item_id in enumerate(GENERIC_EQUIVALENCE_ITEM_IDS):
+    for ordinal, item_id in enumerate(EQUIVALENCE_ITEM_IDS):
         work_id = f"eq-gen-{item_id}"
         descriptor = make_work_descriptor(work_id, ordinal, refs[f"eq-gen-cand-{item_id}"])
         admissions.append((descriptor, f"res-eq-gen-{item_id}", 100, 1))
@@ -696,8 +707,8 @@ def test_e2e_generic_concurrency_4_comparison_labeled_non_personal() -> None:
 
     equivalent = summary.count(
         WorkOutcomeKind.EXECUTED_AND_COMMITTED
-    ) == len(GENERIC_EQUIVALENCE_ITEM_IDS)
-    for item_id in GENERIC_EQUIVALENCE_ITEM_IDS:
+    ) == len(EQUIVALENCE_ITEM_IDS)
+    for item_id in EQUIVALENCE_ITEM_IDS:
         work_id = f"eq-gen-{item_id}"
         matching = [o for o in summary.outcomes if o.scientific_work_id == work_id]
         equivalent = equivalent and (
@@ -735,6 +746,9 @@ def test_zzz_generate_and_write_safe_offline_e2e_qualification_report() -> None:
     assert ACCUMULATOR.run_context_checksum, "provenance-gate test above did not run"
     assert ACCUMULATOR.serial_vs_distributed_equivalent is not None, "equivalence test did not run"
     assert ACCUMULATOR.generic_concurrency4_equivalent is not None, "generic-4 test did not run"
+    assert ACCUMULATOR.qualification_gate_ready is not None, "provenance-gate test did not run"
+    assert ACCUMULATOR.distributed_run_intent, "provenance-gate test did not run"
+    assert ACCUMULATOR.qualifying_workload_class, "provenance-gate test did not run"
 
     report = build_offline_e2e_qualification_report(
         plan_sha256=_PLAN_SHA256,

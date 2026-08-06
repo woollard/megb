@@ -21,11 +21,17 @@ from src.distributed.offline_e2e_qualification_report import (
     offline_e2e_qualification_report_to_dict,
     render_markdown,
 )
+from src.distributed.personal_policy import WorkloadClass
+from src.distributed.provenance import DistributedRunIntent
 
 _PLAN_SHA256 = "a" * 64
 _PLAN_BLOB = "b" * 40
 _WORKLOAD_SHA256 = "c" * 64
 _FAULT_CONFORMANCE_CHECKSUM = "d" * 64
+_QUALIFYING_RUN_INTENT = DistributedRunIntent.QUALIFICATION_CANDIDATE.value
+_QUALIFYING_WORKLOAD_CLASS = WorkloadClass.SYNTHETIC_QUALIFICATION_CANDIDATE.value
+_SMOKE_WORKLOAD_CLASS = WorkloadClass.SYNTHETIC_SMOKE.value
+_SMOKE_RUN_INTENT = DistributedRunIntent.SMOKE_TEST.value
 
 
 class _Accumulator:  # pylint: disable=too-many-instance-attributes
@@ -37,6 +43,9 @@ class _Accumulator:  # pylint: disable=too-many-instance-attributes
         fields: dict[str, object] = {
             "run_context_checksum": "e" * 64,
             "qualification_identity_checksum": "f" * 64,
+            "distributed_run_intent": _QUALIFYING_RUN_INTENT,
+            "qualifying_workload_class": _QUALIFYING_WORKLOAD_CLASS,
+            "qualification_gate_ready": True,
             "worker_topology_provisioning_class_counts": (("ON_DEMAND", 2),),
             "worker_topology_region_counts": (("us-central1", 1), ("us-east1", 1)),
             "worker_topology_machine_type_counts": (("n2-standard-4", 2),),
@@ -101,16 +110,117 @@ def test_build_report_with_healthy_accumulator_is_ready() -> None:
         {"budget_requested_cents_total": 999},
         {"serial_vs_distributed_equivalent": False},
         {"generic_concurrency4_equivalent": False},
+        {"qualification_gate_ready": False},
+        {
+            "distributed_run_intent": _SMOKE_RUN_INTENT,
+            "qualifying_workload_class": _SMOKE_WORKLOAD_CLASS,
+        },
+        {"qualifying_workload_class": _SMOKE_WORKLOAD_CLASS},
+        {"distributed_run_intent": _SMOKE_RUN_INTENT},
     ],
 )
 def test_build_report_blocks_on_any_deviation_from_frozen_expectations(
     overrides: dict[str, object],
 ) -> None:
     """Test that deviating from any single frozen expectation --
-    including budget reconciliation -- yields BLOCKED_OFFLINE_DISTRIBUTED_PATH,
-    never a silently-still-ready report."""
+    including budget reconciliation and run-intent/workload-class/gate
+    consistency -- yields BLOCKED_OFFLINE_DISTRIBUTED_PATH, never a
+    silently-still-ready report."""
     report = _build(**overrides)
     assert report.readiness == ReadinessClassification.BLOCKED_OFFLINE_DISTRIBUTED_PATH
+
+
+@pytest.mark.parametrize(
+    "distributed_run_intent,qualifying_workload_class,expect_consistent",
+    [
+        (_SMOKE_RUN_INTENT, _SMOKE_WORKLOAD_CLASS, False),
+        (_QUALIFYING_RUN_INTENT, _SMOKE_WORKLOAD_CLASS, False),
+        (_SMOKE_RUN_INTENT, _QUALIFYING_WORKLOAD_CLASS, False),
+        (_QUALIFYING_RUN_INTENT, _QUALIFYING_WORKLOAD_CLASS, True),
+    ],
+)
+def test_smoke_vs_qualification_classification_matrix(
+    distributed_run_intent: str,
+    qualifying_workload_class: str,
+    expect_consistent: bool,
+) -> None:
+    """Test the four-case smoke-vs-qualification classification matrix:
+    only qualification-intent combined with the qualification-candidate
+    workload class may ever be reported consistent (and thus able to
+    reach READY_FOR_B3); every other combination -- including smoke
+    intent paired with a qualification-candidate workload, and
+    qualification intent paired with a smoke workload -- must report
+    inconsistent and therefore BLOCKED."""
+    report = _build(
+        distributed_run_intent=distributed_run_intent,
+        qualifying_workload_class=qualifying_workload_class,
+    )
+    assert report.qualification_workload_consistent is expect_consistent
+    if expect_consistent:
+        assert report.readiness == ReadinessClassification.OFFLINE_DISTRIBUTED_PATH_READY_FOR_B3
+    else:
+        assert report.readiness == ReadinessClassification.BLOCKED_OFFLINE_DISTRIBUTED_PATH
+
+
+def test_report_rejects_workload_class_outside_closed_enum() -> None:
+    """Test an unknown qualifying_workload_class value is rejected
+    outright rather than silently treated as inconsistent."""
+    with pytest.raises(InvalidOfflineE2EQualificationReportError):
+        _build(qualifying_workload_class="NOT_A_REAL_WORKLOAD_CLASS")
+
+
+def test_report_rejects_run_intent_outside_closed_enum() -> None:
+    """Test an unknown distributed_run_intent value is rejected outright
+    rather than silently treated as inconsistent."""
+    with pytest.raises(InvalidOfflineE2EQualificationReportError):
+        _build(distributed_run_intent="NOT_A_REAL_RUN_INTENT")
+
+
+def test_report_rejects_qualification_workload_consistent_tampering() -> None:
+    """Test qualification_workload_consistent can never be forced to a
+    value inconsistent with the recorded run_intent/workload_class/gate
+    -- it is wholly derived, never independently settable. Constructed
+    directly (not via the accumulator path) since
+    qualification_workload_consistent is not an accumulator-sourced
+    field."""
+    with pytest.raises(InvalidOfflineE2EQualificationReportError):
+        OfflineE2EQualificationReport(
+            schema_version=OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION,
+            plan_sha256=_PLAN_SHA256,
+            plan_git_blob_sha1=_PLAN_BLOB,
+            workload_sha256=_WORKLOAD_SHA256,
+            distributed_provenance_schema_version="megb-03h2c3b1-distributed-provenance-v1",
+            distributed_orchestration_schema_version="megb-03h2c3b2b2-distributed-orchestration-v3",
+            fault_conformance_report_checksum=_FAULT_CONFORMANCE_CHECKSUM,
+            run_context_checksum="e" * 64,
+            qualification_identity_checksum="f" * 64,
+            distributed_run_intent=_SMOKE_RUN_INTENT,
+            qualifying_workload_class=_SMOKE_WORKLOAD_CLASS,
+            qualification_gate_ready=True,
+            worker_topology_provisioning_class_counts=(("ON_DEMAND", 2),),
+            worker_topology_region_counts=(("us-central1", 2),),
+            worker_topology_machine_type_counts=(("n2-standard-4", 2),),
+            admitted_count=EXPECTED_ADMITTED_COUNT,
+            completed_count=EXPECTED_COMPLETED_COUNT,
+            failed_count=EXPECTED_FAILED_COUNT,
+            retried_count=EXPECTED_RETRIED_COUNT,
+            cancelled_count=EXPECTED_CANCELLED_COUNT,
+            duplicate_delivery_count=EXPECTED_MINIMUM_DUPLICATE_DELIVERY_COUNT,
+            redelivery_count=EXPECTED_MINIMUM_REDELIVERY_COUNT,
+            budget_requested_cents_total=1100,
+            budget_finalized_cents_total=1000,
+            budget_released_cents_total=100,
+            measured_peak_concurrency_personal=2,
+            measured_peak_concurrency_generic=4,
+            audit_delivered_count=20,
+            audit_abandoned_count=EXPECTED_AUDIT_ABANDONED_COUNT,
+            audit_still_pending_count=0,
+            queue_unacknowledged_count=0,
+            serial_vs_distributed_equivalent=True,
+            generic_concurrency4_equivalent=True,
+            readiness=ReadinessClassification.BLOCKED_OFFLINE_DISTRIBUTED_PATH,
+            qualification_workload_consistent=True,
+        )
 
 
 def test_report_rejects_readiness_inconsistent_with_reconciled_counts() -> None:
@@ -128,6 +238,9 @@ def test_report_rejects_readiness_inconsistent_with_reconciled_counts() -> None:
             fault_conformance_report_checksum=_FAULT_CONFORMANCE_CHECKSUM,
             run_context_checksum="e" * 64,
             qualification_identity_checksum="f" * 64,
+            distributed_run_intent=_QUALIFYING_RUN_INTENT,
+            qualifying_workload_class=_QUALIFYING_WORKLOAD_CLASS,
+            qualification_gate_ready=True,
             worker_topology_provisioning_class_counts=(("ON_DEMAND", 2),),
             worker_topology_region_counts=(("us-central1", 2),),
             worker_topology_machine_type_counts=(("n2-standard-4", 2),),

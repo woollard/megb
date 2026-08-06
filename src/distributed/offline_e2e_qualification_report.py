@@ -25,7 +25,27 @@ import json
 from dataclasses import dataclass
 from enum import Enum
 
-OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION = "megb-03h2c3b2c-offline-e2e-qualification-v1"
+from src.distributed.personal_policy import WorkloadClass
+from src.distributed.provenance import DistributedRunIntent
+
+# MEGB-03H.2C.3B.2C correction (v1->v2): v1 (never accepted -- superseded,
+# preserved only in git history at commit edbda37) recorded only the
+# qualification gate's own output checksums (run_context_checksum,
+# qualification_identity_checksum) with no field ever checking that the
+# *workload class actually used* was the qualification-candidate class,
+# not the smoke class -- so a report could in principle claim readiness
+# for a run whose run_intent satisfied the gate while its actual
+# candidate metadata was WorkloadClass.SYNTHETIC_SMOKE (which must never
+# qualify). v2 adds distributed_run_intent/qualifying_workload_class/
+# qualification_gate_ready as explicit, safe (closed-enum-valued) fields,
+# and qualification_workload_consistent as a fourth, wholly-derived
+# field -- never caller-settable -- folded into readiness derivation.
+OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION = "megb-03h2c3b2c-offline-e2e-qualification-v2"
+
+_QUALIFYING_RUN_INTENT = DistributedRunIntent.QUALIFICATION_CANDIDATE.value
+_QUALIFYING_WORKLOAD_CLASS = WorkloadClass.SYNTHETIC_QUALIFICATION_CANDIDATE.value
+_VALID_RUN_INTENTS = frozenset(member.value for member in DistributedRunIntent)
+_VALID_WORKLOAD_CLASSES = frozenset(member.value for member in WorkloadClass)
 
 # Frozen expectations from this checkpoint's own plan (8-item path-coverage
 # workload: e2e-01..e2e-08). See the plan document for the full mapping.
@@ -119,6 +139,9 @@ class OfflineE2EQualificationReport:  # pylint: disable=too-many-instance-attrib
     fault_conformance_report_checksum: str
     run_context_checksum: str
     qualification_identity_checksum: str
+    distributed_run_intent: str
+    qualifying_workload_class: str
+    qualification_gate_ready: bool
     worker_topology_provisioning_class_counts: tuple[tuple[str, int], ...]
     worker_topology_region_counts: tuple[tuple[str, int], ...]
     worker_topology_machine_type_counts: tuple[tuple[str, int], ...]
@@ -141,6 +164,7 @@ class OfflineE2EQualificationReport:  # pylint: disable=too-many-instance-attrib
     serial_vs_distributed_equivalent: bool
     generic_concurrency4_equivalent: bool
     readiness: ReadinessClassification
+    qualification_workload_consistent: bool | None = None
     report_checksum: str = ""
 
     def __post_init__(self) -> None:  # pylint: disable=too-many-branches
@@ -154,6 +178,8 @@ class OfflineE2EQualificationReport:  # pylint: disable=too-many-instance-attrib
             "fault_conformance_report_checksum",
             "run_context_checksum",
             "qualification_identity_checksum",
+            "distributed_run_intent",
+            "qualifying_workload_class",
         ):
             _require_nonempty_str(self, field_name)
         if self.schema_version != OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION:
@@ -161,6 +187,17 @@ class OfflineE2EQualificationReport:  # pylint: disable=too-many-instance-attrib
                 f"schema_version {self.schema_version!r} does not match the version this "
                 f"module implements ({OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION!r})"
             )
+        if self.distributed_run_intent not in _VALID_RUN_INTENTS:
+            raise InvalidOfflineE2EQualificationReportError(
+                f"distributed_run_intent {self.distributed_run_intent!r} is not one of "
+                f"{sorted(_VALID_RUN_INTENTS)!r}"
+            )
+        if self.qualifying_workload_class not in _VALID_WORKLOAD_CLASSES:
+            raise InvalidOfflineE2EQualificationReportError(
+                f"qualifying_workload_class {self.qualifying_workload_class!r} is not one of "
+                f"{sorted(_VALID_WORKLOAD_CLASSES)!r}"
+            )
+        _require_bool(self, "qualification_gate_ready")
         for field_name in (
             "worker_topology_provisioning_class_counts",
             "worker_topology_region_counts",
@@ -205,11 +242,38 @@ class OfflineE2EQualificationReport:  # pylint: disable=too-many-instance-attrib
             and self.budget_requested_cents_total
             == self.budget_finalized_cents_total + self.budget_released_cents_total
         )
+        # MEGB-03H.2C.3B.2C correction (v2): qualification_workload_consistent
+        # is wholly derived here -- never caller-settable -- from the run's
+        # own intent, the workload class its candidate metadata actually
+        # used, and the qualification gate's own readiness. A run whose
+        # gate READY determination is real but whose candidate metadata
+        # was WorkloadClass.SYNTHETIC_SMOKE (or any run_intent other than
+        # QUALIFICATION_CANDIDATE) can never be consistent, and this
+        # report's own overall readiness can then never claim
+        # OFFLINE_DISTRIBUTED_PATH_READY_FOR_B3 regardless of every other
+        # count reconciling.
+        expected_workload_consistent = (
+            self.qualification_gate_ready
+            and self.distributed_run_intent == _QUALIFYING_RUN_INTENT
+            and self.qualifying_workload_class == _QUALIFYING_WORKLOAD_CLASS
+        )
+        if (
+            self.qualification_workload_consistent is not None
+            and self.qualification_workload_consistent != expected_workload_consistent
+        ):
+            raise InvalidOfflineE2EQualificationReportError(
+                f"qualification_workload_consistent {self.qualification_workload_consistent!r} "
+                f"is inconsistent with the recorded run_intent/workload_class/gate-readiness "
+                f"(expected {expected_workload_consistent!r}) -- never independently settable"
+            )
+        object.__setattr__(self, "qualification_workload_consistent", expected_workload_consistent)
+
         expected_ready = (
             frozen_workload_satisfied
             and reconciliation_clean
             and self.serial_vs_distributed_equivalent
             and self.generic_concurrency4_equivalent
+            and expected_workload_consistent
         )
         if not isinstance(self.readiness, ReadinessClassification):
             raise InvalidOfflineE2EQualificationReportError(
@@ -222,9 +286,10 @@ class OfflineE2EQualificationReport:  # pylint: disable=too-many-instance-attrib
         )
         if self.readiness != expected_readiness:
             raise InvalidOfflineE2EQualificationReportError(
-                f"readiness {self.readiness!r} is inconsistent with the reconciled counts and "
-                f"equivalence results (expected {expected_readiness!r}) -- readiness may never "
-                "be reported independently of the frozen workload's own outcome"
+                f"readiness {self.readiness!r} is inconsistent with the reconciled counts, "
+                f"equivalence results, and run-intent/workload-class/gate consistency (expected "
+                f"{expected_readiness!r}) -- readiness may never be reported independently of "
+                "the frozen workload's own outcome"
             )
 
         expected_checksum = _compute_report_checksum(self)
@@ -277,6 +342,9 @@ def build_offline_e2e_qualification_report(  # pylint: disable=too-many-argument
     field_names = (
         "run_context_checksum",
         "qualification_identity_checksum",
+        "distributed_run_intent",
+        "qualifying_workload_class",
+        "qualification_gate_ready",
         "worker_topology_provisioning_class_counts",
         "worker_topology_region_counts",
         "worker_topology_machine_type_counts",
@@ -317,11 +385,17 @@ def build_offline_e2e_qualification_report(  # pylint: disable=too-many-argument
         and accumulated["budget_requested_cents_total"]
         == accumulated["budget_finalized_cents_total"] + accumulated["budget_released_cents_total"]
     )
+    workload_consistent = (
+        bool(accumulated["qualification_gate_ready"])
+        and accumulated["distributed_run_intent"] == _QUALIFYING_RUN_INTENT
+        and accumulated["qualifying_workload_class"] == _QUALIFYING_WORKLOAD_CLASS
+    )
     expected_ready = (
         frozen_workload_satisfied
         and reconciliation_clean
         and bool(accumulated["serial_vs_distributed_equivalent"])
         and bool(accumulated["generic_concurrency4_equivalent"])
+        and workload_consistent
     )
     readiness = (
         ReadinessClassification.OFFLINE_DISTRIBUTED_PATH_READY_FOR_B3
@@ -394,9 +468,18 @@ def offline_e2e_qualification_report_from_dict(
         value = fields[name]
         if not isinstance(value, int) or isinstance(value, bool):
             raise InvalidOfflineE2EQualificationReportError(f"{name!r} must be an int")
-    for name in ("serial_vs_distributed_equivalent", "generic_concurrency4_equivalent"):
+    for name in (
+        "serial_vs_distributed_equivalent",
+        "generic_concurrency4_equivalent",
+        "qualification_gate_ready",
+    ):
         if not isinstance(fields[name], bool):
             raise InvalidOfflineE2EQualificationReportError(f"{name!r} must be a bool")
+    consistent = fields["qualification_workload_consistent"]
+    if consistent is not None and not isinstance(consistent, bool):
+        raise InvalidOfflineE2EQualificationReportError(
+            "'qualification_workload_consistent' must be a bool or null"
+        )
     return OfflineE2EQualificationReport(**fields)  # type: ignore[arg-type]
 
 
@@ -420,6 +503,13 @@ def render_markdown(report: OfflineE2EQualificationReport) -> str:
         f"- **Frozen workload:** sha256 `{report.workload_sha256}`",
         f"- **Fault-conformance report referenced:** checksum "
         f"`{report.fault_conformance_report_checksum}`",
+        "",
+        "## Run-intent / workload-class / gate consistency",
+        "",
+        f"- distributed_run_intent: `{report.distributed_run_intent}`",
+        f"- qualifying_workload_class: `{report.qualifying_workload_class}`",
+        f"- qualification_gate_ready: {report.qualification_gate_ready}",
+        f"- qualification_workload_consistent: {report.qualification_workload_consistent}",
         "",
         "## Path-coverage counts",
         "",

@@ -111,21 +111,25 @@ def equivalence_content(item_id: str) -> bytes:
 # actual per-item behavior is exercised by the test functions themselves.
 PATH_COVERAGE_ITEM_IDS = ("01", "02", "03", "04", "05", "06", "07", "08")
 
-# EQUIVALENCE_ITEM_IDS (2 items, not the plan's originally-described 4):
-# AtomicBudgetStore's own worker-ceiling check counts every *currently
-# RESERVED* reservation's requested_worker_count, and Coordinator.run()
-# admits every item before executing any of them -- so a personal
-# (max_admitted_workers=2) environment can never hold more than 2
-# concurrently-reserved single-worker items open at once, regardless of
-# how many worker threads later drain them. Reduced from 4 to 2 items so
-# the personal concurrency-1-vs-2 comparison stays within that ceiling --
-# a narrow implementation adjustment, not a weakening of the equivalence
-# requirement itself (still exact serial/c1/c2 agreement over a real,
-# fixed, multi-item workload). GENERIC_EQUIVALENCE_ITEM_IDS (4 items) is
-# used only for the separate, non-personal concurrency-4 comparison,
-# which has no such ceiling.
-EQUIVALENCE_ITEM_IDS = ("01", "02")
-GENERIC_EQUIVALENCE_ITEM_IDS = ("01", "02", "03", "04")
+# EQUIVALENCE_ITEM_IDS (4 items, matching the frozen plan exactly): run
+# four times -- serial baseline, distributed concurrency 1, distributed
+# concurrency 2 (all personal), and the separately-labeled non-personal
+# generic concurrency-4 comparison -- each under a distinct
+# scientific_work_id suffix so runs never collide in a shared store.
+#
+# MEGB-03H.2C.3B.2C correction: an earlier implementation split this into
+# a 2-item personal set and a separate 4-item generic set, because
+# AtomicBudgetStore.reserve() used to count every *currently RESERVED*
+# reservation's requested_worker_count cumulatively against
+# max_admitted_workers, so a personal (max_admitted_workers=2)
+# environment could never hold more than 2 concurrently-reserved
+# single-worker items open at once. That was a genuine defect in the
+# budget store's worker-ceiling semantics (conflating "count of
+# admitted-but-not-yet-processed work items" with "count of concurrently
+# active workers"), not a property of the equivalence requirement --
+# fixed at the source in AtomicBudgetStore.reserve() (now a per-request
+# check only), so the single frozen 4-item workload is restored here.
+EQUIVALENCE_ITEM_IDS = ("01", "02", "03", "04")
 
 
 def compute_workload_checksum() -> str:
@@ -137,9 +141,6 @@ def compute_workload_checksum() -> str:
             "synthetic_transform:sha256-digest-16",
             tuple((item_id, path_coverage_content(item_id)) for item_id in PATH_COVERAGE_ITEM_IDS),
             tuple((item_id, equivalence_content(item_id)) for item_id in EQUIVALENCE_ITEM_IDS),
-            tuple(
-                (item_id, equivalence_content(item_id)) for item_id in GENERIC_EQUIVALENCE_ITEM_IDS
-            ),
         )
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

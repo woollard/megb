@@ -36,6 +36,7 @@ from src.distributed.executor import (
     executor_success,
 )
 from src.distributed.personal_policy import (
+    PERSONAL_BOOTSTRAP_ALLOWED_WORKLOAD_CLASSES,
     PERSONAL_BOOTSTRAP_MAX_WORKERS,
     PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS,
     DataClassification,
@@ -62,12 +63,22 @@ def make_synthetic_content(seed: str) -> bytes:
 
 def make_default_policy(**overrides: Any) -> PersonalEnvironmentPolicy:
     """A personal-bootstrap policy at exactly the accepted ceilings,
-    unless overridden."""
+    unless overridden.
+
+    **MEGB-03H.2C.3B.2C correction:** ``allowed_workload_classes``
+    previously defaulted to ``(WorkloadClass.SYNTHETIC_SMOKE,)`` only --
+    narrower than the accepted, already-versioned
+    ``PERSONAL_BOOTSTRAP_ALLOWED_WORKLOAD_CLASSES`` (which has always
+    included ``SYNTHETIC_QUALIFICATION_CANDIDATE`` too). That narrower
+    test-fixture default, not any production restriction, is what forced
+    an earlier qualification run to misuse ``SYNTHETIC_SMOKE`` for
+    candidate metadata instead of the workload class an actual
+    qualifying run must use. Widened to match the full accepted set."""
     fields: dict[str, Any] = {
         "distributed_orchestration_schema_version": DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
         "checksum_algorithm_version": CHECKSUM_ALGORITHM_VERSION,
         "environment_class": EnvironmentClass.PERSONAL_BOOTSTRAP,
-        "allowed_workload_classes": (WorkloadClass.SYNTHETIC_SMOKE,),
+        "allowed_workload_classes": tuple(sorted(PERSONAL_BOOTSTRAP_ALLOWED_WORKLOAD_CLASSES)),
         "max_admitted_workers": PERSONAL_BOOTSTRAP_MAX_WORKERS,
         "spending_ceiling_cents": PERSONAL_BOOTSTRAP_SPENDING_CEILING_CENTS,
     }

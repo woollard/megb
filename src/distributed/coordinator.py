@@ -723,7 +723,7 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
             executor_failure_reason=failure_reason,
         )
 
-    def _commit_success(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    def _commit_success(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-return-statements
         self,
         record: AuthoritativeWorkRecord,
         message: QueueWorkMessage,
@@ -788,13 +788,35 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
             content_checksum=result_content_checksum,
             input_ordinal=ordinal,
         )
-        self._audit_outbox.enqueue(
-            f"result-committed:{work_id}:{attempt.attempt_checksum}",
-            event,
-            reconciliation_scientific_work_id=work_id,
-            reconciliation_expected_state=WorkItemState.RESULT_COMMITTED,
-            reconciliation_expected_result_content_checksum=result_content_checksum,
-        )
+        # MEGB-03H.2C.3B.2C correction: this enqueue call was previously
+        # unguarded -- an audit outbox at capacity (a realistic condition
+        # under a large, sustained streaming workload that commits many
+        # items faster than dispatch_audit() drains them) raised
+        # AuditOutboxFullError straight out of invoke_worker(), an
+        # unhandled exception that silently killed the calling worker
+        # thread rather than surfacing a typed outcome. No accepted test
+        # before this checkpoint's own streaming-scheduler regression
+        # suite ever committed enough items without an interleaved
+        # dispatch_audit() to reach this path. Mirrors the admission
+        # path's own already-established AuditOutboxFullError handling:
+        # refuse before the authoritative commit (never leaving an
+        # unaudited RESULT_COMMITTED transition), returning a typed
+        # INFRASTRUCTURE_FAILURE. The already-published result artifact
+        # remains present but permanently unreferenced -- the same safe,
+        # already-accepted "orphaned result artifact" pattern this
+        # engine's own fault-conformance suite (W5) already proves;
+        # redelivery retries with a fresh attempt/lease generation, never
+        # conflicting with the orphan.
+        try:
+            self._audit_outbox.enqueue(
+                f"result-committed:{work_id}:{attempt.attempt_checksum}",
+                event,
+                reconciliation_scientific_work_id=work_id,
+                reconciliation_expected_state=WorkItemState.RESULT_COMMITTED,
+                reconciliation_expected_result_content_checksum=result_content_checksum,
+            )
+        except AuditOutboxFullError:
+            return make_work_outcome(work_id, ordinal, WorkOutcomeKind.INFRASTRUCTURE_FAILURE)
 
         try:
             new_record = self._work_store.commit_result(
@@ -919,49 +941,48 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
         self,
         admissions: list[tuple[WorkDescriptor, str, int, int]],
         worker_participant_ids: list[str],
+        *,
+        admission_window: int | None = None,
     ) -> CoordinatorRunSummary:
-        """Admit every descriptor in ``admissions``
-        (``(descriptor, reservation_id, requested_cost_cents,
-        requested_worker_count)`` tuples), then drain the queue using at
-        most ``config.max_admitted_workers`` concurrently-running worker
-        invocations -- never more, and never holding any authoritative-
-        store lock while the injected executor callback runs (the
-        executor is only ever called from inside :meth:`invoke_worker`,
-        strictly between two separate, already-returned store calls).
-        Outcomes are collected then returned ordered by
-        ``input_ordinal``, regardless of completion order."""
+        """Bounded-streaming admission plus execution.
+
+        **MEGB-03H.2C.3B.2C correction:** this previously admitted every
+        descriptor in ``admissions`` up front, before any execution began
+        -- contradicting bounded admission/backpressure, and conflating
+        "how large is the whole workload" with "how much can be
+        in-flight at once." It now admits at most ``admission_window``
+        (default: ``config.max_in_flight_work``) items at a time,
+        replenishing the window as each admitted item resolves, so
+        ``admissions`` may be arbitrarily larger than the queue's own
+        in-flight capacity, the worker count, or the window itself
+        without ever accumulating unbounded queue-visible or in-flight
+        work. Never holding any authoritative-store lock while the
+        injected executor callback runs (unchanged: the executor is only
+        ever called from inside :meth:`invoke_worker`, strictly between
+        two already-returned store calls, and always outside this
+        scheduler's own internal lock). Executes with at most
+        ``config.max_admitted_workers`` concurrently-running worker
+        invocations. Outcomes are collected then returned ordered by
+        ``input_ordinal``, regardless of completion or admission order.
+        See :class:`_StreamingRunController` for the full liveness/
+        capacity design and its documented retry-pacing caveat."""
         if len(worker_participant_ids) > self._config.max_admitted_workers:
             raise InvalidDistributedProvenanceError(
                 f"cannot run with {len(worker_participant_ids)} workers, exceeding "
                 f"max_admitted_workers={self._config.max_admitted_workers}"
             )
-        outcomes: list[WorkOutcome] = []
-        outcomes_lock = threading.Lock()
-
-        for descriptor, reservation_id, requested_cost_cents, requested_worker_count in admissions:
-            outcome = self.admit(
-                descriptor,
-                reservation_id=reservation_id,
-                requested_cost_cents=requested_cost_cents,
-                requested_worker_count=requested_worker_count,
+        window = self._config.max_in_flight_work if admission_window is None else admission_window
+        if not isinstance(window, int) or isinstance(window, bool) or window < 1:
+            raise InvalidDistributedProvenanceError(
+                f"admission_window must be a positive int, got {window!r}"
             )
-            if outcome is not None:
-                with outcomes_lock:
-                    outcomes.append(outcome)
+
+        controller = _StreamingRunController(self, admissions, window)
+        controller.admit_up_to_window()
 
         semaphore = threading.Semaphore(self._config.max_admitted_workers)
-
-        def worker_loop(worker_participant_id: str) -> None:
-            while True:
-                with semaphore:
-                    outcome = self.invoke_worker(worker_participant_id)
-                if outcome is None:
-                    return
-                with outcomes_lock:
-                    outcomes.append(outcome)
-
         threads = [
-            threading.Thread(target=worker_loop, args=(worker_participant_id,))
+            threading.Thread(target=controller.worker_loop, args=(worker_participant_id, semaphore))
             for worker_participant_id in worker_participant_ids
         ]
         for thread in threads:
@@ -969,7 +990,100 @@ class Coordinator:  # pylint: disable=too-many-instance-attributes
         for thread in threads:
             thread.join()
 
-        return build_run_summary(outcomes)
+        return build_run_summary(controller.outcomes)
+
+
+class _StreamingRunController:
+    """Internal, per-call bounded-streaming admission/execution
+    controller for :meth:`Coordinator.run`. Not part of this module's
+    public API.
+
+    Admits at most ``window`` work items at a time -- never the entire
+    workload up front -- replenishing the window as each admitted
+    item's own :meth:`Coordinator.invoke_worker` call returns *any*
+    result (including a retryable-failure or stale-lease outcome, which
+    frees this item's own admission-window slot immediately for further
+    *admission pacing*; this scheduler's own liveness never depends on
+    an autonomous timer or wall-clock wait, matching this project's
+    already-established explicit, caller-driven lease-expiry
+    philosophy). The underlying queue message for a retried item may
+    still occupy the queue's own in-flight ledger until a future
+    redelivery resolves it -- a workload with a high expected retry rate
+    should provision ``max_in_flight_work`` headroom above
+    ``admission_window`` accordingly; retry redelivery *within* one
+    ``run()`` call additionally requires the same explicit clock
+    advancement/``check_lease_expiry`` step this project's own direct
+    ``admit()``/``invoke_worker()`` call sequences already use."""
+
+    def __init__(
+        self,
+        coordinator: "Coordinator",
+        admissions: list[tuple[WorkDescriptor, str, int, int]],
+        window: int,
+    ) -> None:
+        self._coordinator = coordinator
+        self._admissions_iter = iter(admissions)
+        self._window = window
+        self._cv = threading.Condition(threading.Lock())
+        self._outstanding = 0
+        self._exhausted = False
+        self._generation = 0
+        self.outcomes: list[WorkOutcome] = []
+
+    def admit_up_to_window(self) -> None:
+        """Admit as many further items as the window currently has room
+        for, stopping (without marking exhausted) once the window fills,
+        or marking ``exhausted`` once the workload itself is drained."""
+        with self._cv:
+            while self._outstanding < self._window:
+                item = next(self._admissions_iter, None)
+                if item is None:
+                    self._exhausted = True
+                    self._cv.notify_all()
+                    return
+                descriptor, reservation_id, requested_cost_cents, requested_worker_count = item
+                self._outstanding += 1
+                outcome = self._coordinator.admit(
+                    descriptor,
+                    reservation_id=reservation_id,
+                    requested_cost_cents=requested_cost_cents,
+                    requested_worker_count=requested_worker_count,
+                )
+                if outcome is not None:
+                    self._outstanding -= 1
+                    self.outcomes.append(outcome)
+                else:
+                    self._generation += 1
+                    self._cv.notify_all()
+
+    def worker_loop(self, worker_participant_id: str, semaphore: threading.Semaphore) -> None:
+        """Repeatedly invoke this worker until admission is exhausted and
+        every admitted item has resolved. Blocks (never busy-spins, never
+        wall-clock waits) only when there is genuinely nothing new since
+        the last check -- a generation counter, incremented on every
+        successful admission and re-checked under the same lock
+        immediately before waiting, makes this safe against lost
+        wakeups: a worker only ever waits if no admission happened
+        between the moment it last observed the generation and the
+        moment it decides to wait, both read/compared under one lock."""
+        while True:
+            with self._cv:
+                observed_generation = self._generation
+                if self._exhausted and self._outstanding == 0:
+                    return
+            with semaphore:
+                outcome = self._coordinator.invoke_worker(worker_participant_id)
+            if outcome is not None:
+                with self._cv:
+                    self.outcomes.append(outcome)
+                    self._outstanding -= 1
+                self.admit_up_to_window()
+                continue
+            with self._cv:
+                if self._exhausted and self._outstanding == 0:
+                    return
+                if self._generation == observed_generation:
+                    self._cv.wait()
 
 
 __all__ = [
