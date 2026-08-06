@@ -2,7 +2,7 @@
   "admitted_invocation_count": 2,
   "blocker_reasons": [],
   "calibration_evidence_checksum": "de4e51a957e00c738b538d2a5cceec53a30aba4eb2ecce1984a76792e8c95454",
-  "calibration_provenance_report_schema_version": "megb-03h2c3b3-calibration-provenance-report-v1",
+  "calibration_provenance_report_schema_version": "megb-03h2c3b3-calibration-provenance-report-v2",
   "calibration_run_context_checksum": "43952b423d9edc5d2797b75d84f16ebc82185dab07b4259fcbd4512f2bdb286b",
   "checksum_algorithm_version": "sha256-canonical-json-v1",
   "completed_invocation_count": 2,
@@ -21,7 +21,7 @@
   "qualification_gate_missing_dimensions": [],
   "qualification_gate_readiness": "READY",
   "readiness": "CALIBRATION_PROVENANCE_READY_FOR_3C",
-  "report_checksum": "333285e9b43fa459def884002bbbb069b3d88def127df4f83b5943dc97247a53",
+  "report_checksum": "88e883daa55997fb4da1a34c1940d1cfb74c3909ab9f3858e8d2dbc0e6ebb44d",
   "task_reconciliation_passed": true,
   "topology_machine_type_counts": [
     [
