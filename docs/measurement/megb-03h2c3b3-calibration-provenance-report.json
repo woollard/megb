@@ -2,7 +2,7 @@
   "admitted_invocation_count": 2,
   "blocker_reasons": [],
   "calibration_evidence_checksum": "de4e51a957e00c738b538d2a5cceec53a30aba4eb2ecce1984a76792e8c95454",
-  "calibration_provenance_report_schema_version": "megb-03h2c3b3-calibration-provenance-report-v2",
+  "calibration_provenance_report_schema_version": "megb-03h2c3b3-calibration-provenance-report-v3",
   "calibration_run_context_checksum": "43952b423d9edc5d2797b75d84f16ebc82185dab07b4259fcbd4512f2bdb286b",
   "checksum_algorithm_version": "sha256-canonical-json-v1",
   "completed_invocation_count": 2,
@@ -12,6 +12,7 @@
   "intended_concurrency": 2,
   "invalid_invocation_count": 0,
   "invocation_provenance_resolved": true,
+  "lock_checksum": "e37dfb1f5dc5937f86fd12647d25be0054d38ba9540dbf1a4a2fe34911d648d6",
   "measured_peak_concurrency": 2,
   "participating_worker_context_checksums": [
     "bd66a3df85949e7750374dbb37af1876dd0b4d298970dc3e6cd7fa7c03b601ac",
@@ -21,7 +22,7 @@
   "qualification_gate_missing_dimensions": [],
   "qualification_gate_readiness": "READY",
   "readiness": "CALIBRATION_PROVENANCE_READY_FOR_3C",
-  "report_checksum": "88e883daa55997fb4da1a34c1940d1cfb74c3909ab9f3858e8d2dbc0e6ebb44d",
+  "report_checksum": "15def683942d1f65655a353710c9514e9d07b123f3206d2574e6c70104d14338",
   "task_reconciliation_passed": true,
   "topology_machine_type_counts": [
     [

@@ -9,8 +9,9 @@
       "distributed_run_context_checksum": "2789039cb213edb0a0a5a27ae2784d4004db399675d22fb378c7193cd1f35cec",
       "expected_worker_count": 2,
       "generating_code_dirty": true,
-      "generating_code_revision": "d5e9f21e1566180440e9baee0a5319eeb208a2d0",
+      "generating_code_revision": "fe09f07aef56163994c0c4b4e6705a4bb9c4a940",
       "generation_command": "pytest tests/test_calibration_provenance_integration.py",
+      "lock_checksum": "e37dfb1f5dc5937f86fd12647d25be0054d38ba9540dbf1a4a2fe34911d648d6",
       "manifest_checksum": "c03477a53940437cda7516839e85bc12c0936622702addcbca18f13984c7313e",
       "protected_path": "artifacts/privileged/distributed_provenance/calibration_provenance_manifest.json",
       "safe_topology_summary_checksum": "05311c336a8584ec3031cf5e22cd84315734f1c0afd83d5aefae9842920f1f55",
@@ -18,5 +19,5 @@
       "size_bytes": 7064
     }
   ],
-  "lock_schema_version": "megb-03h2c3b3-distributed-provenance-manifest-lock-v1"
+  "lock_schema_version": "megb-03h2c3b3-distributed-provenance-manifest-lock-v2"
 }

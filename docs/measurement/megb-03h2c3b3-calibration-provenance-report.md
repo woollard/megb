@@ -2,11 +2,12 @@
 
 - **Readiness:** `CALIBRATION_PROVENANCE_READY_FOR_3C`
 - **Scope:** offline, provider-neutral calibration-provenance evidence chain only -- no GCP, H.2C.3C credential-boundary, or real scientific-result-validity claim is made.
-- **Schema version:** `megb-03h2c3b3-calibration-provenance-report-v2`
-- **Report checksum:** `88e883daa55997fb4da1a34c1940d1cfb74c3909ab9f3858e8d2dbc0e6ebb44d`
+- **Schema version:** `megb-03h2c3b3-calibration-provenance-report-v3`
+- **Report checksum:** `15def683942d1f65655a353710c9514e9d07b123f3206d2574e6c70104d14338`
 - **Provenance manifest checksum:** `c03477a53940437cda7516839e85bc12c0936622702addcbca18f13984c7313e`
 - **Calibration run-context checksum:** `43952b423d9edc5d2797b75d84f16ebc82185dab07b4259fcbd4512f2bdb286b`
 - **Calibration evidence checksum:** `de4e51a957e00c738b538d2a5cceec53a30aba4eb2ecce1984a76792e8c95454`
+- **Lock checksum:** `e37dfb1f5dc5937f86fd12647d25be0054d38ba9540dbf1a4a2fe34911d648d6`
 
 ## Qualification gate
 
