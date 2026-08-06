@@ -121,10 +121,21 @@ def test_calibration_schema_v1_is_rejected() -> None:
         make_context(calibration_schema_version="megb-03h-calibration-record-v1")
 
 
-def test_current_schema_version_is_v2() -> None:
-    """Confirms the exact, intentional version string this correction
-    bumped to."""
-    assert CALIBRATION_SCHEMA_VERSION == "megb-03h-calibration-record-v2"
+def test_calibration_schema_v2_is_rejected() -> None:
+    """A record stamped with the pre-MEGB-03H.2C.3B.3 v2 schema version
+    (this file's own "current" version at the time it was written) is
+    rejected outright now that the schema has moved to v3 -- the v2->v3
+    bump is real, not cosmetic."""
+    with pytest.raises(UnsupportedCalibrationSchemaVersionError):
+        make_context(calibration_schema_version="megb-03h-calibration-record-v2")
+
+
+def test_current_schema_version_is_v3() -> None:
+    """Confirms the exact, intentional version string this module
+    currently implements (bumped v2->v3 by MEGB-03H.2C.3B.3 -- see
+    tests/test_distributed_calibration_provenance.py for that
+    correction's own dedicated test coverage)."""
+    assert CALIBRATION_SCHEMA_VERSION == "megb-03h-calibration-record-v3"
 
 
 # ---------------------------------------------------------------------------

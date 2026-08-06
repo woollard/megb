@@ -93,7 +93,19 @@ from src.reference.result_schema import MeasurementStatus
 # module docstring addendum below). No real persisted v1 artifact exists
 # anywhere in this repository or its gitignored local paths (confirmed by
 # search at correction time) -- no migration is performed or required.
-CALIBRATION_SCHEMA_VERSION = "megb-03h-calibration-record-v2"
+#
+# MEGB-03H.2C.3B.3 integration: v2 -> v3, adding
+# distributed_run_context_checksum/provenance_manifest_checksum to
+# CalibrationRunContext and worker_execution_context_checksum to
+# CalibrationInvocationRecord -- content-binding this schema to
+# src.distributed's provenance types, per
+# docs/reference/megb-03h2c3b1-integration-map.md's own blocking-gate
+# item and this checkpoint's own frozen
+# docs/reference/megb-03h2c3b3-calibration-provenance-integration-design.md.
+# No real persisted v1 or v2 artifact exists anywhere in this repository
+# or its gitignored local paths (confirmed by search at implementation
+# time) -- no migration is performed or required.
+CALIBRATION_SCHEMA_VERSION = "megb-03h-calibration-record-v3"
 
 _SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -491,6 +503,21 @@ class CalibrationRunContext:
     canonical contents at construction time -- never accepted as an
     unverified caller-provided value (same auto-compute-or-reject pattern
     as :class:`~src.reference.result_schema.ReferenceValidationCandidateSetManifest`).
+
+    ``distributed_run_context_checksum``/``provenance_manifest_checksum``
+    (MEGB-03H.2C.3B.3 integration) content-bind this run context to the
+    real ``DistributedRunContext``/``DistributedProvenanceManifest`` (both
+    ``src.distributed`` types, referenced here only by sha256-hex
+    checksum -- this module never imports ``src.distributed``, per this
+    package's own layering rule) that produced it. Since both participate
+    in ``context_checksum``, a context claiming one run/manifest binding
+    is never treated as the same context as one claiming another, even if
+    every other label is identical. See
+    ``src.reference.distributed_provenance_reconciliation`` for the
+    function that verifies these checksums resolve to a real, persisted
+    manifest -- this dataclass only enforces the sha256-hex *shape*, not
+    resolution (resolution requires the manifest object, which this
+    module never imports or depends on).
     """
 
     calibration_schema_version: str
@@ -507,6 +534,8 @@ class CalibrationRunContext:
     task_manifest_checksum: str
     telemetry_collection_policy: TelemetryCollectionPolicy
     host_runtime_context: HostRuntimeContext
+    distributed_run_context_checksum: str
+    provenance_manifest_checksum: str
     context_checksum: str = ""
 
     def __post_init__(self) -> None:
@@ -542,6 +571,8 @@ class CalibrationRunContext:
                 f"host_runtime_context must be a HostRuntimeContext, got "
                 f"{self.host_runtime_context!r}"
             )
+        _require_sha256_hex(self, "distributed_run_context_checksum")
+        _require_sha256_hex(self, "provenance_manifest_checksum")
 
         payload = _calibration_run_context_payload(self)
         expected_checksum = _sha256_of(payload)
@@ -572,6 +603,8 @@ def _calibration_run_context_payload(context: CalibrationRunContext) -> dict[str
             context.telemetry_collection_policy
         ),
         "host_runtime_context": host_runtime_context_to_dict(context.host_runtime_context),
+        "distributed_run_context_checksum": context.distributed_run_context_checksum,
+        "provenance_manifest_checksum": context.provenance_manifest_checksum,
     }
 
 
@@ -603,6 +636,8 @@ def calibration_run_context_from_dict(data: Mapping[str, Any]) -> CalibrationRun
                 data["telemetry_collection_policy"]
             ),
             host_runtime_context=host_runtime_context_from_dict(data["host_runtime_context"]),
+            distributed_run_context_checksum=data["distributed_run_context_checksum"],
+            provenance_manifest_checksum=data["provenance_manifest_checksum"],
             context_checksum=data["context_checksum"],
         )
     except KeyError as exc:
@@ -909,6 +944,19 @@ class CalibrationInvocationRecord:  # pylint: disable=too-many-instance-attribut
     ``reference_case_checksum``) ``case_ordinal`` is a position *within* --
     ``case_ordinal`` alone is never meaningful without this pin; see
     :func:`require_consistent_case_scope`.
+
+    ``worker_execution_context_checksum`` (MEGB-03H.2C.3B.3 integration)
+    content-binds this invocation to the real ``WorkerExecutionContext``
+    (a ``src.distributed`` type, referenced here only by sha256-hex
+    checksum) that actually produced it. Participates in
+    ``record_checksum``, so a substituted worker changes this invocation's
+    own checksum -- which
+    :class:`CalibrationTaskEvaluationRecord`'s existing
+    ``contributing_invocation_content_checksums`` already transitively
+    binds (see :func:`reconcile_task_evaluation`); no separate
+    worker-context histogram field is added to that record type (see this
+    checkpoint's own frozen design doc §4 for the explicit
+    determination).
     """
 
     calibration_schema_version: str
@@ -916,6 +964,7 @@ class CalibrationInvocationRecord:  # pylint: disable=too-many-instance-attribut
     task_id: str
     candidate_sha256: str
     reference_case_checksum: str
+    worker_execution_context_checksum: str
     case_ordinal: int
     task_evaluation_replicate_id: int
     attempt_id: int
@@ -969,6 +1018,7 @@ class CalibrationInvocationRecord:  # pylint: disable=too-many-instance-attribut
             _require_nonempty_str(self, field_name)
         _require_sha256_hex(self, "candidate_sha256")
         _require_sha256_hex(self, "reference_case_checksum")
+        _require_sha256_hex(self, "worker_execution_context_checksum")
         _require_non_negative_int(self, "case_ordinal")
         _require_non_negative_int(self, "task_evaluation_replicate_id")
         if (
@@ -1061,6 +1111,7 @@ def _calibration_invocation_record_payload(record: CalibrationInvocationRecord) 
         "task_id": record.task_id,
         "candidate_sha256": record.candidate_sha256,
         "reference_case_checksum": record.reference_case_checksum,
+        "worker_execution_context_checksum": record.worker_execution_context_checksum,
         "case_ordinal": record.case_ordinal,
         "task_evaluation_replicate_id": record.task_evaluation_replicate_id,
         "attempt_id": record.attempt_id,
@@ -1123,6 +1174,7 @@ def calibration_invocation_record_from_dict(data: Mapping[str, Any]) -> Calibrat
             task_id=data["task_id"],
             candidate_sha256=data["candidate_sha256"],
             reference_case_checksum=data["reference_case_checksum"],
+            worker_execution_context_checksum=data["worker_execution_context_checksum"],
             case_ordinal=data["case_ordinal"],
             task_evaluation_replicate_id=data["task_evaluation_replicate_id"],
             attempt_id=data["attempt_id"],

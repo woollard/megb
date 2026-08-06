@@ -267,6 +267,8 @@ def calibration_context(**overrides: object) -> CalibrationRunContext:
         "task_manifest_checksum": TASK_MANIFEST_CHECKSUM,
         "telemetry_collection_policy": _telemetry_collection_policy(),
         "host_runtime_context": _host_runtime_context(),
+        "distributed_run_context_checksum": "1" * 64,
+        "provenance_manifest_checksum": "2" * 64,
     }
     fields.update(overrides)
     return CalibrationRunContext(**fields)  # type: ignore[arg-type]
@@ -286,6 +288,7 @@ def invocation_record(
         task_id=result.task_id,
         candidate_sha256=result.candidate_sha256,
         reference_case_checksum=result.reference_case_checksum,
+        worker_execution_context_checksum="3" * 64,
         case_ordinal=0,
         task_evaluation_replicate_id=replicate_id,
         attempt_id=attempt_id,

@@ -38,6 +38,15 @@ TASK_MANIFEST_CHECKSUM = "9" * 64
 REFERENCE_CASE_CHECKSUM = "e" * 64
 OTHER_REFERENCE_CASE_CHECKSUM = "f" * 64
 RUNNER_IMAGE_DIGEST = "sha256:" + "c" * 64
+# MEGB-03H.2C.3B.3: synthetic defaults for the new distributed-provenance
+# content-binding fields -- no real DistributedRunContext/
+# WorkerExecutionContext/DistributedProvenanceManifest backs these in
+# this shared fixture (that binding is exercised for real only by
+# tests/test_distributed_calibration_provenance.py); every other existing
+# calibration test only needs a structurally valid sha256-hex shape here.
+DISTRIBUTED_RUN_CONTEXT_CHECKSUM = "1" * 64
+PROVENANCE_MANIFEST_CHECKSUM = "2" * 64
+WORKER_EXECUTION_CONTEXT_CHECKSUM = "3" * 64
 
 
 def make_telemetry_collection_policy(**overrides: object) -> TelemetryCollectionPolicy:
@@ -116,6 +125,8 @@ def make_context(**overrides: object) -> CalibrationRunContext:
         "task_manifest_checksum": TASK_MANIFEST_CHECKSUM,
         "telemetry_collection_policy": make_telemetry_collection_policy(),
         "host_runtime_context": make_host_runtime_context(),
+        "distributed_run_context_checksum": DISTRIBUTED_RUN_CONTEXT_CHECKSUM,
+        "provenance_manifest_checksum": PROVENANCE_MANIFEST_CHECKSUM,
     }
     fields.update(overrides)
     return CalibrationRunContext(**fields)  # type: ignore[arg-type]
@@ -131,6 +142,7 @@ def make_invocation(
         "task_id": "HumanEval/41",
         "candidate_sha256": CANDIDATE_SHA256,
         "reference_case_checksum": REFERENCE_CASE_CHECKSUM,
+        "worker_execution_context_checksum": WORKER_EXECUTION_CONTEXT_CHECKSUM,
         "case_ordinal": 0,
         "task_evaluation_replicate_id": 0,
         "attempt_id": 1,

@@ -67,12 +67,14 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` | `megb-03g4-workload-checksum-algorithm-v1` | `g4_qualification_report.py` | Identifies how the workload content checksum below is canonicalized/hashed — a separate field from the checksum value itself |
 | `H5_PROMOTION_MANIFEST_SCHEMA_VERSION` | `megb-03h5-promotion-manifest-v1` | `h5_promotion_manifest.py` | `H5PromotionManifest` field shape and `PromotionState`/`EntryPromotionState` state-machine semantics (the transition table in `advance_manifest` is versioned together with the manifest shape, not as a separate constant — a future state-machine change bumps this same version, per this table's own established one-version-per-persisted-shape discipline). See "MEGB-03H.2B.2 addendum" below. |
 | `PROMOTION_SUMMARY_SCHEMA_VERSION` | `megb-03h5-promotion-summary-v1` | `h5_promotion.py` | `PromotionSummary` field shape — the safe, allowlisted, committed-output-suitable promotion report. See "MEGB-03H.2B.2 addendum" below. |
-| `CALIBRATION_SCHEMA_VERSION` | `megb-03h-calibration-record-v2` | `calibration_schema.py` | `CalibrationRunContext`/`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` field shape. **v1→v2**: v1 had no persisted telemetry-collection-policy, host/runtime, or per-metric collector-method provenance — see "MEGB-03H.2C.2A addendum" below. (Introduced by MEGB-03H.2A; this row itself was missing from this registry until the H.2C.2A correction pass — a registry-currency gap, not a second schema change.) |
+| `CALIBRATION_SCHEMA_VERSION` | `megb-03h-calibration-record-v3` | `calibration_schema.py` | `CalibrationRunContext`/`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` field shape. **v1→v2**: v1 had no persisted telemetry-collection-policy, host/runtime, or per-metric collector-method provenance — see "MEGB-03H.2C.2A addendum" below. (Introduced by MEGB-03H.2A; this row itself was missing from this registry until the H.2C.2A correction pass — a registry-currency gap, not a second schema change.) **v2→v3 (MEGB-03H.2C.3B.3)**: `CalibrationRunContext` gains `distributed_run_context_checksum`/`provenance_manifest_checksum`, and `CalibrationInvocationRecord` gains `worker_execution_context_checksum` — content-binding this schema to `src.distributed`'s provenance types, per `docs/reference/megb-03h2c3b1-integration-map.md`'s own blocking-gate item. `CalibrationTaskEvaluationRecord` gains no new field — its existing `contributing_invocation_content_checksums` already transitively binds worker provenance through each contributor's full `record_checksum`. No real persisted v1 or v2 artifact exists anywhere in this repository — no migration performed or required. See "MEGB-03H.2C.3B.3 addendum" below. |
 | `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` | `megb-03h2c3b1-distributed-provenance-v1` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` provenance/identity type (`DistributedRunContext`, `WorkerExecutionContext`, `RetryLeasePolicy`, `MixedWorkerProvenanceSummary`, `QualificationIdentity`, `ProductionIdentityProjection`, `AggregateProductionIdentityProjection`, `SafeRedactedSummary`, `ProtectedOperationalMapping`). Introduced by MEGB-03H.2C.3B.1; this row itself was missing from this registry until this MEGB-03H.2C.3B.2A pass — a registry-currency gap, not a schema change. See "MEGB-03H.2C.3B addendum" below. |
 | `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` | `megb-03h2c3b2b2-distributed-orchestration-v3` | `src/distributed/_checksums.py` | Field shape for every `src/distributed/` orchestration-contract type (`ArtifactReference`, `WorkDescriptor`, `QueueWorkMessage`, `CancellationRequest`, `ExecutionAttempt`, `ResultCommit`, `Acknowledgement`, `TerminalDisposition`, `WorkerRegistration`, `Lease`, `LeaseRenewal`, `PersonalEnvironmentPolicy`, `SafeAuditEvent`) — a schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` above. **v1→v2**: v1's `PersonalEnvironmentPolicy.spending_ceiling_usd` was a `float`, and `ArtifactReference.artifact_checksum` bound content only, not classification metadata — see "MEGB-03H.2C.3B.2B.1 addendum" below. **v2→v3**: `TerminalDispositionReason` gained `NON_RETRYABLE_EXECUTOR_FAILURE`, and `ResultCommit` gained a required `actual_cost_cents` field — see "MEGB-03H.2C.3B.2B.2 correction addendum" below. Introduced by MEGB-03H.2C.3B.2A; corrected by MEGB-03H.2C.3B.2B.1 and MEGB-03H.2C.3B.2B.2's own correction. See "MEGB-03H.2C.3B addendum", "MEGB-03H.2C.3B.2B.1 addendum", and "MEGB-03H.2C.3B.2B.2 correction addendum" below. |
 | `CHECKSUM_ALGORITHM_VERSION` (`src.distributed`) | `sha256-canonical-json-v1` | `src/distributed/_checksums.py` | The one checksum-derivation algorithm identity shared by **both** `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped types — sha256 over `json.dumps(payload, sort_keys=True)`. Deliberately the same name as no other constant in this table (`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` is a distinct, unrelated identity scoped to G.4's own synthetic workload checksum) — the two never collide because they are different Python identifiers in different modules; this row exists so this document's own registry is not silently incomplete about which module's `CHECKSUM_ALGORITHM_VERSION` it is describing. Introduced by MEGB-03H.2C.3B.1; unchanged by MEGB-03H.2C.3B.2A, which reuses it rather than defining a second one. See "MEGB-03H.2C.3B addendum" below. |
 | `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b2b3-fault-conformance-v1` | `src/distributed/fault_conformance.py` | `FaultConformanceReport`/`ConformanceEntry` field shape — the safe, committed MEGB-03H.2C.3B.2B.3 in-process fault-injection/recovery conformance report (mirrors `H2C2B_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, explicitly-allowlisted pattern). A schema family independent of both `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` above — this report proves conformance of code stamped with those schemas, but is not itself stamped with either. Introduced by MEGB-03H.2C.3B.2B.3; persisted at `docs/measurement/megb-03h2c3b2b3-fault-conformance-report.{json,md}`. |
 | `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` | `megb-03h2c3b2c-offline-e2e-qualification-v2` | `src/distributed/offline_e2e_qualification_report.py` | `OfflineE2EQualificationReport` field shape — the safe, committed MEGB-03H.2C.3B.2C offline end-to-end synthetic distributed qualification report (mirrors `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, exact-count-validated, derived-readiness pattern). A schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION` above — this report references the fault-conformance report's own checksum by value rather than being stamped with it. Introduced by MEGB-03H.2C.3B.2C; persisted at `docs/measurement/megb-03h2c3b2c-offline-e2e-qualification-report.{json,md}`. Scoped explicitly to offline, provider-neutral, in-process recovery — makes no H.2C.3D, GCP, durable-process, cross-host, or Docker/native-Linux-equivalence claim. **v1→v2 (MEGB-03H.2C.3B.2C correction):** v1 (never accepted or pushed — superseded, preserved only in git history at commit `edbda37`) recorded only the qualification gate's own output checksums, with no field checking that the *workload class actually used* was the qualification-candidate class rather than the smoke class. v2 adds `distributed_run_intent`, `qualifying_workload_class`, and `qualification_gate_ready` as explicit, safe, closed-enum-validated fields, plus `qualification_workload_consistent` as a fourth, wholly-derived field (never caller-settable) folded into `readiness`. No `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` bump was required for this correction — `WorkloadClass.SYNTHETIC_QUALIFICATION_CANDIDATE` already existed in the accepted v3 enum before this correction; using it correctly is not a legal-value-set expansion. |
+| `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-v1` | `src/distributed/provenance_manifest.py` | `DistributedProvenanceManifest` field shape — the typed, immutable, versioned, self-checksummed, **protected** (never committed as-is) artifact bundling a `DistributedRunContext`, its full `WorkerExecutionContext` set, their `MixedWorkerProvenanceSummary`/`QualificationIdentity`/qualification-gate readiness, `generation_command`/`code_revision`, and a `SafeRedactedSummary`. A fourth, independent `src/distributed/` schema family (alongside `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` above). Introduced by MEGB-03H.2C.3B.3; never persisted to a fixed repository path (caller-managed temporary/synthetic path only, per this checkpoint's own frozen design). See "MEGB-03H.2C.3B.3 addendum" below. |
+| `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b3-calibration-provenance-report-v1` | `src/distributed/calibration_provenance_report.py` | `CalibrationProvenanceReport` field shape — the safe, committed MEGB-03H.2C.3B.3 calibration-provenance qualification-evidence report (mirrors `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, derived-readiness pattern). A fifth, independent `src/distributed/` schema family. Binds the provenance-manifest checksum, calibration run-context checksum, participating worker-context checksums, a safe topology histogram, intended-vs-measured peak concurrency, and invocation counts; `readiness`/`blocker_reasons` are always derived, never independently caller-settable. Introduced by MEGB-03H.2C.3B.3; persisted at `docs/measurement/megb-03h2c3b3-calibration-provenance-report.{json,md}`. Scoped explicitly to the offline calibration-provenance evidence chain — makes no GCP or H.2C.3C credential-boundary readiness claim. See "MEGB-03H.2C.3B.3 addendum" below. |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
 `BENCHMARK_PLAN_VERSION`, `SYNTHETIC_WORKLOAD_VERSION`,
@@ -682,3 +684,94 @@ stamped type's field shape.
 `oracle_version`, `comparison_profile_version`, `evaluator_version`,
 `execution_profile_id`, `execution_protocol_version` — 11 identity/checksum
 fields plus the self-computed `key_digest`.
+
+## MEGB-03H.2C.3B.3 addendum: calibration/qualification provenance integration
+
+Implements exactly the integration `docs/reference/megb-03h2c3b1-integration-map.md`
+named as blocking before MEGB-03H.2C.3D: connecting the standalone,
+provider-neutral `src/distributed/` provenance types to the accepted
+`src/reference/calibration_schema.py` evidence chain, plus a new typed
+qualification-evidence/report model binding them together with measured
+peak concurrency. Entirely offline — no GCP, `gcloud`, cloud resource,
+Docker, or privileged artifact anywhere. Frozen design:
+`docs/reference/megb-03h2c3b3-calibration-provenance-integration-design.md`.
+
+**`CALIBRATION_SCHEMA_VERSION` v2→v3** (this table's own row above):
+`CalibrationRunContext` gains `distributed_run_context_checksum`/
+`provenance_manifest_checksum` (both sha256 hex, participating in
+`context_checksum`); `CalibrationInvocationRecord` gains
+`worker_execution_context_checksum` (sha256 hex, participating in
+`record_checksum`). **Persisted-artifact search**: repository-wide grep
+for `megb-03h-calibration-record-v1`/`-v2` outside this module's own
+source and tests, plus this repository's own gitignored local paths,
+found nothing — no real persisted v1 or v2 `CalibrationRunContext`/
+`CalibrationInvocationRecord`/`CalibrationTaskEvaluationRecord` artifact
+exists anywhere, so no migration is performed or required (the same
+no-migration determination every prior calibration-schema bump in this
+project's history has made). A committed historical **safe** report
+(any already-accepted `CalibrationSummaryReport` JSON under
+`docs/measurement/`) is explicitly distinct from a resumable **typed
+calibration record** — the former is point-in-time evidence already
+accepted under its own schema version and is never "migrated"; only the
+latter would ever require a migration path, and none exists. Stale-v2
+records are rejected outright by the existing
+`UnsupportedCalibrationSchemaVersionError` path (regression-tested).
+**`CalibrationTaskEvaluationRecord` gains no new field** — audited and
+determined explicit: its existing `contributing_invocation_content_checksums`
+already binds each contributor's *entire* `record_checksum` at binding
+time, and since `worker_execution_context_checksum` is now one of the
+fields folded into that same `record_checksum`, any change to which
+worker produced a given invocation changes `contributing_invocations_checksum`
+on the task evaluation, which `reconcile_task_evaluation` (unchanged)
+already rejects as "contributor content changed after binding" —
+transitive content binding, not a redundant parallel histogram field
+(regression-tested in `tests/test_distributed_calibration_provenance.py`).
+
+**New `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION`** (this table's
+own row above): a fourth, independent `src/distributed/` schema family.
+`DistributedProvenanceManifest` composes exclusively already-accepted
+`src.distributed` types (`DistributedRunContext`, `WorkerExecutionContext`,
+`MixedWorkerProvenanceSummary`, `QualificationIdentity`,
+`evaluate_qualification_gate`'s own readiness/missing-dimensions,
+`SafeRedactedSummary`) plus two new plain fields (`generation_command`,
+`code_revision`) and the manifest's own wrapping/checksum/resolution
+logic (`resolve_worker_context`). The **full** manifest is protected
+operational/calibration evidence, never committed to a public report
+path — only `safe_redacted_summary` and `manifest_checksum` are safe to
+reference in any committed report.
+
+**New `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION`** (this table's own
+row above): a fifth, independent `src/distributed/` schema family.
+`CalibrationProvenanceReport` binds every fact a calling harness
+measures/reconciles (manifest checksum, calibration run-context
+checksum, participating worker-context checksums, safe topology
+histogram, intended-vs-measured peak concurrency, invocation counts,
+invocation-provenance-resolved/task-reconciliation-passed flags, the
+manifest's own gate readiness/missing-dimensions) and derives
+`readiness`/`blocker_reasons` purely from those facts — never
+independently caller-settable. Readiness values:
+`CALIBRATION_PROVENANCE_READY_FOR_3C`/`BLOCKED_CALIBRATION_PROVENANCE` —
+neither implies GCP readiness or H.2C.3C credential-boundary readiness.
+Measured peak concurrency is genuine evidence, never a caller-supplied
+label: `measured_peak_concurrency > intended_concurrency`, or (under
+`EnvironmentClass.PERSONAL_BOOTSTRAP`) `measured_peak_concurrency >
+PERSONAL_BOOTSTRAP_MAX_WORKERS` (2), is rejected as a hard construction-
+time error, never merely a blocked readiness.
+
+**New `src/reference/distributed_provenance_reconciliation.py`** — the
+only module in `src/reference/` permitted to import `src.distributed`
+(no dependency-direction test forbids this direction; only the reverse,
+`src/distributed` importing `src.reference`, remains forbidden and
+unaffected). `reconcile_calibration_run_context`/
+`reconcile_calibration_invocation_worker`/`reconcile_all_invocations`
+verify a `CalibrationRunContext`'s/`CalibrationInvocationRecord`'s
+distributed-provenance cross-reference checksums resolve against a real
+`DistributedProvenanceManifest`.
+
+No modification to `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`,
+`DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, `RESULT_SCHEMA_VERSION`,
+`CACHE_KEY_SCHEMA_VERSION`, or `AUDIT_RECORD_SCHEMA_VERSION` — all
+confirmed unchanged. `ReferenceRunContext`, `ReferenceResultCacheKey`,
+and `ReferenceAuditRecord` remain untouched, per this checkpoint's own
+explicit scope (their distributed-production integration remains a
+pre-H.2C.3F requirement, per the integration map's own summary table).

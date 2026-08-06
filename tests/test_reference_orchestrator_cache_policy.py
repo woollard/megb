@@ -439,6 +439,8 @@ def test_calibration_trace_recorder_with_real_trace_store_end_to_end(tmp_path: P
             task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
             telemetry_collection_policy=make_telemetry_collection_policy(),
             host_runtime_context=make_host_runtime_context(),
+            distributed_run_context_checksum="1" * 64,
+            provenance_manifest_checksum="2" * 64,
         )
         assert task_result is not None
         return CalibrationTaskEvaluationRecord(

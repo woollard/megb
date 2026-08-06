@@ -349,6 +349,7 @@ def _build_invocation_record(  # pylint: disable=too-many-arguments,too-many-pos
         task_id=work_item.task_id,
         candidate_sha256=work_item.candidate_sha256,
         reference_case_checksum=evidence.reference_case_checksum,
+        worker_execution_context_checksum="3" * 64,
         case_ordinal=0,
         task_evaluation_replicate_id=task_evaluation_replicate_id,
         attempt_id=attempt.attempt_id,
@@ -399,6 +400,8 @@ def _calibration_context() -> CalibrationRunContext:
         task_manifest_checksum=_TASK_MANIFEST_CHECKSUM,
         telemetry_collection_policy=make_telemetry_collection_policy(),
         host_runtime_context=make_host_runtime_context(),
+        distributed_run_context_checksum="1" * 64,
+        provenance_manifest_checksum="2" * 64,
     )
 
 

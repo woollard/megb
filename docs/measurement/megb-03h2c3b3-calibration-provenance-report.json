@@ -1,0 +1,48 @@
+{
+  "admitted_invocation_count": 2,
+  "blocker_reasons": [],
+  "calibration_evidence_checksum": "de4e51a957e00c738b538d2a5cceec53a30aba4eb2ecce1984a76792e8c95454",
+  "calibration_provenance_report_schema_version": "megb-03h2c3b3-calibration-provenance-report-v1",
+  "calibration_run_context_checksum": "43952b423d9edc5d2797b75d84f16ebc82185dab07b4259fcbd4512f2bdb286b",
+  "checksum_algorithm_version": "sha256-canonical-json-v1",
+  "completed_invocation_count": 2,
+  "distributed_provenance_schema_version": "megb-03h2c3b1-distributed-provenance-v1",
+  "environment_class": "PERSONAL_BOOTSTRAP",
+  "incomplete_invocation_count": 0,
+  "intended_concurrency": 2,
+  "invalid_invocation_count": 0,
+  "invocation_provenance_resolved": true,
+  "measured_peak_concurrency": 2,
+  "participating_worker_context_checksums": [
+    "bd66a3df85949e7750374dbb37af1876dd0b4d298970dc3e6cd7fa7c03b601ac",
+    "c77c9a57292e78258fe57a12d199fd6c1cbdf4220d9f6a930b31aa7538b54741"
+  ],
+  "provenance_manifest_checksum": "c03477a53940437cda7516839e85bc12c0936622702addcbca18f13984c7313e",
+  "qualification_gate_missing_dimensions": [],
+  "qualification_gate_readiness": "READY",
+  "readiness": "CALIBRATION_PROVENANCE_READY_FOR_3C",
+  "report_checksum": "333285e9b43fa459def884002bbbb069b3d88def127df4f83b5943dc97247a53",
+  "task_reconciliation_passed": true,
+  "topology_machine_type_counts": [
+    [
+      "n2-standard-4",
+      2
+    ]
+  ],
+  "topology_provisioning_class_counts": [
+    [
+      "ON_DEMAND",
+      2
+    ]
+  ],
+  "topology_region_counts": [
+    [
+      "us-central1",
+      1
+    ],
+    [
+      "us-east1",
+      1
+    ]
+  ]
+}
