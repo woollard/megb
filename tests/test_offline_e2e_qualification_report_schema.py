@@ -284,6 +284,20 @@ def test_report_rejects_stale_schema_version() -> None:
         offline_e2e_qualification_report_from_dict(data)
 
 
+def test_report_rejects_the_real_superseded_v1_schema_version() -> None:
+    """MEGB-03H.2C.3B.2C correction acceptance reconciliation: reject not
+    merely an arbitrary unknown string, but the *actual* superseded v1
+    identifier this module carried before the v1->v2 bump (the schema
+    the abandoned, never-accepted report at git commit edbda37 used) --
+    proving migration is enforced against genuine historical data, not
+    only hypothetical ones."""
+    report = _build()
+    data = offline_e2e_qualification_report_to_dict(report)
+    data["schema_version"] = "megb-03h2c3b2c-offline-e2e-qualification-v1"
+    with pytest.raises(InvalidOfflineE2EQualificationReportError):
+        offline_e2e_qualification_report_from_dict(data)
+
+
 def test_report_rejects_unknown_readiness_identifier() -> None:
     """Test report rejects an unknown readiness string."""
     report = _build()

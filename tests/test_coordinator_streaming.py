@@ -22,6 +22,7 @@ from src.distributed._checksums import (
     DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION,
     InvalidDistributedProvenanceError,
 )
+from src.distributed.budget_store import ReservationStatus
 from src.distributed.executor import ExecutorInvocationResult, executor_success
 from src.distributed.queue_adapter import InMemoryAtLeastOnceQueue
 from src.distributed.work_contracts import ArtifactKind, ArtifactReference, WorkDescriptor
@@ -376,3 +377,49 @@ def test_run_completes_with_a_mixed_retryable_failure_present() -> None:
     assert summary.count(WorkOutcomeKind.RETRY_SCHEDULED) == 1
     assert summary.count(WorkOutcomeKind.EXECUTED_AND_COMMITTED) == 14
     assert len(summary.outcomes) == 15
+
+
+def test_run_leaves_no_leaked_threads_unresolved_audit_or_budget_after_streaming() -> None:
+    """MEGB-03H.2C.3B.2C acceptance reconciliation: a 50-item workload
+    streamed through an admission_window (5) far smaller than the
+    workload -- forcing many real replenishment cycles -- must leave, once
+    ``run()`` returns: every worker thread it spawned joined (no leak);
+    every admission/result-committed audit entry delivered (no
+    unresolved deliverable outbox entry); and the budget store's own
+    requested/finalized/released totals in exact balance (no work item's
+    cost silently unaccounted for)."""
+    env = build_environment(
+        max_admitted_workers=2,
+        max_in_flight_work=10,
+        audit_outbox_max_pending=200,
+    )
+    env.worker_registry.register(make_worker_registration("worker-a"))
+    env.worker_registry.register(make_worker_registration("worker-b"))
+    coordinator = env.make_coordinator(ScriptedExecutor())
+    admissions = _make_admissions(env, 50, prefix="reconcile", cost_cents=3)
+
+    threads_before = threading.active_count()
+    summary = coordinator.run(admissions, ["worker-a", "worker-b"], admission_window=5)
+    threads_after = threading.active_count()
+
+    assert summary.count(WorkOutcomeKind.EXECUTED_AND_COMMITTED) == 50
+    assert threads_after == threads_before, "coordinator.run() leaked a worker thread"
+
+    audit_summary = coordinator.dispatch_audit()
+    assert not audit_summary.still_pending_keys, "unresolved deliverable outbox entries remain"
+    assert env.queue.in_flight_count() == 0
+
+    reservations = [env.budget_store.get(f"res-reconcile-{i:04d}") for i in range(50)]
+    requested_total = sum(reservation.requested_cost_cents for reservation in reservations)
+    finalized_total = sum(
+        reservation.actual_cost_cents
+        for reservation in reservations
+        if reservation.actual_cost_cents is not None
+    )
+    released_total = sum(
+        reservation.requested_cost_cents
+        for reservation in reservations
+        if reservation.status is ReservationStatus.RELEASED
+    )
+    assert requested_total == 150
+    assert requested_total == finalized_total + released_total
