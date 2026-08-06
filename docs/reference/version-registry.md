@@ -73,9 +73,9 @@ misstatement, the same way giving a real label to synthetic content would be.
 | `CHECKSUM_ALGORITHM_VERSION` (`src.distributed`) | `sha256-canonical-json-v1` | `src/distributed/_checksums.py` | The one checksum-derivation algorithm identity shared by **both** `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`-stamped types — sha256 over `json.dumps(payload, sort_keys=True)`. Deliberately the same name as no other constant in this table (`SYNTHETIC_WORKLOAD_CHECKSUM_ALGORITHM_VERSION` is a distinct, unrelated identity scoped to G.4's own synthetic workload checksum) — the two never collide because they are different Python identifiers in different modules; this row exists so this document's own registry is not silently incomplete about which module's `CHECKSUM_ALGORITHM_VERSION` it is describing. Introduced by MEGB-03H.2C.3B.1; unchanged by MEGB-03H.2C.3B.2A, which reuses it rather than defining a second one. See "MEGB-03H.2C.3B addendum" below. |
 | `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b2b3-fault-conformance-v1` | `src/distributed/fault_conformance.py` | `FaultConformanceReport`/`ConformanceEntry` field shape — the safe, committed MEGB-03H.2C.3B.2B.3 in-process fault-injection/recovery conformance report (mirrors `H2C2B_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, explicitly-allowlisted pattern). A schema family independent of both `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` and `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` above — this report proves conformance of code stamped with those schemas, but is not itself stamped with either. Introduced by MEGB-03H.2C.3B.2B.3; persisted at `docs/measurement/megb-03h2c3b2b3-fault-conformance-report.{json,md}`. |
 | `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` | `megb-03h2c3b2c-offline-e2e-qualification-v2` | `src/distributed/offline_e2e_qualification_report.py` | `OfflineE2EQualificationReport` field shape — the safe, committed MEGB-03H.2C.3B.2C offline end-to-end synthetic distributed qualification report (mirrors `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, exact-count-validated, derived-readiness pattern). A schema family independent of `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `FAULT_CONFORMANCE_REPORT_SCHEMA_VERSION` above — this report references the fault-conformance report's own checksum by value rather than being stamped with it. Introduced by MEGB-03H.2C.3B.2C; persisted at `docs/measurement/megb-03h2c3b2c-offline-e2e-qualification-report.{json,md}`. Scoped explicitly to offline, provider-neutral, in-process recovery — makes no H.2C.3D, GCP, durable-process, cross-host, or Docker/native-Linux-equivalence claim. **v1→v2 (MEGB-03H.2C.3B.2C correction):** v1 (never accepted or pushed — superseded, preserved only in git history at commit `edbda37`) recorded only the qualification gate's own output checksums, with no field checking that the *workload class actually used* was the qualification-candidate class rather than the smoke class. v2 adds `distributed_run_intent`, `qualifying_workload_class`, and `qualification_gate_ready` as explicit, safe, closed-enum-validated fields, plus `qualification_workload_consistent` as a fourth, wholly-derived field (never caller-settable) folded into `readiness`. No `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION` bump was required for this correction — `WorkloadClass.SYNTHETIC_QUALIFICATION_CANDIDATE` already existed in the accepted v3 enum before this correction; using it correctly is not a legal-value-set expansion. |
-| `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-v1` | `src/distributed/provenance_manifest.py` | `DistributedProvenanceManifest` field shape — the typed, immutable, versioned, self-checksummed, **protected** (never committed as-is) artifact bundling a `DistributedRunContext`, its full `WorkerExecutionContext` set, their `MixedWorkerProvenanceSummary`/`QualificationIdentity`/qualification-gate readiness, `generation_command`/`code_revision`, and a `SafeRedactedSummary`. A fourth, independent `src/distributed/` schema family (alongside `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` above). Introduced by MEGB-03H.2C.3B.3. Field shape unchanged by the B.3 correction, but its persistence disposition is: as of the correction, the full manifest IS persisted — as **synthetic protected evidence**, never real HumanEval/candidate evidence — under the gitignored `artifacts/privileged/distributed_provenance/` path, anchored by the new committed `MANIFEST_LOCK_SCHEMA_VERSION` lock below (superseding the original checkpoint's "never persisted to a fixed repository path" design, which left the safe report's `provenance_manifest_checksum` a dangling, unverifiable reference). See "MEGB-03H.2C.3B.3 addendum" and "MEGB-03H.2C.3B.3 correction addendum" below. |
-| `MANIFEST_LOCK_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-lock-v1` | `src/distributed/provenance_manifest_lock.py` | `ManifestLockEntry`/`ManifestLockFile` field shape — the small, committed, non-privileged lock anchoring the protected `DistributedProvenanceManifest`'s identity (artifact ID, protected path, schema/checksum-algorithm versions, full manifest checksum, distributed-run-context checksum, expected worker count, safe topology-summary checksum, size, generation command, generating code revision/dirty state, authorized consumers) without embedding the manifest's own bytes. A sixth, independent `src/distributed/` schema family. Mirrors `src/reference/partition_lock.py`'s already-established privileged-artifact-lock pattern exactly. Committed at `artifacts/reference/distributed_provenance/calibration_provenance_manifest.lock.json`; the protected manifest itself lives at `artifacts/privileged/distributed_provenance/calibration_provenance_manifest.json` (gitignored). Introduced by the MEGB-03H.2C.3B.3 correction. See "MEGB-03H.2C.3B.3 correction addendum" below. |
-| `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b3-calibration-provenance-report-v2` | `src/distributed/calibration_provenance_report.py` | `CalibrationProvenanceReport` field shape — the safe, committed MEGB-03H.2C.3B.3 calibration-provenance qualification-evidence report (mirrors `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, derived-readiness pattern). A fifth, independent `src/distributed/` schema family. Binds the provenance-manifest checksum, calibration run-context checksum, participating worker-context checksums, a safe topology histogram, intended-vs-measured peak concurrency, and invocation counts; `readiness`/`blocker_reasons` are always derived, never independently caller-settable. **v1→v2 (correction)**: v1 raised a hard constructor error when `measured_peak_concurrency` exceeded `intended_concurrency` or the personal-bootstrap ceiling, conflating a *failed qualification result* (valid evidence, bad outcome) with a *structural defect* (malformed data) — v2 adds three closed blocker-reason members (`MEASURED_CONCURRENCY_EXCEEDS_INTENDED`, `MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY`, `PERSONAL_CONCURRENCY_CEILING_EXCEEDED`) and folds all three concurrency criteria into ordinary derived blocker reasons, never a raised error. The one real persisted v1 artifact (`docs/measurement/megb-03h2c3b3-calibration-provenance-report.{json,md}`, committed at `232d0af`) is superseded by this correction's regenerated v2 report at the same path. Stale v1 reports are rejected outright (regression-tested). Scoped explicitly to the offline calibration-provenance evidence chain — makes no GCP or H.2C.3C credential-boundary readiness claim. See "MEGB-03H.2C.3B.3 addendum" and "MEGB-03H.2C.3B.3 correction addendum" below. |
+| `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-v1` | `src/distributed/provenance_manifest.py` | `DistributedProvenanceManifest` field shape — the typed, immutable, versioned, self-checksummed, **protected** (never committed as-is) artifact bundling a `DistributedRunContext`, its full `WorkerExecutionContext` set, their `MixedWorkerProvenanceSummary`/`QualificationIdentity`/qualification-gate readiness, `generation_command`/`code_revision`, and a `SafeRedactedSummary`. A fourth, independent `src/distributed/` schema family (alongside `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`, `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, and `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION` above). Introduced by MEGB-03H.2C.3B.3. Field shape unchanged by the B.3 correction, but its persistence disposition is: as of the correction, the full manifest IS persisted — as **synthetic protected evidence**, never real HumanEval/candidate evidence — under the gitignored `artifacts/privileged/distributed_provenance/` path, anchored by the new committed `MANIFEST_LOCK_SCHEMA_VERSION` lock below (superseding the original checkpoint's "never persisted to a fixed repository path" design, which left the safe report's `provenance_manifest_checksum` a dangling, unverifiable reference). See "MEGB-03H.2C.3B.3 addendum", "MEGB-03H.2C.3B.3 correction addendum", and "MEGB-03H.2C.3B.3 lock-integrity correction addendum" below. |
+| `MANIFEST_LOCK_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-lock-v2` | `src/distributed/provenance_manifest_lock.py` | `ManifestLockEntry`/`ManifestLockFile` field shape — the small, committed, non-privileged lock anchoring the protected `DistributedProvenanceManifest`'s identity (artifact ID, protected path, schema/checksum-algorithm versions, full manifest checksum, distributed-run-context checksum, expected worker count, safe topology-summary checksum, size, generation command, generating code revision/dirty state, authorized consumers) without embedding the manifest's own bytes. A sixth, independent `src/distributed/` schema family. Mirrors `src/reference/partition_lock.py`'s already-established privileged-artifact-lock pattern exactly. Committed at `artifacts/reference/distributed_provenance/calibration_provenance_manifest.lock.json`; the protected manifest itself lives at `artifacts/privileged/distributed_provenance/calibration_provenance_manifest.json` (gitignored). Introduced by the MEGB-03H.2C.3B.3 correction. **v1→v2 (lock-integrity correction)**: v1 was not itself self-checksummed — any field, including `protected_path` and `authorized_consumers`, was trusted as-is, and `verify_against_lock` never re-derived `size_bytes`. v2 adds a `lock_checksum` field (self-checksum over every other entry field, auto-computed/rejected exactly like `CalibrationProvenanceReport.report_checksum`), requires `protected_path` to equal the canonical path *derived from* the closed `artifact_id` (rejecting absolute paths, `..` traversal, alternate separators, NUL/control characters, and unexpected nesting/filenames at construction time, with a further filesystem-level containment check — dereferencing any symlink — performed before any protected byte is read), restricts `authorized_consumers` to a closed `AuthorizedManifestConsumer` allowlist, and adds `size_bytes` re-derivation to `verify_against_lock`'s own pass/fail computation. `ManifestLockFile.lock_schema_version` is now itself validated on every construction path (a stale v1 lock is rejected outright — no real persisted v1 lock artifact exists outside this checkpoint's own commit history, which remains recoverable unedited). See "MEGB-03H.2C.3B.3 lock-integrity correction addendum" below. |
+| `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` | `megb-03h2c3b3-calibration-provenance-report-v3` | `src/distributed/calibration_provenance_report.py` | `CalibrationProvenanceReport` field shape — the safe, committed MEGB-03H.2C.3B.3 calibration-provenance qualification-evidence report (mirrors `OFFLINE_E2E_QUALIFICATION_REPORT_SCHEMA_VERSION`'s own self-checksummed, versioned, derived-readiness pattern). A fifth, independent `src/distributed/` schema family. Binds the provenance-manifest checksum, calibration run-context checksum, participating worker-context checksums, a safe topology histogram, intended-vs-measured peak concurrency, and invocation counts; `readiness`/`blocker_reasons` are always derived, never independently caller-settable. **v1→v2 (correction)**: v1 raised a hard constructor error when `measured_peak_concurrency` exceeded `intended_concurrency` or the personal-bootstrap ceiling, conflating a *failed qualification result* (valid evidence, bad outcome) with a *structural defect* (malformed data) — v2 adds three closed blocker-reason members (`MEASURED_CONCURRENCY_EXCEEDS_INTENDED`, `MEASURED_CONCURRENCY_EXCEEDS_ADMITTED_TOPOLOGY`, `PERSONAL_CONCURRENCY_CEILING_EXCEEDED`) and folds all three concurrency criteria into ordinary derived blocker reasons, never a raised error. **v2→v3 (lock-integrity correction)**: adds `lock_checksum`, binding the *exact* protected-manifest lock this report was built against (the lock's own `lock_checksum`, itself a self-check over every lock field) into the report's own self-checksum — completing the chain report self-checksum → expected lock checksum → validated lock → expected manifest checksum/path → protected manifest bytes. The two real persisted artifacts (v1 at `232d0af`, v2 at `700e74b`) are both superseded by this correction's regenerated v3 report at the same path; both remain recoverable unedited from git history. Stale v1/v2 reports are rejected outright (regression-tested). Scoped explicitly to the offline calibration-provenance evidence chain — makes no GCP or H.2C.3C credential-boundary readiness claim. See "MEGB-03H.2C.3B.3 addendum", "MEGB-03H.2C.3B.3 correction addendum", and "MEGB-03H.2C.3B.3 lock-integrity correction addendum" below. |
 
 **Pairwise distinctness** (regression-tested, `tests/test_g4_qualification_report.py::test_all_five_identities_are_pairwise_distinct`):
 `BENCHMARK_PLAN_VERSION`, `SYNTHETIC_WORKLOAD_VERSION`,
@@ -858,4 +858,135 @@ No modification to `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`,
 `DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, `CALIBRATION_SCHEMA_VERSION`,
 `RESULT_SCHEMA_VERSION`, `CACHE_KEY_SCHEMA_VERSION`, or
 `AUDIT_RECORD_SCHEMA_VERSION` — all confirmed unchanged by this
+correction.
+
+## MEGB-03H.2C.3B.3 lock-integrity correction addendum: `MANIFEST_LOCK_SCHEMA_VERSION` v1→v2, `CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` v2→v3, and path containment
+
+This registry's own "MEGB-03H.2C.3B.3 addendum" and "MEGB-03H.2C.3B.3
+correction addendum" above predate this one; recorded here rather than
+by rewriting that prose, per this project's established convention.
+Authorized after the first B.3 correction's own report but before its
+acceptance — a second, narrower correction closing one final integrity
+gap the first correction's report itself surfaced: the committed lock
+had no authenticated identity of its own, and its `protected_path` was
+never containment-checked before being opened.
+
+**Audit determination (all four questions the authorization posed).**
+(1) `calibration_provenance_manifest.lock.json` was **not**
+self-checksummed — `ManifestLockEntry`/`ManifestLockFile` were plain,
+unvalidated dataclasses. (2) Consequently no lock field was verified
+before being trusted — `verify_against_lock` re-derived only
+`manifest_checksum`/`distributed_run_context_checksum`/
+`safe_topology_summary_checksum`/`expected_worker_count` from the
+protected manifest itself, never `protected_path`,
+`authorized_consumers`, `schema_version`, `checksum_algorithm_version`,
+`generation_command`, `generating_code_revision`,
+`generating_code_dirty`, or `size_bytes`. (3) The committed safe report
+did **not** cryptographically bind the exact lock used during
+verification — the CLI's own cross-check compared only
+`lock_entry.manifest_checksum` against `report.provenance_manifest_checksum`,
+so a caller-substituted lock sharing that one checksum (while differing
+in, e.g., `authorized_consumers` or `protected_path`) would have passed.
+(4) A tampered `protected_path` **could** cause `verify` to read an
+arbitrary file — `_load_protected_manifest` called
+`Path(entry.protected_path).read_text()` directly, with zero
+containment validation of any kind. All four were confirmed as real
+defects, not false positives, and corrected within this narrowly scoped
+pass.
+
+**`MANIFEST_LOCK_SCHEMA_VERSION` v1→v2** (this table's own row above):
+`ManifestLockEntry` gains `lock_checksum` — a self-checksum over every
+other field, auto-computed on construction when absent and rejected on
+mismatch, mirroring `CalibrationProvenanceReport.report_checksum`'s own
+established discipline exactly. `protected_path` is no longer trusted
+as arbitrary input: `ManifestLockEntry.__post_init__` now requires it
+to equal the canonical repository-relative path *derived from* the
+entry's own closed `artifact_id` (via a fixed `artifact_id -> filename`
+map beneath a single authorized root,
+`artifacts/privileged/distributed_provenance/`), rejecting absolute
+paths, `..` traversal, alternate (`\`) separators, and NUL/control
+characters at construction time via explicit, individually-tested
+checks ahead of the canonical-equality check itself. At read time,
+`verify_against_lock`/`_load_protected_manifest` additionally resolve
+the path (dereferencing any symlink) and confirm it still lies within
+the authorized subtree *before* opening or reading a single byte of the
+target — catching the case a syntactically-canonical string cannot:
+a symlink placed at the correct path resolving outside the privileged
+root. A failed containment check raises the newly added, distinctly
+typed `ManifestPathContainmentError`, whose message never includes the
+resolved target path or its contents. `authorized_consumers` is
+restricted to a new closed `AuthorizedManifestConsumer` enum (currently
+one member, `MEGB-03H.2C.3B.3`) — lock tampering can never expand
+access by inventing a new consumer string; both an unauthorized entry
+and a duplicate entry are rejected. `verify_against_lock`'s own
+`ManifestVerificationResult` gains `size_match`, re-deriving actual
+on-disk byte length against the lock's recorded `size_bytes`. Because
+`write_protected_manifest` must now always write to the one canonical,
+artifact-id-derived path (closing the same "arbitrary path" gap at the
+write side, not merely the validate side), it no longer accepts a
+caller-supplied `protected_path` parameter at all; the module-level
+`_PRIVILEGED_ROOT` constant it derives that path from remains
+overridable (by tests only, via direct attribute assignment or, more
+commonly in this checkpoint's own test suite, via
+`monkeypatch.chdir()` against a fixed relative root) without weakening
+the real, unpatched production value. `ManifestLockFile.lock_schema_version`
+is now itself validated on every construction path (direct or via
+`load_lock_file`) — a stale v1 lock (missing `lock_checksum`
+entirely) is rejected outright via the newly added
+`UnsupportedManifestLockSchemaVersionError`, never silently accepted or
+auto-upgraded. No real persisted v1 lock artifact exists outside this
+checkpoint's own commit history (`850b81a`), which remains recoverable
+unedited.
+
+**`CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION` v2→v3** (this table's
+own row above): adds `lock_checksum`, a required sha256-hex field
+participating in the report's own `report_checksum`. `build_calibration_provenance_report`
+gains a required `lock_checksum` keyword-argument, populated by the
+calling harness from the exact `ManifestLockEntry.lock_checksum` it
+just built the lock from. This completes the full artifact-verification
+chain the design always intended but the original implementation never
+closed: **report self-checksum → expected lock checksum (this report's
+own `lock_checksum` field) → validated lock (the loaded lock's own
+`lock_checksum` self-check) → expected manifest checksum/path (the
+validated lock entry's own fields) → protected manifest bytes**. The
+CLI's `verify()` now checks `lock_entry.lock_checksum == report.lock_checksum`
+*before* its pre-existing `manifest_checksum` cross-check — the
+`lock_checksum` check alone is sufficient to guarantee every other lock
+field is exactly what the report was built against, since any lock
+field's tampering (even a self-consistently-recomputed one) changes
+`lock_checksum`, and the report's own persisted value is fixed at
+acceptance time. Two real persisted report artifacts are now superseded
+in sequence (v1 at `232d0af`, v2 at `700e74b`); both remain recoverable
+unedited from git history. This checkpoint's own regenerated v3 report
+is byte-identical in every field except schema version, `lock_checksum`,
+and the resulting `report_checksum` — the underlying synthetic evidence
+never changed.
+
+**Test coverage added.** A new dedicated unit-test file,
+`tests/test_provenance_manifest_lock.py` (28 tests), exercises the lock
+module's own security properties directly: self-checksum computation
+and tamper rejection, per-field checksum coverage (parametrized across
+all thirteen `ManifestLockEntry` fields the authorization named),
+stale-v1-lock-schema rejection (both via `load_lock_file` and direct
+`ManifestLockFile` construction), absolute-path/`..`-traversal/NUL-
+character/unexpected-filename/unknown-artifact-id rejection,
+unauthorized/duplicate-consumer rejection, symlink-escape containment
+(including a check that the raised error discloses neither the
+resolved target path nor its contents), missing-artifact graceful
+(non-raising) handling, size/checksum disagreement detection, and
+wrong-run manifest substitution detection. `tests/test_calibration_provenance_report_cli.py`
+gains one further CLI-level test proving a lock that is *itself*
+internally self-consistent (would pass `load_lock_file` alone) but
+differs from the exact lock the report was built against is still
+rejected — the specific scenario `lock_checksum` binding exists to
+close. `tests/test_calibration_provenance_report.py` gains stale-v2-
+schema rejection, v3 round-trip tests for both `READY` and `BLOCKED`
+reports, and a malformed-`lock_checksum` rejection test.
+
+No modification to `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION`,
+`DISTRIBUTED_ORCHESTRATION_SCHEMA_VERSION`, `CALIBRATION_SCHEMA_VERSION`,
+`DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION` (field shape; only its
+persistence disposition, already reflected in the prior correction, is
+referenced here), `RESULT_SCHEMA_VERSION`, `CACHE_KEY_SCHEMA_VERSION`,
+or `AUDIT_RECORD_SCHEMA_VERSION` — all confirmed unchanged by this
 correction.

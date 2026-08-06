@@ -16,12 +16,16 @@ established shape exactly.
     invariants, and derived readiness/blocker-reasons are all enforced
     by the report's own constructor. Also completes the
     report -> lock -> protected-manifest artifact-verification chain:
-    loads the committed manifest lock, confirms its own
-    ``manifest_checksum`` matches the safe report's
-    ``provenance_manifest_checksum`` (never a dangling reference), and
-    re-verifies the (gitignored, synthetic-protected-evidence) manifest
-    bytes on disk against that lock. Runs no test and builds no new
-    synthetic manifest/calibration evidence.
+    loads the committed manifest lock (itself self-checksummed --
+    ``load_lock_file`` rejects a tampered lock outright), confirms the
+    lock's own ``lock_checksum`` matches the safe report's own
+    ``lock_checksum`` (the exact lock this report was built against --
+    never merely "a lock whose manifest_checksum happens to match"),
+    confirms ``manifest_checksum`` matches too, and re-verifies the
+    (gitignored, synthetic-protected-evidence) manifest bytes on disk
+    against that lock, with path-containment validation performed before
+    any byte of the protected artifact is read. Runs no test and builds
+    no new synthetic manifest/calibration evidence.
 
 Neither command runs Docker, touches the network, or accesses any cloud
 resource. Prints only safe report/lock fields -- never manifest or
@@ -73,11 +77,23 @@ def verify(  # pylint: disable=too-many-return-statements
         )
         return 1
 
-    lock = load_lock_file(lock_path)
+    try:
+        lock = load_lock_file(lock_path)
+    except InvalidDistributedProvenanceError as exc:
+        print(f"Protected-manifest lock INVALID ({lock_path}): {exc}", file=sys.stderr)
+        return 1
     if not lock.entries:
         print(f"Protected-manifest lock {lock_path} has no entries", file=sys.stderr)
         return 1
     lock_entry = lock.entries[0]
+    if lock_entry.lock_checksum != report.lock_checksum:
+        print(
+            "Protected-manifest lock does not match the exact lock the safe report was "
+            f"built against (lock_checksum {lock_entry.lock_checksum!r} != report's own "
+            f"{report.lock_checksum!r})",
+            file=sys.stderr,
+        )
+        return 1
     if lock_entry.manifest_checksum != report.provenance_manifest_checksum:
         print(
             "Protected-manifest lock checksum does not match the safe report's own "
@@ -100,6 +116,7 @@ def verify(  # pylint: disable=too-many-return-statements
         f"admitted={report.admitted_invocation_count}, "
         f"completed={report.completed_invocation_count}, "
         f"checksum={report.report_checksum}, "
+        f"lock_checksum={lock_entry.lock_checksum}, "
         f"protected_manifest_checksum={lock_entry.manifest_checksum}"
     )
     return 0

@@ -9,6 +9,7 @@ report build/verify CLI entry point
 # defect.
 # pylint: disable=duplicate-code
 
+import dataclasses
 import json
 import pathlib
 
@@ -29,18 +30,29 @@ from src.distributed.provenance_manifest import (
     build_distributed_provenance_manifest,
     distributed_provenance_manifest_to_dict,
 )
-from src.distributed.provenance_manifest_lock import write_lock_file, write_protected_manifest
+from src.distributed.provenance_manifest_lock import (
+    AuthorizedManifestConsumer,
+    load_lock_file,
+    write_lock_file,
+    write_protected_manifest,
+)
 from tests._distributed_fixtures import make_run_context, make_two_region_workers
 
 
 def _build_synthetic_chain(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[pathlib.Path, pathlib.Path, pathlib.Path]:
     """Build a real, valid report -> lock -> protected-manifest chain
     rooted entirely under tmp_path (never touching the real committed
     artifacts), returning (report_json_path, lock_path,
-    protected_manifest_path). Used to exercise the CLI's lock-chain
-    verification paths without corrupting the real committed evidence."""
+    protected_manifest_path). Isolates the protected-manifest write from
+    the real committed artifact via ``monkeypatch.chdir(tmp_path)`` --
+    ``write_protected_manifest`` always derives its write location as
+    the fixed, repository-relative ``artifacts/privileged/...`` path
+    (never an arbitrary caller-supplied path, per the path-containment
+    correction), which then resolves under ``tmp_path`` because the
+    process cwd itself has been redirected there for this test."""
+    monkeypatch.chdir(tmp_path)
     run_context = make_run_context(distributed_run_id="cli-lock-chain-test-run")
     worker_a, worker_b = make_two_region_workers(run_context)
     manifest = build_distributed_provenance_manifest(
@@ -49,16 +61,15 @@ def _build_synthetic_chain(
         generation_command="pytest cli-lock-chain-test",
         code_revision="1" * 40,
     )
-    protected_path = tmp_path / "protected" / "manifest.json"
     lock_path = tmp_path / "lock" / "manifest.lock.json"
     entry = write_protected_manifest(
         manifest,
         generation_command="pytest cli-lock-chain-test",
         generating_code_revision="1" * 40,
         generating_code_dirty=False,
-        authorized_consumers=("MEGB-03H.2C.3B.3-tests",),
-        protected_path=protected_path,
+        authorized_consumers=(AuthorizedManifestConsumer.MEGB_03H_2C_3B_3.value,),
     )
+    protected_path = pathlib.Path(entry.protected_path)
     write_lock_file(entry, lock_path)
 
     report = build_calibration_provenance_report(
@@ -85,6 +96,7 @@ def _build_synthetic_chain(
         calibration_evidence_checksum=compute_calibration_evidence_checksum(
             ("a" * 64,), ("b" * 64,)
         ),
+        lock_checksum=entry.lock_checksum,
     )
     report_path = tmp_path / "report.json"
     report_path.write_text(
@@ -152,57 +164,92 @@ def test_verify_rejects_report_with_readiness_manually_altered(tmp_path: pathlib
     assert verify(altered) == 1
 
 
-def test_verify_accepts_a_valid_synthetic_lock_chain(tmp_path: pathlib.Path) -> None:
+def test_verify_accepts_a_valid_synthetic_lock_chain(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test verify() accepts a freshly-built, self-consistent synthetic
     report -> lock -> protected-manifest chain rooted entirely under
     tmp_path -- proving the chain-verification logic itself, independent
     of the one real committed artifact."""
-    report_path, lock_path, _ = _build_synthetic_chain(tmp_path)
+    report_path, lock_path, _ = _build_synthetic_chain(tmp_path, monkeypatch)
     assert verify(report_path, lock_path) == 0
 
 
-def test_verify_rejects_lock_checksum_mismatch_with_report(tmp_path: pathlib.Path) -> None:
+def test_verify_rejects_lock_checksum_mismatch_with_report(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test verify() rejects a lock whose manifest_checksum was silently
     changed to no longer match the safe report's own
     provenance_manifest_checksum -- the report -> lock link must never
-    be allowed to dangle."""
-    report_path, lock_path, _ = _build_synthetic_chain(tmp_path)
+    be allowed to dangle. Also proves the lock's own lock_checksum
+    self-validation catches this: the tampered entry is rejected at
+    load_lock_file() time, before the CLI's own cross-check ever runs."""
+    report_path, lock_path, _ = _build_synthetic_chain(tmp_path, monkeypatch)
     lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
     lock_data["entries"][0]["manifest_checksum"] = "0" * 64
     lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
     assert verify(report_path, lock_path) == 1
 
 
-def test_verify_rejects_lock_with_no_entries(tmp_path: pathlib.Path) -> None:
+def test_verify_rejects_self_consistent_lock_with_different_lock_checksum_than_report(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test verify() rejects a lock that is entirely internally
+    self-consistent (its own lock_checksum matches its own recomputed
+    contents -- load_lock_file() alone would accept it) but was not the
+    exact lock the safe report was built against. This is the specific
+    scenario the report's own lock_checksum binding exists to catch: a
+    caller cannot swap in a different-but-valid lock and have it pass.
+    The swapped-in entry is built via dataclasses.replace() on the
+    original -- changing generating_code_dirty and letting lock_checksum
+    auto-recompute -- so it is a genuinely different, still-valid lock,
+    not a corrupted one."""
+    report_path, lock_path, _ = _build_synthetic_chain(tmp_path, monkeypatch)
+    original_lock = load_lock_file(lock_path)
+    original_entry = original_lock.entries[0]
+    perturbed_entry = dataclasses.replace(
+        original_entry, generating_code_dirty=not original_entry.generating_code_dirty,
+        lock_checksum="",
+    )
+    assert perturbed_entry.lock_checksum != original_entry.lock_checksum
+    write_lock_file(perturbed_entry, lock_path)
+    assert verify(report_path, lock_path) == 1
+
+
+def test_verify_rejects_lock_with_no_entries(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test verify() rejects an (otherwise well-formed) lock file with
     zero entries rather than silently treating it as verified."""
-    report_path, lock_path, _ = _build_synthetic_chain(tmp_path)
+    report_path, lock_path, _ = _build_synthetic_chain(tmp_path, monkeypatch)
     lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
     lock_data["entries"] = []
     lock_path.write_text(json.dumps(lock_data), encoding="utf-8")
     assert verify(report_path, lock_path) == 1
 
 
-def test_verify_rejects_missing_protected_manifest(tmp_path: pathlib.Path) -> None:
+def test_verify_rejects_missing_protected_manifest(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test verify() rejects a lock referencing a protected-manifest
     path that does not (or no longer) exists on disk -- required CLI
     behavior: a missing artifact fails verification (a caller wanting
     'regenerate then verify' must call the deterministic build path
     first)."""
-    report_path, lock_path, protected_path = _build_synthetic_chain(tmp_path)
+    report_path, lock_path, protected_path = _build_synthetic_chain(tmp_path, monkeypatch)
     protected_path.unlink()
     assert verify(report_path, lock_path) == 1
 
 
 def test_verify_rejects_protected_manifest_with_tampered_self_checksum(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Test verify() rejects protected-manifest bytes whose own
     self-checksum was tampered -- a genuinely corrupt artifact, caught
     by the manifest's own structural validation (raises
     InvalidDistributedProvenanceError internally) and surfaced by
     verify() as exit code 1, never a silent pass."""
-    report_path, lock_path, protected_path = _build_synthetic_chain(tmp_path)
+    report_path, lock_path, protected_path = _build_synthetic_chain(tmp_path, monkeypatch)
     data = json.loads(protected_path.read_text(encoding="utf-8"))
     data["manifest_checksum"] = "0" * 64
     protected_path.write_text(json.dumps(data), encoding="utf-8")
@@ -210,14 +257,14 @@ def test_verify_rejects_protected_manifest_with_tampered_self_checksum(
 
 
 def test_verify_rejects_substituted_wrong_run_protected_manifest(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Test verify() rejects a protected-manifest file substituted with
     a different, internally-self-consistent manifest from an unrelated
     distributed run -- required CLI behavior: substituted/wrong-run
     content fails verification even though the substituted bytes are
     not themselves corrupt."""
-    report_path, lock_path, protected_path = _build_synthetic_chain(tmp_path)
+    report_path, lock_path, protected_path = _build_synthetic_chain(tmp_path, monkeypatch)
     other_run = make_run_context(distributed_run_id="cli-lock-chain-test-other-run")
     other_a, other_b = make_two_region_workers(other_run)
     other_manifest = build_distributed_provenance_manifest(

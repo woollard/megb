@@ -59,8 +59,8 @@ from src.distributed.provenance_manifest import (
     resolve_worker_context,
 )
 from src.distributed.provenance_manifest_lock import (
+    AuthorizedManifestConsumer,
     DEFAULT_MANIFEST_LOCK_PATH,
-    DEFAULT_PROTECTED_MANIFEST_PATH,
     load_lock_file,
     verify_against_lock,
     write_lock_file,
@@ -161,8 +161,7 @@ def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: dis
         generation_command=_GENERATION_COMMAND,
         generating_code_revision=code_revision,
         generating_code_dirty=code_dirty,
-        authorized_consumers=("MEGB-03H.2C.3B.3",),
-        protected_path=DEFAULT_PROTECTED_MANIFEST_PATH,
+        authorized_consumers=(AuthorizedManifestConsumer.MEGB_03H_2C_3B_3.value,),
     )
     write_lock_file(lock_entry, DEFAULT_MANIFEST_LOCK_PATH)
 
@@ -260,6 +259,7 @@ def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: dis
         qualification_gate_readiness=manifest.qualification_gate_readiness,
         qualification_gate_missing_dimensions=manifest.qualification_gate_missing_dimensions,
         calibration_evidence_checksum=evidence_checksum,
+        lock_checksum=lock_entry.lock_checksum,
     )
     assert report.readiness == CalibrationProvenanceReadiness.CALIBRATION_PROVENANCE_READY_FOR_3C
 
@@ -290,11 +290,14 @@ def test_calibration_provenance_integration_end_to_end() -> None:  # pylint: dis
     # 8. Complete the report -> lock -> protected-manifest chain: the
     # safe report's own provenance_manifest_checksum must never be a
     # dangling reference -- it must match the committed lock's own
-    # manifest_checksum, and the lock must itself verify against the
+    # manifest_checksum, the report's own lock_checksum must match the
+    # exact lock entry it was built against (the report -> lock binding
+    # this correction adds), and the lock must itself verify against the
     # actual protected bytes on disk.
     reloaded_lock = load_lock_file(DEFAULT_MANIFEST_LOCK_PATH)
     assert len(reloaded_lock.entries) == 1
     assert reloaded_lock.entries[0].manifest_checksum == reloaded.provenance_manifest_checksum
+    assert reloaded_lock.entries[0].lock_checksum == reloaded.lock_checksum
     manifest_verification_results = verify_against_lock(reloaded_lock)
     assert len(manifest_verification_results) == 1
     assert manifest_verification_results[0].passed

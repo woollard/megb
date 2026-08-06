@@ -16,8 +16,21 @@ reconciliation pass and passing the results in):
 * whether every invocation's worker provenance resolved, and whether
   calibration task-evaluation reconciliation passed;
 * the manifest's own qualification-gate readiness/missing-dimensions;
-* a calibration-evidence ("trace") checksum and this report's own
-  self-checksum.
+* a calibration-evidence ("trace") checksum;
+* (schema v3) the protected-manifest lock's own self-checksum
+  (``lock_checksum``) -- binding the *exact* lock this report was built
+  against, not merely the manifest checksum it references, so a caller
+  that later swaps in a differently-tampered-but-self-consistent lock
+  (recomputing its own ``lock_checksum`` to match) is still caught: the
+  accepted report's ``lock_checksum`` is fixed at acceptance time and
+  never silently re-derived;
+* and this report's own self-checksum.
+
+The verification chain this completes: report self-checksum -> expected
+lock checksum (this report's own ``lock_checksum`` field) -> validated
+lock (:mod:`~src.distributed.provenance_manifest_lock`'s own
+``lock_checksum`` self-check) -> expected manifest checksum/path
+(the lock entry's own fields) -> protected manifest bytes.
 
 Mirrors ``src.distributed.offline_e2e_qualification_report``'s own
 established safe-report pattern exactly: ``readiness`` and
@@ -66,7 +79,7 @@ from src.distributed.personal_policy import PERSONAL_BOOTSTRAP_MAX_WORKERS
 from src.distributed.provenance import DISTRIBUTED_PROVENANCE_SCHEMA_VERSION, EnvironmentClass
 from src.distributed.qualification_gate import ProvenanceGateFailureReason, ProvenanceGateReadiness
 
-CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION = "megb-03h2c3b3-calibration-provenance-report-v2"
+CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION = "megb-03h2c3b3-calibration-provenance-report-v3"
 
 
 class InvalidCalibrationProvenanceReportError(InvalidDistributedProvenanceError):
@@ -187,6 +200,7 @@ class CalibrationProvenanceReport:  # pylint: disable=too-many-instance-attribut
     qualification_gate_readiness: str
     qualification_gate_missing_dimensions: tuple[str, ...]
     calibration_evidence_checksum: str
+    lock_checksum: str
     readiness: CalibrationProvenanceReadiness
     blocker_reasons: tuple[str, ...]
     report_checksum: str = ""
@@ -216,6 +230,7 @@ class CalibrationProvenanceReport:  # pylint: disable=too-many-instance-attribut
         _require_sha256_hex(self, "provenance_manifest_checksum")
         _require_sha256_hex(self, "calibration_run_context_checksum")
         _require_sha256_hex(self, "calibration_evidence_checksum")
+        _require_sha256_hex(self, "lock_checksum")
         if not isinstance(self.participating_worker_context_checksums, tuple) or not (
             self.participating_worker_context_checksums
         ):
@@ -447,6 +462,7 @@ def _report_payload(report: "CalibrationProvenanceReport") -> dict[str, Any]:
             report.qualification_gate_missing_dimensions
         ),
         "calibration_evidence_checksum": report.calibration_evidence_checksum,
+        "lock_checksum": report.lock_checksum,
         "readiness": report.readiness.value,
         "blocker_reasons": list(report.blocker_reasons),
     }
@@ -497,6 +513,7 @@ def calibration_provenance_report_from_dict(
                 data["qualification_gate_missing_dimensions"]
             ),
             calibration_evidence_checksum=data["calibration_evidence_checksum"],
+            lock_checksum=data["lock_checksum"],
             readiness=CalibrationProvenanceReadiness(data["readiness"]),
             blocker_reasons=tuple(data["blocker_reasons"]),
             report_checksum=data["report_checksum"],
@@ -546,6 +563,7 @@ def build_calibration_provenance_report(  # pylint: disable=too-many-arguments,t
     qualification_gate_readiness: str,
     qualification_gate_missing_dimensions: tuple[str, ...],
     calibration_evidence_checksum: str,
+    lock_checksum: str,
 ) -> CalibrationProvenanceReport:
     """Build a :class:`CalibrationProvenanceReport` from every fact the
     calling harness itself measured/reconciled, deriving
@@ -600,6 +618,7 @@ def build_calibration_provenance_report(  # pylint: disable=too-many-arguments,t
         qualification_gate_readiness=qualification_gate_readiness,
         qualification_gate_missing_dimensions=qualification_gate_missing_dimensions,
         calibration_evidence_checksum=calibration_evidence_checksum,
+        lock_checksum=lock_checksum,
         readiness=readiness,
         blocker_reasons=blocker_reasons,
     )
@@ -620,6 +639,7 @@ def render_markdown(report: CalibrationProvenanceReport) -> str:
         f"- **Provenance manifest checksum:** `{report.provenance_manifest_checksum}`",
         f"- **Calibration run-context checksum:** `{report.calibration_run_context_checksum}`",
         f"- **Calibration evidence checksum:** `{report.calibration_evidence_checksum}`",
+        f"- **Lock checksum:** `{report.lock_checksum}`",
         "",
         "## Qualification gate",
         "",

@@ -29,6 +29,7 @@ _MANIFEST_CHECKSUM = "1" * 64
 _CALIBRATION_RUN_CONTEXT_CHECKSUM = "2" * 64
 _WORKER_CHECKSUMS = ("3" * 64, "4" * 64)
 _EVIDENCE_CHECKSUM = compute_calibration_evidence_checksum(("5" * 64,), ("6" * 64,))
+_LOCK_CHECKSUM = "7" * 64
 
 
 def _build(**overrides: object) -> CalibrationProvenanceReport:
@@ -51,6 +52,7 @@ def _build(**overrides: object) -> CalibrationProvenanceReport:
         "qualification_gate_readiness": ProvenanceGateReadiness.READY.value,
         "qualification_gate_missing_dimensions": (),
         "calibration_evidence_checksum": _EVIDENCE_CHECKSUM,
+        "lock_checksum": _LOCK_CHECKSUM,
     }
     fields.update(overrides)
     return build_calibration_provenance_report(**fields)  # type: ignore[arg-type]
@@ -74,13 +76,17 @@ def test_report_round_trips() -> None:
 
 
 def test_current_schema_version() -> None:
-    """Confirms the exact, intentional new schema-family identity. Bumped
-    v1->v2 by the qualification-failure-semantics correction: v1 treated
-    an excessive-but-valid measured_peak_concurrency as a construction
-    error; v2 folds it into blocker_reasons like every other criterion."""
+    """Confirms the exact, intentional new schema-family identity.
+    Bumped v1->v2 by the qualification-failure-semantics correction: v1
+    treated an excessive-but-valid measured_peak_concurrency as a
+    construction error; v2 folds it into blocker_reasons like every
+    other criterion. Bumped v2->v3 by the lock-integrity correction:
+    adds ``lock_checksum``, binding the exact protected-manifest lock
+    this report was built against into the report's own self-checksum
+    -- completing the report -> lock -> manifest verification chain."""
     assert (
         CALIBRATION_PROVENANCE_REPORT_SCHEMA_VERSION
-        == "megb-03h2c3b3-calibration-provenance-report-v2"
+        == "megb-03h2c3b3-calibration-provenance-report-v3"
     )
 
 
@@ -278,6 +284,7 @@ def test_report_rejects_readiness_manually_altered() -> None:
             qualification_gate_readiness=ProvenanceGateReadiness.READY.value,
             qualification_gate_missing_dimensions=(),
             calibration_evidence_checksum=_EVIDENCE_CHECKSUM,
+            lock_checksum=_LOCK_CHECKSUM,
             # Manually forced READY despite incomplete evidence -- rejected.
             readiness=CalibrationProvenanceReadiness.CALIBRATION_PROVENANCE_READY_FOR_3C,
             blocker_reasons=(),
@@ -312,6 +319,7 @@ def test_report_rejects_blocker_reasons_manually_altered() -> None:
             qualification_gate_readiness=ProvenanceGateReadiness.READY.value,
             qualification_gate_missing_dimensions=(),
             calibration_evidence_checksum=_EVIDENCE_CHECKSUM,
+            lock_checksum=_LOCK_CHECKSUM,
             readiness=CalibrationProvenanceReadiness.BLOCKED_CALIBRATION_PROVENANCE,
             # Fabricated blocker reason despite otherwise-healthy facts.
             blocker_reasons=(
@@ -346,11 +354,27 @@ def test_report_rejects_stale_v1_schema_version() -> None:
         calibration_provenance_report_from_dict(data)
 
 
-def test_v2_round_trip_preserves_blocked_report_as_negative_evidence() -> None:
+def test_report_rejects_stale_v2_schema_version() -> None:
+    """A report stamped with the superseded v2 schema version -- which
+    predates the lock-integrity correction and carries no
+    ``lock_checksum`` binding the report to the exact protected-manifest
+    lock it was verified against -- is rejected outright, never silently
+    accepted as current."""
+    report = _build()
+    data = calibration_provenance_report_to_dict(report)
+    data["calibration_provenance_report_schema_version"] = (
+        "megb-03h2c3b3-calibration-provenance-report-v2"
+    )
+    with pytest.raises(InvalidDistributedProvenanceError):
+        calibration_provenance_report_from_dict(data)
+
+
+def test_v3_round_trip_preserves_blocked_report_as_negative_evidence() -> None:
     """A BLOCKED_CALIBRATION_PROVENANCE report arising from valid
     evidence that simply failed a qualification criterion round-trips
-    exactly under schema v2, proving it can be safely retained as
-    negative evidence rather than discarded or hidden."""
+    exactly under schema v3 (including its new ``lock_checksum``
+    field), proving it can be safely retained as negative evidence
+    rather than discarded or hidden."""
     report = _build(intended_concurrency=10, measured_peak_concurrency=3)
     assert report.readiness == CalibrationProvenanceReadiness.BLOCKED_CALIBRATION_PROVENANCE
     data = calibration_provenance_report_to_dict(report)
@@ -358,6 +382,18 @@ def test_v2_round_trip_preserves_blocked_report_as_negative_evidence() -> None:
     assert rebuilt == report
     assert rebuilt.blocker_reasons == report.blocker_reasons
     assert rebuilt.measured_peak_concurrency == 3
+    assert rebuilt.lock_checksum == _LOCK_CHECKSUM
+
+
+def test_v3_round_trip_preserves_ready_report() -> None:
+    """A healthy CALIBRATION_PROVENANCE_READY_FOR_3C report -- including
+    its ``lock_checksum`` -- round-trips exactly under schema v3."""
+    report = _build()
+    assert report.readiness == CalibrationProvenanceReadiness.CALIBRATION_PROVENANCE_READY_FOR_3C
+    data = calibration_provenance_report_to_dict(report)
+    rebuilt = calibration_provenance_report_from_dict(data)
+    assert rebuilt == report
+    assert rebuilt.lock_checksum == _LOCK_CHECKSUM
 
 
 def test_report_rejects_unsorted_topology_histogram() -> None:
@@ -372,6 +408,14 @@ def test_report_rejects_malformed_worker_checksum() -> None:
     sha256-hex shaped."""
     with pytest.raises(InvalidCalibrationProvenanceReportError):
         _build(participating_worker_context_checksums=("not-a-checksum",))
+
+
+def test_report_rejects_malformed_lock_checksum() -> None:
+    """lock_checksum must be sha256-hex shaped -- the report's own
+    binding to the exact protected-manifest lock it was built against
+    can never be a malformed placeholder."""
+    with pytest.raises(InvalidDistributedProvenanceError):
+        _build(lock_checksum="not-a-checksum")
 
 
 def test_compute_calibration_evidence_checksum_is_order_independent() -> None:
