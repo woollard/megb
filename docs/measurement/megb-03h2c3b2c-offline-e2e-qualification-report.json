@@ -1,15 +1,16 @@
 {
   "admitted_count": 7,
   "audit_abandoned_count": 1,
-  "audit_delivered_count": 20,
+  "audit_delivered_count": 28,
   "audit_still_pending_count": 0,
-  "budget_finalized_cents_total": 1000,
+  "budget_finalized_cents_total": 1400,
   "budget_released_cents_total": 100,
-  "budget_requested_cents_total": 1100,
+  "budget_requested_cents_total": 1500,
   "cancelled_count": 1,
   "completed_count": 6,
   "distributed_orchestration_schema_version": "megb-03h2c3b2b2-distributed-orchestration-v3",
   "distributed_provenance_schema_version": "megb-03h2c3b1-distributed-provenance-v1",
+  "distributed_run_intent": "QUALIFICATION_CANDIDATE",
   "duplicate_delivery_count": 1,
   "failed_count": 1,
   "fault_conformance_report_checksum": "3a0d6e71cf7162144f193b534b64eef6f604a5e3cd2276f70ef954e60b148b56",
@@ -18,14 +19,17 @@
   "measured_peak_concurrency_personal": 2,
   "plan_git_blob_sha1": "aec3e2f64e5a83086081f65cf6ff817a6e0176cc",
   "plan_sha256": "53f2ff50b7079e871a6bf79595a577069b29be9e3ec1f3db345c7234955a1c61",
+  "qualification_gate_ready": true,
   "qualification_identity_checksum": "79cc82b3b6562cee15ab7696b777c4f78506c513af6878bb069daa0b755ab12c",
+  "qualification_workload_consistent": true,
+  "qualifying_workload_class": "SYNTHETIC_QUALIFICATION_CANDIDATE",
   "queue_unacknowledged_count": 0,
   "readiness": "OFFLINE_DISTRIBUTED_PATH_READY_FOR_B3",
   "redelivery_count": 1,
-  "report_checksum": "831271c90261517ec5b98598412f5a7218e53915333aea9ae31464f35a91bef9",
+  "report_checksum": "5af21a50a2b33350bf0f3fe1c816af99132162fd2b13c0f82e30789f1ecbfc2b",
   "retried_count": 1,
   "run_context_checksum": "65a2fda2300a22210b859c1c1fdb32ea27014108142f086e17a25cda9e317d7c",
-  "schema_version": "megb-03h2c3b2c-offline-e2e-qualification-v1",
+  "schema_version": "megb-03h2c3b2c-offline-e2e-qualification-v2",
   "serial_vs_distributed_equivalent": true,
   "worker_topology_machine_type_counts": [
     [
@@ -49,5 +53,5 @@
       1
     ]
   ],
-  "workload_sha256": "f7566e10f3088d0d59b9f37e00e9fce486e7fa7fdb8f01fc9f77d6b3fb3ec390"
+  "workload_sha256": "6c31cd9df1826139ae74e5b001a2ee797581efce922a051ab1d592d37bd89b9b"
 }
