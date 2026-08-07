@@ -86,14 +86,68 @@ mode is added by adding a member, never by accepting a free-form string.
 
 - `ReferenceRunContext.orchestration_substrate` — the **consuming**
   orchestration session's own substrate (see §2's "consuming vs.
-  producing" distinction).
-- `ReferenceResultCacheKey.orchestration_substrate` — participates
-  directly in `key_digest`'s hashed payload (§5) as an explicit,
-  structural guarantee, not merely an emergent consequence of `None`
-  never colliding with a real checksum.
+  producing" distinction), and simultaneously the substrate the session
+  **requires** any evidence (fresh or cached) it consumes to have been
+  produced under (§1a).
+- `ReferenceResultCacheKey.production_substrate` — **renamed from the
+  prior round's `orchestration_substrate`**, precisely to avoid the
+  ambiguity this correction closes (§5 defines its ownership rules in
+  full: producer-derived on write, consumer-required on lookup).
+  Participates directly in `key_digest`'s hashed payload as an explicit,
+  structural guarantee that a local key and a distributed key can never
+  collide — not merely an emergent consequence of `None` never colliding
+  with a real checksum.
 - `ReferenceAuditRecord.consuming_orchestration_substrate` and
-  `producing_orchestration_substrate` — both, since the two can differ on
-  a cache hit (§9).
+  `producing_orchestration_substrate` — both, retained for full
+  attributability even though §1a now requires them to be equal on every
+  valid record (§9).
+
+### 1a. Cross-substrate reuse is prohibited (correction)
+
+**This corrects a genuine internal contradiction in the prior round**:
+that version's invariant 4 already claimed local/distributed cache keys
+"can never collide," while its own invariant 3 simultaneously claimed a
+distributed session "may legitimately serve a `LOCAL_...`-produced cache
+hit" — two mutually incompatible statements. This correction resolves the
+contradiction in favor of invariant 4's own structural guarantee, which
+is the one this project's other checksum-identity mechanisms already
+establish as the load-bearing one.
+
+**Frozen rules, replacing the prior round's invariant 3 in full**:
+
+- **Fresh execution requires `producer_provenance.substrate ==
+  ReferenceRunContext.orchestration_substrate`** — trivially true by
+  construction (producer and consumer are the same session), but stated
+  as an explicit, checked invariant rather than an implicit consequence.
+- **Cache reuse requires `producer_provenance.substrate` (of the stored
+  entry) to equal the substrate the consumer requires evidence to have
+  been produced under** — which is exactly `ReferenceRunContext.orchestration_substrate`
+  of the consuming session performing the lookup (no separate,
+  independently configurable "required substrate" knob is introduced;
+  the consuming session's own declared substrate **is** its requirement).
+- **`LOCAL_REFERENCE_ORCHESTRATOR` evidence cannot satisfy a
+  `DISTRIBUTED_REFERENCE_ORCHESTRATOR` request**, and **distributed
+  evidence cannot silently satisfy a local request** — enforced
+  structurally, not merely by convention: because `production_substrate`
+  (§5) participates in `key_digest`'s hashed payload, a lookup performed
+  under one substrate computes a **different digest** than any entry
+  stored under the other substrate. The two never occupy the same
+  storage slot, so there is nothing to "find and then reject" — the
+  entry is simply never located.
+- **A substrate mismatch is a cache miss/incompatible entry, never a
+  valid hit, and never silently rebound.** `rebind_cached_result_to_consuming_context`
+  (§6.2) is only ever reached after a `VALID_HIT`, which by the digest
+  argument above cannot occur across substrates — so no rebind-time
+  substrate check is a rescue path; it is defense-in-depth against a
+  hash-collision-class bug, not the primary enforcement mechanism (§6.2's
+  tightened precondition list re-verifies this explicitly regardless).
+- **`MEGB-03H.2C.3F` qualification may consume only distributed-produced
+  evidence with verified distributed provenance** — a direct consequence
+  of the rules above, stated as its own policy anchor: any H.2C.3F
+  consuming session's `ReferenceRunContext.orchestration_substrate` must
+  be `DISTRIBUTED_REFERENCE_ORCHESTRATOR`, which structurally excludes
+  every `LOCAL_REFERENCE_ORCHESTRATOR`-produced cache entry from ever
+  satisfying its lookups, by the same digest-disjointness argument.
 
 **Frozen structural invariants** (enforced in `__post_init__`, raising
 `InvalidReferenceResultError` — or a `ReferenceResultProducerProvenance`-scoped
@@ -117,34 +171,32 @@ equivalent, §3 — on violation, never silently coerced):
    construction) — **a distributed producer_provenance with any of these
    missing is a construction-time `InvalidReferenceResultError`, never
    silently accepted and never reinterpreted as local.**
-3. A task's own `producer_provenance.substrate` is **independent** of the
-   consuming `ReferenceRunContext.orchestration_substrate` — a
-   `DISTRIBUTED_REFERENCE_ORCHESTRATOR` session may legitimately serve a
-   `LOCAL_REFERENCE_ORCHESTRATOR`-produced cache hit (an older, pre-B.4B
-   or genuinely local-only cache entry reused by a distributed-capable
-   consumer) and vice versa (a `LOCAL_REFERENCE_ORCHESTRATOR` session
-   consulting a shared cache store may hit a `DISTRIBUTED_REFERENCE_ORCHESTRATOR`-produced
-   entry). No cross-constraint links the two; each is independently valid
-   per invariants 1/2 above. **Recommended, not mandated, B.4B
-   enhancement**: `ReferenceBenchmarkResult` could expose a derived
-   "producer substrates observed" set (mirroring `MixedWorkerProvenanceSummary`'s
-   own aggregation pattern) purely so a reader can see at a glance whether
-   a 164-task aggregate is homogeneously distributed-produced or a mix —
-   not required by this correction, flagged as optional.
-4. **Cache separation**: `ReferenceResultCacheKey.orchestration_substrate`
+3. **(Corrected — see §1a)** A task's own `producer_provenance.substrate`
+   **must equal** the consuming `ReferenceRunContext.orchestration_substrate`
+   for every valid result, fresh or cache-derived — cross-substrate reuse
+   is prohibited, not merely "independent." **Recommended, not mandated,
+   B.4B enhancement** (unaffected by this correction):
+   `ReferenceBenchmarkResult` could expose a derived "producer substrates
+   observed" set — now necessarily a singleton set for any valid
+   aggregate, per this invariant, so its diagnostic value is narrower
+   than the prior round envisioned, but still flagged as optional, not
+   required.
+4. **Cache separation**: `ReferenceResultCacheKey.production_substrate`
    entering the digest (§5) means a `LOCAL_REFERENCE_ORCHESTRATOR` cache
    key and a `DISTRIBUTED_REFERENCE_ORCHESTRATOR` cache key **can never
-   collide**, structurally — not merely because `production_identity_checksum`
-   happens to be `None` on one side (which is also true, but this makes it
-   a second, independent guarantee rather than the only one).
+   collide** — this is now the **primary** enforcement mechanism for
+   invariant 3 above (§1a), not a secondary, independent guarantee
+   alongside a permitted cross-substrate hit path; there is no such path.
 5. **Local-mode `None` semantics, preserved exactly**: for
    `LOCAL_REFERENCE_ORCHESTRATOR`, `production_identity_checksum` remains
    `None` in the cache key, preserving today's existing local cache
    behavior (two local executions with identical cache-key-relevant
    fields already hit each other, unchanged by this design) — `None` is
    valid and expected for local mode; it is only ever *insufficient as
-   the sole discriminator*, which invariant 4's explicit `orchestration_substrate`
-   field now resolves.
+   the sole discriminator*, which invariant 4's explicit
+   `production_substrate` field resolves (§5 confirms local and
+   distributed keys are disjoint even before any other field is
+   compared).
 
 ## 2. Run-level identity — consuming session, not per-task
 
@@ -341,10 +393,56 @@ exactly this class of per-record topology-fingerprinting concern.
 `ReferenceResultCacheKey` gains **two** new fields (revised from the
 original design's one):
 
-- `orchestration_substrate: str` — §1's discriminator, entering the
-  digest directly.
+- `production_substrate: str` — **renamed from the prior round's
+  `orchestration_substrate`**, precisely because that name was ambiguous
+  between "the consuming session's substrate" and "the substrate that
+  actually produced this result" — the two are now required to agree for
+  any valid record (§1a), but the cache-key field's own *ownership*
+  differs by whether the key is being constructed for a **write** or a
+  **lookup**, which the old name did not distinguish. Participates
+  directly in `key_digest`'s hashed payload.
 - `production_identity_checksum: str | None` — unchanged from the
   original design, `AggregateProductionIdentityProjection.projection_checksum`.
+
+### 5a. `production_substrate` ownership rules (correction)
+
+- **On cache write** (`cache_key_for`, called from
+  `ReferenceOrchestrator._accept_valid_result` for a freshly executed,
+  `VALID` result): `production_substrate` is derived from
+  **`task_result.producer_provenance.substrate`** — never from
+  `task_result.context.orchestration_substrate` directly. For a fresh
+  execution the two are already required to be equal (§1a), so this is
+  not a behavior change, but it fixes the *conceptually correct source*:
+  the cache key must record what substrate actually produced the bytes
+  being cached, and `producer_provenance` is the field that answers that
+  question by definition. Reading from `context` instead would silently
+  become wrong the moment any future code path violated §1a's equality
+  invariant without this module also being updated — reading from
+  `producer_provenance` cannot drift that way, since it is the same field
+  §1a's invariant is stated *about*.
+- **On cache lookup** (`ReferenceOrchestrator._execute_key_group`,
+  constructing the key to call `self._cache.get(key)`): `production_substrate`
+  is derived from **the substrate under which the consumer requires the
+  result to have been produced** — which is exactly the consuming
+  session's own `ReferenceRunContext.orchestration_substrate` (§1a: no
+  separate, independently configurable "required substrate" parameter is
+  introduced; the consuming session's declared substrate **is** its
+  requirement, for both fresh execution and cache reuse, uniformly).
+- **On a valid hit**: `rebind_cached_result_to_consuming_context` (§6.2)
+  defensively re-verifies that the **expected** key's `production_substrate`
+  (computed from the consuming session, as above), the **stored** key's
+  `production_substrate` (persisted in the cache entry, from write time),
+  and the resolved entry's own `producer_provenance.substrate` **all
+  three agree** — belt-and-suspenders against a hash-collision-class bug,
+  since the digest-disjointness argument in §1a already makes a
+  disagreement structurally unreachable in the absence of one.
+- **`ReferenceRunContext.orchestration_substrate` is unrenamed and
+  unchanged**: it remains exactly the consuming session's own substrate
+  (§2), never the cache key's field. The two names are now
+  deliberately distinct (`orchestration_substrate` vs.
+  `production_substrate`) specifically so a reader can never conflate
+  "which session is asking" with "which substrate a specific piece of
+  cached evidence was produced under."
 
 **Nothing else** from the distributed side enters the cache key —
 `distributed_run_context_checksum`, `distributed_provenance_manifest_checksum`,
@@ -357,9 +455,40 @@ required cache-identity property (cross-worker same-run reuse, cross-run
 reuse for equivalent environments, invalidation on any real configuration
 change, B.1's region/zone-excluded/provisioning-class-included
 determination unchanged) exactly as the original design established —
-§1's addition only strengthens the local/distributed separation
-guarantee from emergent to structural, and does not change any other
-cache-reuse property.
+§1a's rules only strengthen the local/distributed separation guarantee
+from "permitted but rare" (the prior round's now-corrected framing) to
+"structurally prohibited," and do not change any other cache-reuse
+property.
+
+### 5b. Local semantics, confirmed explicitly
+
+- `LOCAL_REFERENCE_ORCHESTRATOR` `producer_provenance` always has an
+  **empty** `contributing_worker_context_checksums` tuple, `contributing_worker_count
+  == 0`, `contributing_worker_contexts_checksum is None`, and both
+  `distributed_run_context_checksum`/`distributed_provenance_manifest_checksum`/
+  `production_identity_checksum` are `None` — restated from §1 invariant
+  1, confirmed here as the exact local-mode field shape this section's
+  cache-key derivation reads from.
+- Local cache keys use `production_substrate = "LOCAL_REFERENCE_ORCHESTRATOR"`
+  paired with `production_identity_checksum = None` — the
+  "local-compatible production-identity representation" is `None` itself,
+  not a distinct sentinel checksum; this is unchanged from the original
+  design's §1 invariant 5 and preserves today's existing local cache
+  behavior exactly.
+- Distributed cache keys **require** a non-`None`, verified
+  `production_identity_checksum` — per §1 invariant 2, a distributed
+  `producer_provenance` with a missing `production_identity_checksum` is
+  a construction-time rejection, so no distributed cache key can ever be
+  constructed with `production_identity_checksum = None` in the first
+  place.
+- **Local and distributed keys are disjoint even before comparing any
+  other field**: `production_substrate` is itself one of the values
+  hashed into `key_digest` (alongside `task_id`, `candidate_sha256`,
+  `production_identity_checksum`, and every pre-existing cache-key
+  field), so two keys differing only in `production_substrate` already
+  hash to different digests — disjointness does not depend on, and is
+  not weakened by, any coincidental agreement or disagreement among the
+  remaining fields.
 
 ## 6. Producer-versus-consumer provenance for cache hits
 
@@ -431,20 +560,72 @@ def rebind_cached_result_to_consuming_context(
 ) -> ReferenceTaskResult:
 ```
 
-This function:
+**Tightened precondition list (correction)** — the prior round's step 1
+treated cross-field agreement as "already guaranteed... a redundant,
+cheap defensive assertion." This correction replaces that single
+hand-waved step with an explicit, ordered precondition list the function
+must actually verify before constructing anything, each item independent
+and separately checked (never inferred from "a `VALID_HIT` occurred, so
+it must be fine"):
 
-1. Confirms `cached_result` and `consuming_context` agree on every field
-   that already participates in `ReferenceResultCacheKey` (dataset,
-   partition, oracle, comparison profile, evaluator, execution profile,
-   protocol version, task manifest checksum, `orchestration_substrate`,
-   `production_identity_checksum`) — this is already guaranteed by the
-   fact that a `VALID_HIT` occurred (the lookup key was computed from
-   `consuming_context`), so this is a redundant, cheap defensive
-   assertion, not new trust.
-2. Returns a **new** `ReferenceTaskResult` with `context = consuming_context`
+1. **Verify cache-entry and result self-consistency.** Re-runs the same
+   structural/checksum validation `task_result_from_dict` already applies
+   on every deserialization (`ReferenceTaskResult.__post_init__`,
+   `ReferenceResultProducerProvenance.__post_init__`'s own
+   `producer_provenance_checksum` re-verification) — confirms
+   `cached_result` itself is not corrupted before anything is derived
+   from it.
+2. **Verify the expected key equals the stored key.** Computes the
+   expected `ReferenceResultCacheKey` from `consuming_context` (using
+   `consuming_context.orchestration_substrate` as the required
+   `production_substrate`, §5a) and compares it field-for-field against
+   the `ReferenceResultCacheKey` actually stored alongside
+   `cached_result` in the cache entry — not merely trusting that the
+   lookup which found this entry must have used a matching key.
+3. **Verify `producer_provenance.substrate` equals the required
+   production substrate.** An explicit, standalone check — even though
+   step 2's key equality already implies it (§5a), stated and checked
+   independently as defense-in-depth per §1a.
+4. **Verify production-identity checksum equality.** Confirms
+   `cached_result.producer_provenance.production_identity_checksum`
+   equals the expected key's own `production_identity_checksum` (both
+   `None`, for a local hit, or both the same real checksum, for a
+   distributed hit) — again independently of step 2's aggregate key
+   comparison.
+5. **Verify task, candidate, reference-case, dataset, partition, oracle,
+   comparison, evaluator, protocol, execution-profile, and
+   manifest/scientific identity, per the existing cache-key and
+   aggregation rules.** Re-checks every field
+   `ReferenceResultCacheKey`/`_require_shared_run_context` already
+   validate (`task_id`, `candidate_sha256`, `reference_case_checksum`,
+   `dataset_version`/`dataset_checksum`, `partition_version`,
+   `task_manifest_checksum`, `oracle_version`,
+   `comparison_profile_version`, `evaluator_version`,
+   `execution_profile_id`, `execution_protocol_version`) against
+   `consuming_context`/the task-level fields explicitly, rather than
+   relying on "the lookup already used these fields to compute the key
+   that found this entry." The **consuming** manifest identity
+   (`consuming_context.distributed_provenance_manifest_checksum`, a
+   session-level fact, §2) is explicitly permitted to differ from the
+   cached entry's own **producing** manifest identity — that is exactly
+   the cross-run reuse property §5/§11 require; this step never compares
+   those two, only the fields actually listed above.
+6. **Reject stale or unverifiable producer provenance.** If step 1's
+   self-consistency check fails, or if `producer_provenance` is stamped
+   under a schema version this code does not implement, the function
+   raises rather than proceeding — the caller (`_execute_key_group`)
+   never receives a rebound result in this case; the cache's own
+   `CORRUPT`/`STALE_INCOMPATIBLE` disposition should already have
+   prevented `VALID_HIT` from being reported in the first place, so
+   reaching this step with a failure indicates a defect elsewhere, not a
+   normal code path — still checked, never assumed unreachable.
+
+Only after all six preconditions pass does construction proceed:
+
+7. Returns a **new** `ReferenceTaskResult` with `context = consuming_context`
    (satisfying "the aggregator receives a coherent current scientific/run
    context") and `producer_provenance = cached_result.producer_provenance`
-   **carried through unchanged** — the cached entry's original producing
+   **preserved byte-for-byte** — the cached entry's original producing
    run/manifest/worker-set/production-identity remain exactly as they
    were at cache-write time, immutable and fully attributable (satisfying
    "producing provenance... remains immutable and attributable" and
@@ -455,7 +636,34 @@ This function:
    `evaluated_at`, `duration_seconds`, `execution_failure_counts`,
    `full_suite_diagnostic`, `diagnostics`) is carried through unchanged
    from `cached_result` — these are outcome-of-execution facts, correctly
-   producer-sourced regardless of who is now consuming them.
+   producer-sourced regardless of who is now consuming them. **Only the
+   consuming `ReferenceRunContext` is replaced** — every other field,
+   including `producer_provenance`, is copy-constructed unmodified.
+8. **Recompute any enclosing result checksum deterministically.**
+   `ReferenceTaskResult` carries no top-level self-checksum field today
+   (confirmed by direct inspection of `result_schema.py` — unlike
+   `ReferenceResultCacheKey`/`ManifestLockEntry`/every
+   `src/distributed/identity.py` type), so there is nothing at that level
+   to recompute. `producer_provenance.producer_provenance_checksum` is
+   unaffected by rebinding (`producer_provenance` itself is never
+   modified, so its own checksum stays valid and correct, not stale). The
+   on-disk cache entry's own `entry_checksum`
+   (`src/reference/reference_cache.py::_entry_checksum`) is likewise
+   never touched, because item 9 below means it is never recomputed
+   against anything — the rebound object never reaches that code path.
+   **Rule for B.4B, if a future correction adds a top-level
+   `ReferenceTaskResult` checksum**: it must be recomputed deterministically
+   over the *rebound* object's actual field values (not carried forward
+   from `cached_result`'s own, now-stale, checksum) — the same
+   auto-compute-or-reject discipline every other checksum in this
+   codebase already follows.
+9. **Never writes the rebound consumption view back over the original
+   producer cache entry.** The return value of
+   `rebind_cached_result_to_consuming_context` is a transient, in-memory
+   object only — it is never passed to `self._cache.put(...)`. The cache
+   is written to exclusively from `_accept_valid_result`'s own fresh-execution
+   path; `_execute_key_group`'s `VALID_HIT` branch only ever *reads* the
+   cache, both before and after this correction.
 
 This is a **rebinding**, not a new persisted type: no new versioned
 wrapper artifact is written to disk, and no new schema-version constant
@@ -498,6 +706,11 @@ preserves it unchanged) rather than from `rebound_result.context`.
 - *Equivalent production identities may reuse cache across runs*:
   unchanged from §5 — `production_identity_checksum` excludes run/manifest
   identity by construction.
+- *Cross-substrate reuse is prohibited*: precondition 3 of §6.2's ordered
+  list independently confirms `producer_provenance.substrate` equals the
+  required production substrate — and, per §1a, this can never actually
+  fail in the absence of a bug, since a cross-substrate lookup never
+  reaches `VALID_HIT` in the first place (different `key_digest`).
 - *Fresh and cached results may coexist in one aggregate*: guaranteed —
   every task result entering `aggregate_reference_results`, fresh or
   rebound, carries `context == consuming_context` by construction, so
@@ -508,20 +721,21 @@ preserves it unchanged) rather than from `rebound_result.context`.
   provenance*: both halves of the checklist above, simultaneously.
 - *Audit distinguishes producer from consumer for cache hits*: §9.
 - *Missing/stale/unverifiable producer provenance rejected or classified
-  stale, never silently rebound*: `rebind_cached_result_to_consuming_context`
-  performs **no** re-verification of `producer_provenance` against any
-  manifest (that already happened once, at the original cache-write time,
-  via §3's construction path) — it only requires `producer_provenance` to
-  already be internally self-consistent, which
-  `ReferenceResultProducerProvenance.__post_init__`'s own checksum
-  re-verification (run on every deserialization, including the cache's
-  own `task_result_from_dict`) already structurally guarantees. A cache
-  entry whose stored `producer_provenance` fails that self-check —
+  stale, never silently rebound*: **corrected** — the prior round claimed
+  `rebind_cached_result_to_consuming_context` performs *no*
+  re-verification and relies entirely on deserialization-time checks
+  upstream. This correction's §6.2 precondition list (items 1 and 6) now
+  has the function **itself** re-verify self-consistency before
+  proceeding, in addition to (not instead of) the upstream
+  `ReferenceResultProducerProvenance.__post_init__`/`task_result_from_dict`
+  checks, which still provide the first line of defense (a cache entry
+  whose stored `producer_provenance` fails its own self-check —
   corrupted, tampered, or stamped under a stale schema version — is
   rejected by the cache's own existing `CORRUPT`/`STALE_INCOMPATIBLE`
-  disposition **before** `rebind_cached_result_to_consuming_context` is
-  ever called, exactly mirroring how a corrupted `task_result` is already
-  rejected today.
+  disposition before `VALID_HIT` is ever reported at all). Belt-and-suspenders,
+  not redundant waste: the two checks run in different components
+  (`ReferenceResultCache` vs. the orchestrator's own rebind step), so a
+  defect in one does not silently disable the other.
 
 ## 7. Aggregation
 
@@ -589,17 +803,50 @@ or a cache hit. `cache_disposition` is an orthogonal axis: it says
 *whether* a cache lookup occurred and what it found, not *what
 substrate* was involved.
 
-**Illustrative combinations** (not exhaustive — the general rule above is
-authoritative):
+**Five invariants for a valid record, stated explicitly (correction — new)**:
+
+1. `consuming_distributed_run_context_checksum`/`consuming_distributed_provenance_manifest_checksum`
+   **may differ** from
+   `producing_distributed_run_context_checksum`/`producing_distributed_provenance_manifest_checksum`
+   — this is the entire point of the producer/consumer split (§6), and is
+   expected, not anomalous, whenever a cache hit reuses evidence from a
+   different historical distributed run.
+2. `consuming_orchestration_substrate` **must equal**
+   `producing_orchestration_substrate` on every valid record — §1a's
+   cross-substrate prohibition, restated as an audit-level invariant.
+   There is no valid record with these two fields disagreeing; a
+   disagreement in stored data indicates corruption or a defect
+   upstream, not a legitimate cross-substrate scenario.
+3. **One shared `production_identity_checksum` is valid precisely because
+   equality is required** — since invariant 2 guarantees the producing
+   and consuming substrates always match, there is never a scenario
+   requiring two different `production_identity_checksum` values (a
+   "consuming" one and a "producing" one) on the same record; the single
+   field is sufficient by construction, not by omission.
+4. `contributing_worker_contexts_checksum`/`contributing_worker_count`
+   **remain the producer's own values, unchanged by rebinding** (§6.2
+   precondition 7) — they never reflect anything about the consuming
+   session's own (possibly nonexistent) workers.
+5. **`cache_disposition == VALID_HIT` is itself proof that no worker of
+   the current, consuming session executed this item** — a `VALID_HIT`
+   audit record's `producing_*` fields describe evidence that already
+   existed before this invocation began; `cache_disposition` and the
+   `producing_*` fields together give a reader everything needed to
+   confirm this without cross-referencing anything else.
+
+**Illustrative combinations** (not exhaustive — the general rule and the
+five invariants above are authoritative; **the prior round's "distributed
+session, local-produced (legacy) entry" row is removed** — per §1a that
+scenario is a cache **miss**, not a hit, so no audit record with
+disagreeing `consuming_*`/`producing_*` substrates can ever exist):
 
 | Scenario | `consuming_orchestration_substrate` | `producing_orchestration_substrate` | `production_identity_checksum` |
 |---|---|---|---|
-| Fresh execution, local session | `LOCAL_...` | `LOCAL_...` | `None` |
-| Fresh execution, distributed session | `DISTRIBUTED_...` | `DISTRIBUTED_...` (equal to consuming — producer = consumer for fresh) | Present |
-| Cache hit, local session, local-produced entry | `LOCAL_...` | `LOCAL_...` | `None` |
-| Cache hit, distributed session, **local**-produced (legacy) entry | `DISTRIBUTED_...` | `LOCAL_...` | `None` |
-| Cache hit, distributed session, distributed-produced entry from a **different** historical run | `DISTRIBUTED_...` | `DISTRIBUTED_...` (values differ from consuming) | Present, equal to the producing run's own |
-| Cache hit, distributed session, distributed-produced entry from **this same** run (a retry-then-reused-within-run case) | `DISTRIBUTED_...` | `DISTRIBUTED_...` (values equal consuming) | Present |
+| Fresh execution, local session | `LOCAL_...` | `LOCAL_...` (equal — producer = consumer) | `None` |
+| Fresh execution, distributed session | `DISTRIBUTED_...` | `DISTRIBUTED_...` (equal — producer = consumer) | Present |
+| Cache hit, local session, local-produced entry | `LOCAL_...` | `LOCAL_...` (equal) | `None` |
+| Cache hit, distributed session, distributed-produced entry from a **different** historical run | `DISTRIBUTED_...` | `DISTRIBUTED_...` (equal; the *checksums*, not the substrate, differ from consuming — see invariant 1) | Present, equal to the producing run's own |
+| Cache hit, distributed session, distributed-produced entry from **this same** run (a retry-then-reused-within-run case) | `DISTRIBUTED_...` | `DISTRIBUTED_...` (equal; values also equal consuming) | Present |
 
 ## 10. Remaining and updated unresolved decisions
 
@@ -640,10 +887,12 @@ authoritative):
 
 ## 11. Cache-reuse decision table
 
-Revised to reflect §1's `orchestration_substrate` participating in the
-digest directly, alongside `production_identity_checksum`.
+Revised to reflect §5's `production_substrate` (renamed from the prior
+round's `orchestration_substrate`) participating in the digest directly,
+alongside `production_identity_checksum`, and §1a's explicit
+cross-substrate prohibition.
 
-| # | Scenario | `orchestration_substrate` | `production_identity_checksum` | Cache outcome |
+| # | Scenario | `production_substrate` | `production_identity_checksum` | Cache outcome |
 |---|---|---|---|---|
 | 1 | Same run, same worker | Identical (`DISTRIBUTED_...`) | Identical | **Hit** |
 | 2 | Same run, different worker, equivalent configuration | Identical | Identical (`worker_participant_id` excluded from the projection) | **Hit** |
@@ -655,7 +904,8 @@ digest directly, alongside `production_identity_checksum`.
 | 7 | Different manifest/run, equivalent production identity | Identical | Identical; `producer_provenance.distributed_run_context_checksum`/`manifest_checksum` differ from the consuming session's own (§2/§6) | **Hit** — cache identity and run-provenance-traceability intentionally decoupled |
 | 8 | Stale or unverifiable worker provenance | N/A — never reaches key construction | N/A | **Rejected at construction** (§3 steps 3/4), not a cache miss |
 | 9 | Legacy pre-B.4 entry vs. new-schema `None` (local) entry | Old entry lacks the field/version entirely | — | Old: `STALE_INCOMPATIBLE`. New `None` (local): its own distinct partition |
-| 10 (**new**) | Local-mode consumer, distributed-mode cache entry, or vice versa | Differs (`LOCAL_...` vs. `DISTRIBUTED_...`) | — (moot — substrate alone already differs) | **Miss** — structurally guaranteed by §1's cache-key participation, independent of `production_identity_checksum`'s own value |
+| 10a (**corrected**) | Consuming session requires `LOCAL_REFERENCE_ORCHESTRATOR` evidence; the only matching-otherwise entry on disk was produced under `DISTRIBUTED_REFERENCE_ORCHESTRATOR` | `LOCAL_REFERENCE_ORCHESTRATOR` (required) vs. `DISTRIBUTED_REFERENCE_ORCHESTRATOR` (stored) — differ | Moot — `production_substrate` alone already differs | **Miss/incompatible** — distributed evidence cannot silently satisfy a local request (§1a); different `key_digest`, the entry is never located |
+| 10b (**corrected**) | Consuming session requires `DISTRIBUTED_REFERENCE_ORCHESTRATOR` evidence (e.g. `MEGB-03H.2C.3F` qualification); the only matching-otherwise entry on disk was produced under `LOCAL_REFERENCE_ORCHESTRATOR` | `DISTRIBUTED_REFERENCE_ORCHESTRATOR` (required) vs. `LOCAL_REFERENCE_ORCHESTRATOR` (stored) — differ | Moot | **Miss/incompatible** — local evidence cannot satisfy a distributed request (§1a); this is the specific case that makes `MEGB-03H.2C.3F` qualification structurally unable to silently accept local-only evidence |
 
 ## 12. Persisted-artifact audit (unchanged from the original round; read-only, no privileged content opened)
 
@@ -684,7 +934,7 @@ provided, exactly the same conclusion as the original round.
 | Constant | Current | Proposed | Reason (revised) |
 |---|---|---|---|
 | `RESULT_SCHEMA_VERSION` | `reference-result-schema-v4` | `reference-result-schema-v5` | `ReferenceRunContext` gains `orchestration_substrate` + 2 checksum fields (§2); `ReferenceTaskResult` gains one new field, `producer_provenance: ReferenceResultProducerProvenance` (§3/§4) — a nested nested type, not independently versioned (mirrors `FullSuiteDiagnostic`/`CandidateSetEntry`'s existing precedent of participating in `RESULT_SCHEMA_VERSION` without their own constant) |
-| `CACHE_KEY_SCHEMA_VERSION` | `reference-result-cache-key-v2` | `reference-result-cache-key-v3` | `ReferenceResultCacheKey` gains **two** fields (§5: `orchestration_substrate`, `production_identity_checksum`) — revised from the original round's one-field reason |
+| `CACHE_KEY_SCHEMA_VERSION` | `reference-result-cache-key-v2` | `reference-result-cache-key-v3` | `ReferenceResultCacheKey` gains **two** fields (§5: `production_substrate` — renamed from this correction's own prior-round `orchestration_substrate` naming — and `production_identity_checksum`) — field count unchanged from the immediately prior round, name corrected |
 | `CACHE_ENTRY_SCHEMA_VERSION` | `reference-result-cache-entry-v2` | `reference-result-cache-entry-v3` | Depends on both `RESULT_SCHEMA_VERSION` and `CACHE_KEY_SCHEMA_VERSION`, unchanged reasoning from the original round |
 | `AUDIT_RECORD_SCHEMA_VERSION` | `reference-audit-record-v3` | `reference-audit-record-v4` | `ReferenceAuditRecord` gains 9 fields (§9) — revised in count and shape from the original round's 3-field proposal (adds the explicit consuming/producing split and the two substrate fields) |
 | Redacted/safe-report schema (`result_redaction.py`) | n/a (no independent constant) | n/a — tracks `RESULT_SCHEMA_VERSION` v5 | Unchanged from the original round; §8's allowlist is code-level only |
@@ -736,7 +986,7 @@ instruction requires:
     §1 invariant 1 rejection.
 13. **(new)** Local/distributed cache separation (positive test:
     identical hypothetical configuration, differing only in
-    `orchestration_substrate` → different `key_digest`) → §11 row 10.
+    `production_substrate` → different `key_digest`) → §11 rows 10a/10b.
 14. **(new)** Unknown worker checksum (already covered in spirit by item
     2, made explicit as its own parametrized case here per the
     correction's own itemization).
@@ -775,6 +1025,47 @@ instruction requires:
 23. **(new)** Producer/consumer audit-field consistency (parametrized
     over every row of §9's illustrative combinations table, asserting the
     nullability rule holds exactly).
+24. **(this correction, new)** Local-requiring consumer against a
+    distributed-produced entry (§11 row 10a): construct a
+    `LOCAL_REFERENCE_ORCHESTRATOR` consuming session and a real, otherwise
+    field-identical `DISTRIBUTED_REFERENCE_ORCHESTRATOR`-produced cache
+    entry; assert the lookup returns `MISS` (never `VALID_HIT`, and never
+    a `CORRUPT`/rejected-after-found disposition — it must not be located
+    at all).
+25. **(this correction, new)** Distributed-requiring consumer against a
+    local-produced entry (§11 row 10b, the `MEGB-03H.2C.3F`-relevant
+    direction): same shape as item 24, substrates reversed; assert
+    `MISS`. Directly demonstrates "local evidence cannot silently satisfy
+    a distributed request."
+26. **(this correction, new)** `production_substrate` write-time
+    derivation source (§5a): construct a `ReferenceTaskResult` whose
+    `context.orchestration_substrate` and `producer_provenance.substrate`
+    are (artificially, for test purposes) different; assert
+    `cache_key_for` raises rather than silently choosing one — proves the
+    cache-key builder does not read from `context` as a fallback.
+27. **(this correction, new)** Rebind precondition 2 (expected key equals
+    stored key): corrupt/mutate a stored cache entry's persisted
+    `ReferenceResultCacheKey` (in isolation from `task_result` itself, so
+    item 1's self-consistency check alone would not catch it) so it no
+    longer matches what a fresh `cache_key_for(cached_result)`
+    recomputation would produce; assert
+    `rebind_cached_result_to_consuming_context` rejects it.
+28. **(this correction, new)** Rebind precondition 5 (full scientific
+    identity re-verification): construct a `consuming_context` that
+    differs from a cached entry's own context in a field the cache key
+    *does* cover (e.g. `execution_protocol_version`) without going
+    through the cache's own lookup path (a direct unit-level call to
+    `rebind_cached_result_to_consuming_context`); assert rejection —
+    proves the function does not merely trust "a `VALID_HIT` occurred
+    upstream."
+29. **(this correction, new)** `MEGB-03H.2C.3F` distributed-evidence-only
+    policy (§1a): an end-to-end-shaped test asserting that a
+    `DISTRIBUTED_REFERENCE_ORCHESTRATOR` consuming session can never
+    construct a `ReferenceBenchmarkResult` containing any task result
+    whose `producer_provenance.substrate` is
+    `LOCAL_REFERENCE_ORCHESTRATOR` — either because no such cache hit is
+    ever reachable (items 24/25) or, defensively, via an explicit
+    aggregate-level assertion if B.4B chooses to add one.
 
 ## Related documents
 
