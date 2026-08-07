@@ -5,6 +5,23 @@ modified, no version bumped, no `src/`/`tests/` file touched, no real
 privileged artifact opened.** This document is B.4A's own deliverable —
 the design B.4B must implement, not implementation itself.
 
+**Corrected in place** (this is a design document, amended in place per
+this project's established convention — unlike the ticket's own
+append-only row history, which records the correction as a new row
+without editing the prior execution row). The correction traced the
+actual `ReferenceResultCache.get → ReferenceOrchestrator → audit →
+aggregate_reference_results` code path and found the original version's
+§1/§4/§5 design (`str | None` fields, no explicit producer/consumer
+split) was insufficient: it could not express "this task's bytes were
+produced by a different distributed run than the one now consuming it,"
+which is the ordinary, expected shape of cache reuse. This version
+replaces those sections with an explicit orchestration-substrate
+discriminator, a derived (never caller-asserted) identity-construction
+path, and a named producer/consumer provenance split. Sections unaffected
+by the correction (§0 scope, most of aggregation reasoning, the
+persisted-artifact audit) are carried forward with field-name updates
+only.
+
 ## 0. Scope and what this closes
 
 `docs/reference/megb-03h2c3a-gcp-provenance-audit.md`'s "Revised blocking
@@ -19,454 +36,745 @@ identities — `ReferenceRunContext` (`src/reference/result_schema.py`),
 `ReferenceAuditRecord` (`src/reference/reference_audit.py`). This document
 designs that integration.
 
-**Major finding that reshapes this design**: `src/distributed/identity.py`
-(built during the MEGB-03H.2C.3B.1 conformance-audit correction) already
-defines `ProductionIdentityProjection` and
-`AggregateProductionIdentityProjection` — exactly the outcome-affecting
-subset of provenance a production integration needs, already resolved
-against the field-ownership matrix, already self-checksummed. B.4A's job
-is therefore **not** to invent a new identity concept, but to decide how
-the existing `src/distributed/` types bind into the existing `src/reference/`
-production schemas — a wiring design, not a from-scratch identity design.
+`src/distributed/identity.py` already defines `ProductionIdentityProjection`
+and `AggregateProductionIdentityProjection` (built during the
+MEGB-03H.2C.3B.1 conformance-audit correction) — exactly the
+outcome-affecting subset of provenance a production integration needs,
+already resolved against the field-ownership matrix, already
+self-checksummed. This design wires those existing types into the
+production schemas; it does not redesign them.
 
-## 1. Run-level identity
+**One further precedent this correction relies on**:
+`src/reference/distributed_provenance_reconciliation.py` is documented as
+**"the only module in `src/reference/` permitted to import
+`src.distributed`"** (enforced by
+`tests/test_distributed_dependency_direction.py`) and already implements
+the calibration-side analogue of everything §3 below needs
+(`reconcile_calibration_run_context`, `reconcile_calibration_invocation_worker`).
+The new production-side construction/reconciliation logic belongs there,
+extending it — not in `result_schema.py`, which must not import
+`src.distributed` directly.
 
-**Question**: which safe checksum binds `ReferenceRunContext` to the
-distributed run and protected provenance manifest?
+## 1. Orchestration-substrate discriminator
 
-**Design**: `ReferenceRunContext` gains two new fields, mirroring exactly
-the pattern `MEGB-03H.2C.3B.3` already established on the calibration side
-(`CalibrationRunContext.distributed_run_context_checksum`/
-`provenance_manifest_checksum`, `CALIBRATION_SCHEMA_VERSION` v2→v3):
+**Problem this closes**: the original design relied on field-`None`-ness
+alone to distinguish "no distributed execution" from "distributed
+execution," with no explicit, closed statement of which mode a record is
+in — exactly what this correction's instruction rejects ("do not rely on
+`None` alone").
 
-- `distributed_run_context_checksum: str | None` — `DistributedRunContext.run_context_checksum`.
-- `distributed_provenance_manifest_checksum: str | None` — `DistributedProvenanceManifest.manifest_checksum`.
+**Design**: a new closed enum, owned by `src/reference/result_schema.py`
+(a reference-execution concern, not a `src.distributed` concept — `B.1`'s
+`EnvironmentClass` is deliberately not modified or extended):
 
-Both participate in `ReferenceRunContext`'s existing dataclass equality
-(automatic — no change to any equality logic required), so
-`aggregate_reference_results`'s existing shared-run-context check
-(`src/reference/aggregation.py::_require_shared_run_context`) already
-catches an inconsistency in either field with no code change of its own.
+```python
+class ReferenceOrchestrationSubstrate(str, Enum):
+    LOCAL_REFERENCE_ORCHESTRATOR = "LOCAL_REFERENCE_ORCHESTRATOR"
+    DISTRIBUTED_REFERENCE_ORCHESTRATOR = "DISTRIBUTED_REFERENCE_ORCHESTRATOR"
+```
 
-Why both, not just the manifest checksum (which structurally contains the
-run context): the narrower `distributed_run_context_checksum` lets a
-verifier confirm run-level identity without resolving the full protected
-manifest, exactly the same justification B.3 already gave for carrying
-both on the calibration side. `str | None` (not required) — see §8,
-Unresolved Decision 1.
+`LOCAL_REFERENCE_ORCHESTRATOR` covers the **only mode any real reference
+evaluation has ever actually used in this repository**: the MEGB-03G.3/G.4
+orchestrator running directly against a local Docker backend, never
+through the (still entirely offline/synthetic) distributed
+coordinator/worker system. `DISTRIBUTED_REFERENCE_ORCHESTRATOR` covers
+execution admitted through that system. Closed by design, exactly
+mirroring `CloudProvider`'s own closed-but-extensible pattern — a third
+mode is added by adding a member, never by accepting a free-form string.
 
-## 2. Worker-level identity
+**Where it enters** (three places, as required):
 
-**Question**: how does each freshly executed `ReferenceTaskResult` prove
-which admitted worker executed it?
+- `ReferenceRunContext.orchestration_substrate` — the **consuming**
+  orchestration session's own substrate (see §2's "consuming vs.
+  producing" distinction).
+- `ReferenceResultCacheKey.orchestration_substrate` — participates
+  directly in `key_digest`'s hashed payload (§5) as an explicit,
+  structural guarantee, not merely an emergent consequence of `None`
+  never colliding with a real checksum.
+- `ReferenceAuditRecord.consuming_orchestration_substrate` and
+  `producing_orchestration_substrate` — both, since the two can differ on
+  a cache hit (§9).
 
-**Design**: `ReferenceTaskResult` gains:
+**Frozen structural invariants** (enforced in `__post_init__`, raising
+`InvalidReferenceResultError` — or a `ReferenceResultProducerProvenance`-scoped
+equivalent, §3 — on violation, never silently coerced):
 
-- `contributing_worker_context_checksums: tuple[str, ...]` — sorted,
-  deduplicated `WorkerExecutionContext.worker_context_checksum` values for
-  every worker that contributed to *this task's* execution. Empty tuple
-  only when `distributed_run_context_checksum` is `None` (legacy/local —
-  see §8).
+1. `orchestration_substrate == LOCAL_REFERENCE_ORCHESTRATOR` **requires**
+   `distributed_run_context_checksum is None` and
+   `distributed_provenance_manifest_checksum is None` on
+   `ReferenceRunContext`, and requires every distributed-specific field on
+   `ReferenceResultProducerProvenance` (§3) to be `None`/empty/zero for any
+   task result whose own `producer_provenance.substrate` is also `LOCAL_REFERENCE_ORCHESTRATOR`.
+2. `orchestration_substrate == DISTRIBUTED_REFERENCE_ORCHESTRATOR`
+   **requires** both `ReferenceRunContext` checksums to be present
+   (non-`None`, valid sha256 hex). For any `producer_provenance` whose own
+   `substrate` is `DISTRIBUTED_REFERENCE_ORCHESTRATOR`, **all** of
+   `distributed_run_context_checksum`, `distributed_provenance_manifest_checksum`,
+   `contributing_worker_context_checksums` (nonempty),
+   `contributing_worker_contexts_checksum`, `contributing_worker_count`
+   (≥ 1), and `production_identity_checksum` must be present and
+   internally consistent (§3's derivation, independently re-verified at
+   construction) — **a distributed producer_provenance with any of these
+   missing is a construction-time `InvalidReferenceResultError`, never
+   silently accepted and never reinterpreted as local.**
+3. A task's own `producer_provenance.substrate` is **independent** of the
+   consuming `ReferenceRunContext.orchestration_substrate` — a
+   `DISTRIBUTED_REFERENCE_ORCHESTRATOR` session may legitimately serve a
+   `LOCAL_REFERENCE_ORCHESTRATOR`-produced cache hit (an older, pre-B.4B
+   or genuinely local-only cache entry reused by a distributed-capable
+   consumer) and vice versa (a `LOCAL_REFERENCE_ORCHESTRATOR` session
+   consulting a shared cache store may hit a `DISTRIBUTED_REFERENCE_ORCHESTRATOR`-produced
+   entry). No cross-constraint links the two; each is independently valid
+   per invariants 1/2 above. **Recommended, not mandated, B.4B
+   enhancement**: `ReferenceBenchmarkResult` could expose a derived
+   "producer substrates observed" set (mirroring `MixedWorkerProvenanceSummary`'s
+   own aggregation pattern) purely so a reader can see at a glance whether
+   a 164-task aggregate is homogeneously distributed-produced or a mix —
+   not required by this correction, flagged as optional.
+4. **Cache separation**: `ReferenceResultCacheKey.orchestration_substrate`
+   entering the digest (§5) means a `LOCAL_REFERENCE_ORCHESTRATOR` cache
+   key and a `DISTRIBUTED_REFERENCE_ORCHESTRATOR` cache key **can never
+   collide**, structurally — not merely because `production_identity_checksum`
+   happens to be `None` on one side (which is also true, but this makes it
+   a second, independent guarantee rather than the only one).
+5. **Local-mode `None` semantics, preserved exactly**: for
+   `LOCAL_REFERENCE_ORCHESTRATOR`, `production_identity_checksum` remains
+   `None` in the cache key, preserving today's existing local cache
+   behavior (two local executions with identical cache-key-relevant
+   fields already hit each other, unchanged by this design) — `None` is
+   valid and expected for local mode; it is only ever *insufficient as
+   the sole discriminator*, which invariant 4's explicit `orchestration_substrate`
+   field now resolves.
 
-This is a **proof**, not a bare claim: each checksum is only meaningful if
-it independently resolves against the run's `DistributedProvenanceManifest`
-via the already-accepted `resolve_worker_context(manifest, checksum)`
-(`src/distributed/provenance_manifest.py`), which raises
-`InvalidDistributedProvenanceError` for any checksum not present in that
-specific manifest — "a checksum without a persisted, verifiable referenced
-manifest is insufficient," the same discipline that function's own
-docstring already states. A verifier holding the protected manifest can
-resolve every checksum to a real `WorkerExecutionContext`; a verifier
-without manifest access still gets tamper-evidence (the checksums are
-sha256 hex, opaque, and meaningless to fabricate without matching a real
-context), never a raw identifier.
+## 2. Run-level identity — consuming session, not per-task
 
-**Why not `ProductionIdentityProjection` (the single-worker type)
-directly**: that type's own docstring is explicit that it is "valid only
-when the calling production integration can guarantee a given production
-result was produced entirely by this single worker context" and that "no
-such indivisible-work-unit invariant is currently frozen or enforced
-anywhere... a real production integration must use
-`aggregate_production_identity_for` instead." No B.2B interface freezes
-one-worker-per-task execution (confirmed by re-reading
-`src/distributed/executor.py`/`coordinator.py` — retries can reassign a
-work item to a different worker). B.4A therefore designs against
-`AggregateProductionIdentityProjection` uniformly (§3), never the
-single-worker projection, even for the common case where exactly one
-worker in fact executed a given task — this is conservative, not wasteful:
-`aggregate_production_identity_for` with a length-1 `workers` tuple
-degrades to exactly the single-worker case with `contributing_worker_count
-== 1`.
+`ReferenceRunContext.distributed_run_context_checksum`/
+`distributed_provenance_manifest_checksum` (unchanged names from the
+original design) now have an explicitly stated, narrower meaning:
+**the distributed run (if any) that the current, consuming orchestration
+session is itself operating under** — a session-level fact, shared across
+all 164 tasks in one benchmark by construction, exactly like every other
+`ReferenceRunContext` field already is. For a session with zero
+distributed backend involvement (the common case today), both are `None`
+and `orchestration_substrate = LOCAL_REFERENCE_ORCHESTRATOR`.
 
-## 3. Production identity
+**This is deliberately not the same thing as "which distributed run
+actually produced task N's bytes."** That is a **per-task, producer-side**
+fact (§3/§6) — because a single consuming session may legitimately serve
+some tasks fresh (producer = consumer, values agree) and some from cache
+entries written under a different historical distributed run entirely
+(producer ≠ consumer). Conflating the two — as the original design
+implicitly did by treating `ReferenceRunContext`'s distributed fields as
+if they were also the per-task producer identity — is exactly the defect
+§6 traces and fixes.
 
-**Already resolved by the existing `src/distributed/identity.py`.**
-`ReferenceTaskResult` gains:
+`aggregate_reference_results`'s existing shared-run-context equality check
+(`src/reference/aggregation.py::_require_shared_run_context`) requires no
+modification: these two fields are session-level, so they are trivially
+identical across all 164 task results' `.context`, by the same
+construction as `experiment_run_id` already is today.
 
-- `production_identity_checksum: str | None` —
-  `AggregateProductionIdentityProjection.projection_checksum`, computed
-  from the `WorkerExecutionContext` objects `contributing_worker_context_checksums`
-  (§2) resolve to, via `aggregate_production_identity_for(run_context, workers)`.
+## 3. Worker and production identity — derived, not caller-asserted
 
-This directly reuses the already-accepted field set (`environment_class`,
-`logical_environment_id`, `cloud_provider`, `network_isolation_policy_checksum`,
-`contributing_worker_count`, and per-field histograms of `machine_type`,
-`provisioning_class`, `worker_image_digest`, `worker_implementation_version`,
-`host_runtime_identity_checksum`, `telemetry_policy_identity_checksum`) —
-**no new field-ownership decision is made here**; B.4A only decides where
-this existing checksum is *embedded*. `region`/`zone`/`cpu_architecture`
-are excluded from this checksum because `ProductionIdentityProjection`/
-`AggregateProductionIdentityProjection` already exclude them (B.1's own
-"timing-only" determination) — see §8, Unresolved Decision 2 for the one
-place this exclusion has a real consequence for cache reuse.
+**New type**, owned by `src/reference/result_schema.py` (nested within
+`ReferenceTaskResult`'s own schema, not a `src.distributed` type):
 
-## 4. Cache identity
+```python
+@dataclass(frozen=True)
+class ReferenceResultProducerProvenance:
+    substrate: ReferenceOrchestrationSubstrate
+    distributed_run_context_checksum: str | None
+    distributed_provenance_manifest_checksum: str | None
+    contributing_worker_context_checksums: tuple[str, ...]  # sorted, deduplicated — §4
+    contributing_worker_contexts_checksum: str | None       # derived — §4
+    contributing_worker_count: int                          # derived — §4
+    production_identity_checksum: str | None                # derived — this section
+    producer_provenance_checksum: str = ""                  # self-checksum, auto-compute-or-reject
+```
 
-**Question**: which production-provenance checksum enters
-`ReferenceResultCacheKey`?
+`ReferenceTaskResult` gains exactly one new field: `producer_provenance:
+ReferenceResultProducerProvenance` — **always present** (never a
+top-level `None`), so the substrate discriminator itself is always
+structurally available for the invariants in §1 to check, rather than
+being inferable only from the absence of other fields.
 
-**Design**: `ReferenceResultCacheKey` gains exactly one new field:
+**Frozen construction/reconciliation path** (new function,
+`build_reference_result_producer_provenance`, added to
+`src/reference/distributed_provenance_reconciliation.py` — the one module
+permitted to import `src.distributed`; not implemented by this
+checkpoint, only designed):
 
-- `production_identity_checksum: str | None` — the identical value from
-  §3, copied from `task_result.production_identity_checksum` by
-  `cache_key_for`.
+```python
+def build_reference_result_producer_provenance(
+    *,
+    lock: ManifestLockFile,
+    claimed_distributed_run_context_checksum: str,
+    claimed_distributed_provenance_manifest_checksum: str,
+    contributing_worker_context_checksums: tuple[str, ...],
+    claimed_production_identity_checksum: str | None = None,
+) -> ReferenceResultProducerProvenance:
+```
+
+1. **Resolve the protected manifest through its validated lock.** Finds
+   the `ManifestLockEntry` in `lock` whose `manifest_checksum` equals
+   `claimed_distributed_provenance_manifest_checksum`, then loads and
+   verifies the actual protected manifest bytes against that entry —
+   reusing the same containment-validated, self-checksummed verification
+   chain `verify_against_lock`/`load_lock_file` already establish
+   (`src/distributed/provenance_manifest_lock.py`). **New B.4B-scoped
+   primitive this depends on**: `provenance_manifest_lock.py` needs a
+   public `resolve_verified_manifest(lock, manifest_checksum) ->
+   DistributedProvenanceManifest` (today, the equivalent logic exists only
+   as the private `_load_protected_manifest`, and `verify_against_lock`
+   returns pass/fail booleans, not the manifest object) — named here, not
+   implemented.
+2. **Verify the run-context and manifest checksums.** Compares
+   `manifest.run_context.run_context_checksum ==
+   claimed_distributed_run_context_checksum` and
+   `manifest.manifest_checksum == claimed_distributed_provenance_manifest_checksum`,
+   raising `DistributedProvenanceReconciliationError` on any mismatch —
+   the identical two-check shape `reconcile_calibration_run_context`
+   already applies to the calibration side, applied here to the
+   production side.
+3. **Resolve every contributing worker checksum.** For each entry in
+   `contributing_worker_context_checksums`, calls the existing
+   `resolve_worker_context(manifest, checksum)`
+   (`src/distributed/provenance_manifest.py`) — raises
+   `InvalidDistributedProvenanceError` (wrapped as
+   `DistributedProvenanceReconciliationError`) for any checksum not
+   present in *this specific* manifest.
+4. **Reject unknown, duplicate, substituted, or wrong-run workers.**
+   Unknown/wrong-run collapse into step 3's own failure mode (`resolve_worker_context`
+   only searches within one manifest's own worker set, which — by
+   `DistributedProvenanceManifest.__post_init__`'s own existing
+   `require_workers_belong_to_run` check — can only ever contain workers
+   whose `parent_run_context_checksum` already matches that manifest's run
+   context; there is no way for a "wrong-run" worker to be present in the
+   manifest being searched at all). Duplicate is checked explicitly before
+   step 3 (`len(set(checksums)) != len(checksums)` → reject). Substitution
+   (a checksum resolving to a real but different worker than intended) is
+   structurally prevented by the checksum being a content-bound sha256
+   identity of that specific worker's own fields — a substituted worker
+   would require a hash collision.
+5. **Deterministically construct `AggregateProductionIdentityProjection`.**
+   Calls the existing, unmodified
+   `aggregate_production_identity_for(manifest.run_context, resolved_workers)`
+   (`src/distributed/identity.py`) over the resolved
+   `WorkerExecutionContext` objects from step 3, in the manifest's own
+   canonical (checksum-sorted) order.
+6. **Derive `production_identity_checksum`.** Equals the resulting
+   `AggregateProductionIdentityProjection.projection_checksum` exactly —
+   never independently computed by this function, only read off the
+   already-self-checksummed projection.
+7. **Refuse a disagreeing caller-supplied checksum.** If
+   `claimed_production_identity_checksum` is not `None` and differs from
+   step 6's derived value, raise — the same auto-compute-or-reject
+   discipline every self-checksummed type in this codebase already
+   applies, extended here to a *cross-type* derivation rather than a
+   type's own internal recomputation.
+
+`contributing_worker_contexts_checksum`/`contributing_worker_count` (§4)
+are computed from the same resolved, sorted, deduplicated tuple as a
+final step, and `producer_provenance_checksum` is computed last, over the
+whole assembled record.
+
+**Why `production_identity_checksum` alone is insufficient** (motivating
+§4's separate field): `AggregateProductionIdentityProjection`'s own
+checksum is computed *only* from outcome-affecting configuration fields —
+`worker_participant_id` is deliberately excluded (by design, so
+config-equivalent workers share one checksum, §5's required cache-reuse
+property). Consequently, **two different actual contributor sets that
+happen to share identical configuration produce an identical
+`production_identity_checksum`** — correct and intended for cache
+identity, but it means this checksum alone cannot answer "which
+specific workers actually contributed," which reconciliation/audit needs.
+`contributing_worker_contexts_checksum` closes exactly this gap: it
+changes whenever the actual participant *set* changes (e.g. a retry moves
+a task to a differently-`worker_participant_id`'d but identically
+configured worker), even when `production_identity_checksum` stays fixed.
+
+## 4. Worker-set reconciliation without exposure
+
+**`contributing_worker_context_checksums` semantics, stated explicitly**:
+a **sorted, deduplicated tuple of distinct participant identities** — one
+entry per contributing `worker_participant_id`'s own
+`worker_context_checksum`, never a multiset/histogram. The same
+participant cannot appear twice (duplicate rejected at construction, §3
+step 4). Genuine **multiplicity** — multiple *distinct* workers
+contributing to one task (e.g. an infrastructure retry that moved
+execution to a second worker) — is fully represented as additional
+distinct tuple entries, exactly mirroring
+`MixedWorkerProvenanceSummary`'s own "genuine multiplicity... counted, not
+collapsed" precedent. Per-*configuration* multiplicity (how many
+contributing workers shared machine type X) remains entirely
+`AggregateProductionIdentityProjection`'s own internal histogram
+responsibility (§3, unchanged, reused as-is) — `contributing_worker_context_checksums`
+answers a different question ("which participants") than the projection's
+histograms answer ("what configuration mix").
+
+**Derived fields, bound into the task result's own self-checksum**:
+
+- `contributing_worker_contexts_checksum: str | None` — sha256 over the
+  canonical-JSON sorted list of `contributing_worker_context_checksums`
+  (the same canonical-hashing convention every other checksum in this
+  codebase already uses, e.g. `MixedWorkerProvenanceSummary.aggregate_checksum`).
+  `None` iff `substrate == LOCAL_REFERENCE_ORCHESTRATOR`.
+- `contributing_worker_count: int` — `len(contributing_worker_context_checksums)`.
+  `0` iff `substrate == LOCAL_REFERENCE_ORCHESTRATOR`.
+
+Both participate in `ReferenceResultProducerProvenance.producer_provenance_checksum`'s
+own payload (so tampering with either is caught the same way tampering
+with any other field already is), and both — **not the raw tuple** —
+propagate into `ReferenceAuditRecord` and any safe/redacted projection
+(§8/§9). The raw `contributing_worker_context_checksums` tuple itself
+remains only on the always-privileged, full-fidelity `ReferenceTaskResult`.
+This gives full reconciliation capability (a verifier holding the
+privileged result can recompute `contributing_worker_contexts_checksum`
+from the raw tuple and confirm it matches) without exposing or letting an
+external reader correlate individual worker pseudonyms across tasks or
+runs from the safe/audit path alone — mirroring
+`SafeRedactedSummary`'s own established zone-exclusion precedent for
+exactly this class of per-record topology-fingerprinting concern.
+
+## 5. Cache identity
+
+`ReferenceResultCacheKey` gains **two** new fields (revised from the
+original design's one):
+
+- `orchestration_substrate: str` — §1's discriminator, entering the
+  digest directly.
+- `production_identity_checksum: str | None` — unchanged from the
+  original design, `AggregateProductionIdentityProjection.projection_checksum`.
 
 **Nothing else** from the distributed side enters the cache key —
 `distributed_run_context_checksum`, `distributed_provenance_manifest_checksum`,
-`contributing_worker_context_checksums`, `distributed_run_id`,
-`worker_participant_id`, any attempt/delivery/lease id, and any timestamp
-are all deliberately excluded, per the explicit instruction and per this
-key's own existing "run IDs, portfolio-selection IDs... belong in
-audit/mapping records instead" precedent
-(`src/reference/cache_key.py`'s own module docstring). This single field
-addition is sufficient to satisfy every required cache-identity property:
+`contributing_worker_context_checksums`/`contributing_worker_contexts_checksum`/
+`contributing_worker_count`, any run/participant/attempt/delivery id, and
+any timestamp remain deliberately excluded, unchanged from the original
+design's rationale (`cache_key.py`'s own "run IDs... belong in
+audit/mapping records instead" precedent). This still satisfies every
+required cache-identity property (cross-worker same-run reuse, cross-run
+reuse for equivalent environments, invalidation on any real configuration
+change, B.1's region/zone-excluded/provisioning-class-included
+determination unchanged) exactly as the original design established —
+§1's addition only strengthens the local/distributed separation
+guarantee from emergent to structural, and does not change any other
+cache-reuse property.
 
-- **Cross-worker, same-run reuse**: `AggregateProductionIdentityProjection`
-  excludes `worker_participant_id` from its own checksum payload — two
-  different but identically-configured workers in the same run yield the
-  same `production_identity_checksum`.
-- **Cross-run reuse**: the projection excludes `distributed_run_id` and
-  any manifest checksum — two different runs with equivalent
-  outcome-affecting environments yield the same `production_identity_checksum`,
-  hence the same cache key.
-- **Invalidation on real change**: `machine_type`, `provisioning_class`,
-  `worker_image_digest`, `worker_implementation_version`,
-  `host_runtime_identity_checksum`, and `telemetry_policy_identity_checksum`
-  all participate in the projection's own checksum — any one changing
-  changes `production_identity_checksum`, hence the cache key.
-- **Region/zone/provisioning-class per the B.1 determination, not
-  redesigned here**: region and zone are excluded from the projection
-  (B.1's timing-only classification, unchanged by this design);
-  provisioning class (Spot vs. On-Demand) **is** included, so a
-  Spot→On-Demand change for otherwise-identical configuration **does**
-  invalidate the cache key.
+## 6. Producer-versus-consumer provenance for cache hits
 
-## 5. Audit identity
+### 6.1 Traced: what the code does today
 
-**Question**: which run, manifest, worker, and production-identity
-checksums enter `ReferenceAuditRecord`?
+`ReferenceOrchestrator._execute_key_group`
+(`src/reference/reference_orchestrator.py:702-726`): on `CacheDisposition.VALID_HIT`,
+`lookup.task_result` — **the cached object exactly as originally stored,
+including its own originally-embedded `.context`** — is returned
+unmodified, with no rebinding step of any kind:
 
-**Design**: `ReferenceAuditRecord` gains, mirroring §1 and §3 exactly (safe
-identity/checksum fields only, consistent with this record's existing
-"structurally cannot carry X" discipline):
+```python
+if lookup.disposition == CacheDisposition.VALID_HIT:
+    ...
+    return KeyExecutionResult(
+        WorkItemDisposition.CACHE_HIT, lookup.task_result, 0, "served from cache"
+    )
+```
 
-- `distributed_run_context_checksum: str | None`
-- `distributed_provenance_manifest_checksum: str | None`
-- `production_identity_checksum: str | None`
+`_append_audit` (`reference_orchestrator.py:977-1000`) builds the audit
+record from **`representative.run_context`** — the current work item's
+own (consuming) context — for every run-identity field
+(`experiment_run_id`, `optimization_run_id`, `portfolio_frozen_at`,
+`portfolio_selection_rule`, `evaluator_version`, `dataset_version`,
+`partition_version`, `execution_profile_id`, `comparison_profile_version`,
+`execution_protocol_version`, `dataset_checksum`, `task_manifest_checksum`)
+— **not** from `task_result.context`. Only outcome-of-execution fields
+(`candidate_id`, `candidate_sha256`, `oracle_version`,
+`reference_case_checksum`, `task_id`, `status`, `duration_seconds`) are
+sourced from `task_result` itself. This means the audit record **already**
+implicitly reflects the *consuming* run's identity for every run-level
+field — a sound, if undocumented, precedent this design's audit matrix
+(§9) makes explicit rather than inventing.
 
-**Deliberately excluded from the audit record**:
-`contributing_worker_context_checksums`. Unlike the run-level and
-aggregate-production checksums (each a single coarse value, identical
-across many tasks or many runs), the per-task worker-checksum *list*
-reveals per-task worker-multiplicity/retry patterns at fine granularity —
-the same category of concern that already led
-`src.distributed.safe_summary.SafeRedactedSummary` to exclude per-worker
-`zone` from its own safe projection ("avoids per-record
-infrastructure-topology fingerprinting"). This detail remains available
-only on the always-privileged `ReferenceTaskResult` itself (§2), never on
-the audit record — see §7 for the full redaction rationale, and §8,
-Unresolved Decision 3, since this specific granularity call is a B.4A
-recommendation, not something the authorizing instruction resolved
-explicitly.
+**The actual gap**: the returned `ReferenceTaskResult` object that flows
+onward into `aggregate_reference_results`
+(`src/reference/aggregation.py::_require_shared_run_context`) still
+carries the *producer's* `.context` embedded, unconditionally. Because
+`ReferenceRunContext`'s full dataclass equality includes fields **not**
+part of the cache key (`experiment_run_id`, `optimization_run_id`,
+`optimization_config_sha256`, `portfolio_frozen_at`,
+`portfolio_selection_rule`), **a cache hit whose original producing run
+differs from the consuming run in any of those fields today produces a
+`ReferenceTaskResult` that cannot coexist with a fresh (consumer-context)
+result in one `ReferenceBenchmarkResult` aggregate** —
+`_require_shared_run_context` rejects the mix the moment even one cached
+result's context disagrees. This is a genuine, pre-existing (not
+introduced by B.4A) architectural gap: today, cross-run cache reuse only
+actually works if callers happen to keep those five fields byte-identical
+across "different" runs — which defeats the purpose of per-run identity
+tracking. This correction's design (below) closes this gap as a
+byproduct of satisfying the distributed-provenance requirement, since the
+same rebinding mechanism generalizes to both.
 
-This lets an audit record be reconciled against the cache/result identity
-it accompanies, and — for an operator holding the protected manifest —
-against the full evidence chain, without ever inspecting the privileged
-cache entry itself, exactly the rationale the v2 audit-record correction
-already gives for `execution_protocol_version`/`dataset_checksum`/
-`task_manifest_checksum`.
+### 6.2 Frozen mechanism
 
-## 6. Aggregation
+**On every `VALID_HIT`, the orchestrator constructs a new
+`ReferenceTaskResult`** (never mutates or returns the cached object
+as-is — it is `frozen=True`, so this is structural, not merely a style
+choice) via a new function, `rebind_cached_result_to_consuming_context`
+(owned by `src/reference/result_schema.py` — no `src.distributed` import
+needed, since it operates purely on already-constructed
+`ReferenceRunContext`/`ReferenceTaskResult` objects):
 
-**Question**: how can a 164-task aggregate contain results from multiple
-admitted workers without violating the shared-run-context invariant?
+```python
+def rebind_cached_result_to_consuming_context(
+    cached_result: ReferenceTaskResult,
+    consuming_context: ReferenceRunContext,
+) -> ReferenceTaskResult:
+```
 
-**Design**: no change to `ReferenceBenchmarkResult`'s or
-`aggregate_reference_results`'s existing invariant is needed, because the
-new fields split cleanly along the boundary those functions already
-enforce:
+This function:
 
-- **Run-level** (§1: `distributed_run_context_checksum`,
-  `distributed_provenance_manifest_checksum`) lives on `ReferenceRunContext`
-  — identical across all 164 tasks in one benchmark run by construction
-  (one distributed run produces the whole benchmark), so the existing
-  `result.context != run_context` equality check
-  (`_require_shared_run_context`) already enforces consistency with zero
-  new code.
-- **Task-level** (§2/§3: `contributing_worker_context_checksums`,
-  `production_identity_checksum`) lives on `ReferenceTaskResult` — free to
-  differ per task, exactly like `candidate_id`/`candidate_sha256` already
-  do. Two tasks executed by different workers (different machine type,
-  different Spot lease, a retry that moved a task to a second worker) are
-  simply two different `production_identity_checksum` values in the same
-  benchmark — never rejected, never required to match.
+1. Confirms `cached_result` and `consuming_context` agree on every field
+   that already participates in `ReferenceResultCacheKey` (dataset,
+   partition, oracle, comparison profile, evaluator, execution profile,
+   protocol version, task manifest checksum, `orchestration_substrate`,
+   `production_identity_checksum`) — this is already guaranteed by the
+   fact that a `VALID_HIT` occurred (the lookup key was computed from
+   `consuming_context`), so this is a redundant, cheap defensive
+   assertion, not new trust.
+2. Returns a **new** `ReferenceTaskResult` with `context = consuming_context`
+   (satisfying "the aggregator receives a coherent current scientific/run
+   context") and `producer_provenance = cached_result.producer_provenance`
+   **carried through unchanged** — the cached entry's original producing
+   run/manifest/worker-set/production-identity remain exactly as they
+   were at cache-write time, immutable and fully attributable (satisfying
+   "producing provenance... remains immutable and attributable" and
+   "without erasing producing provenance"). Every other field
+   (`candidate_id`, `candidate_sha256`, `status`, `q_ref_task`,
+   `reference_case_total`, `reference_case_pass_count`,
+   `first_failure_category`, `oracle_version`, `reference_case_checksum`,
+   `evaluated_at`, `duration_seconds`, `execution_failure_counts`,
+   `full_suite_diagnostic`, `diagnostics`) is carried through unchanged
+   from `cached_result` — these are outcome-of-execution facts, correctly
+   producer-sourced regardless of who is now consuming them.
 
-This is precisely *why* §2/§3 must live on `ReferenceTaskResult` and never
-on `ReferenceRunContext`: placing per-worker identity on the shared run
-context would force either a single-worker-only run (contradicting real
-multi-worker fleets) or an artificial "first worker wins"/concatenated
-representation — exactly the outcome the authorizing instruction's "must
-not be placed in the shared `ReferenceRunContext`" constraint forbids.
+This is a **rebinding**, not a new persisted type: no new versioned
+wrapper artifact is written to disk, and no new schema-version constant
+is required beyond `RESULT_SCHEMA_VERSION`'s own bump (§13) for
+`ReferenceTaskResult`'s new `producer_provenance` field itself. The
+"new versioned cache-consumption binding" the correction's instruction
+anticipated is `ReferenceResultProducerProvenance` (§3) — the field that
+makes rebinding safe (because it is *disjoint* from `context`, swapping
+`context` cannot destroy it) — plus this one pure function; no additional
+wrapper type is needed once the producer/consumer split exists as a first-class
+field split within `ReferenceTaskResult` itself.
 
-**Optional, not required, B.4B enhancement**: `ReferenceBenchmarkResult`
-could gain a derived, benchmark-level `MixedWorkerProvenanceSummary` (via
-`aggregate_worker_provenance`) over the union of every task's contributing
-workers, purely for reporting — no instruction requires this, and B.4A
-does not mandate it; flagged as an option for B.4B to accept or decline.
+**Where this is called**: `_execute_key_group`'s `VALID_HIT` branch,
+replacing the bare `lookup.task_result` return with
+`rebind_cached_result_to_consuming_context(lookup.task_result,
+representative.run_context)`. `_append_audit`'s existing sourcing
+(`run_context=representative.run_context` for run-identity fields,
+`task_result=...` for outcome fields) requires **no change** — it already
+does the right thing, as traced in §6.1 — except that it must now also
+source the *producing*-side audit fields (§9) from
+`cached_result.producer_provenance` specifically (the pre-rebind object,
+or equivalently `rebound_result.producer_provenance`, since rebinding
+preserves it unchanged) rather than from `rebound_result.context`.
 
-## 7. Redaction
+**Checklist against every required property**:
 
-**Question**: which checksums are safe to expose, and which mappings
-remain protected?
+- *Producing run/manifest/worker-set/production identity remain immutable
+  and attributable*: `producer_provenance` is carried through unchanged by
+  construction (never reconstructed, never merged).
+- *Consuming run and manifest recorded separately*: `context` (→
+  `ReferenceRunContext.distributed_run_context_checksum`/`manifest_checksum`,
+  §2) always reflects the consumer; `producer_provenance` always reflects
+  the producer. Two disjoint field sets, never conflated.
+- *Cache hit never claims a current worker freshly executed the result*:
+  `producer_provenance.contributing_worker_context_checksums` are always
+  the *original* producer's workers; nothing in this design ever
+  substitutes the consuming session's own (possibly nonexistent, for a
+  `LOCAL_REFERENCE_ORCHESTRATOR` consumer) workers into a cache-hit
+  result.
+- *Equivalent production identities may reuse cache across runs*:
+  unchanged from §5 — `production_identity_checksum` excludes run/manifest
+  identity by construction.
+- *Fresh and cached results may coexist in one aggregate*: guaranteed —
+  every task result entering `aggregate_reference_results`, fresh or
+  rebound, carries `context == consuming_context` by construction, so
+  `_require_shared_run_context`'s existing equality check trivially
+  passes regardless of how many distinct historical producing runs
+  contributed cache hits.
+- *Aggregator receives coherent current context without erasing producing
+  provenance*: both halves of the checklist above, simultaneously.
+- *Audit distinguishes producer from consumer for cache hits*: §9.
+- *Missing/stale/unverifiable producer provenance rejected or classified
+  stale, never silently rebound*: `rebind_cached_result_to_consuming_context`
+  performs **no** re-verification of `producer_provenance` against any
+  manifest (that already happened once, at the original cache-write time,
+  via §3's construction path) — it only requires `producer_provenance` to
+  already be internally self-consistent, which
+  `ReferenceResultProducerProvenance.__post_init__`'s own checksum
+  re-verification (run on every deserialization, including the cache's
+  own `task_result_from_dict`) already structurally guarantees. A cache
+  entry whose stored `producer_provenance` fails that self-check —
+  corrupted, tampered, or stamped under a stale schema version — is
+  rejected by the cache's own existing `CORRUPT`/`STALE_INCOMPATIBLE`
+  disposition **before** `rebind_cached_result_to_consuming_context` is
+  ever called, exactly mirroring how a corrupted `task_result` is already
+  rejected today.
 
-**Unchanged, existing protections** (this design adds no new raw
-identifier anywhere): the full `DistributedProvenanceManifest` (embedding
-complete `WorkerExecutionContext` records, `generation_command`,
-`code_revision`) remains protected operational/calibration evidence, never
-committed; `ProtectedOperationalMapping` remains the only place a raw GCP
-project ID, hostname, instance ID, or service-account identity may live,
-joined back only via `logical_environment_id`; individual
-`WorkerExecutionContext` objects are never embedded in any production
-schema — only their checksums (§2) are, and resolving a checksum to its
-full context requires the protected manifest.
+## 7. Aggregation
 
-**Safe to expose in the full-fidelity privileged `ReferenceTaskResult`/
-`ReferenceRunContext`/`ReferenceAuditRecord` (i.e. `*_to_dict`,
-non-redacted)**: all five new fields from §1/§2/§3/§5 — every one is
-either a sha256 hex checksum or (for `contributing_worker_context_checksums`)
-a tuple of the same.
+Unchanged in substance from the original design, restated precisely
+against the corrected field names: **run-level** fields (§2:
+`ReferenceRunContext.orchestration_substrate`/`distributed_run_context_checksum`/
+`distributed_provenance_manifest_checksum`) are shared across all 164
+tasks by construction (consuming-session facts, and — per §6 — every
+task result entering an aggregate carries the *consuming* context
+regardless of fresh/cache-hit origin), so `_require_shared_run_context`
+needs no modification. **Task-level** fields (§3/§4:
+`ReferenceTaskResult.producer_provenance`, including its own nested
+substrate) are free to differ per task — exactly like `candidate_id`
+already does, and now additionally like "which historical run actually
+produced this task's bytes" legitimately does too.
 
-**Recommended narrower allowlist for `redact_task_result`/
-`redact_benchmark_result`** (`src/reference/result_redaction.py`) — a B.4A
-recommendation, not an instruction-mandated resolution (see §8, Unresolved
-Decision 3): include `distributed_run_context_checksum`,
-`distributed_provenance_manifest_checksum`, and
-`production_identity_checksum` (three single, coarse, run/aggregate-level
-checksums — safe by the same reasoning `SafeRedactedSummary` already
-applies to its own coarse, deduplicated `*_observed` tuples); **exclude**
-`contributing_worker_context_checksums` from the redacted view for the
-per-task-fingerprinting reason given in §5.
+## 8. Redaction
 
-**What must never appear in any redacted or safe path, restated from the
-existing accepted rule (unchanged by this design)**: raw project IDs,
-zones/resource names, instance IDs, service-account addresses, hostnames,
-filesystem paths, credentials, and any protected manifest content.
+Unchanged core protections (no new raw identifier anywhere; the full
+`DistributedProvenanceManifest`, `ProtectedOperationalMapping`, and
+individual `WorkerExecutionContext` objects remain protected/never
+embedded — only checksums ever appear in any production schema).
 
-## 8. Unresolved decisions (require explicit resolution, at latest by B.4B's own authorization)
+**Recommended redacted-view allowlist** (`redact_task_result`), revised
+for the corrected field set: include `orchestration_substrate` (both
+consuming, via `context`, and producing, via `producer_provenance.substrate`
+— coarse, closed-enum values, safe), `distributed_run_context_checksum`/
+`distributed_provenance_manifest_checksum` (consuming, from `context`),
+and from `producer_provenance`: `distributed_run_context_checksum`/
+`distributed_provenance_manifest_checksum` (producing),
+`production_identity_checksum`, `contributing_worker_contexts_checksum`,
+`contributing_worker_count`. **Exclude** the raw
+`contributing_worker_context_checksums` tuple (§4's fingerprinting
+rationale, unchanged). This is still a B.4A recommendation, not an
+instruction-mandated resolution — flagged in §10.
 
-**1. Are the new fields required or optional?** This design makes every
-new field `Optional` (`str | None` / empty tuple), with `None` meaning "no
-distributed execution substrate recorded" — covering the **only mode any
-real reference-evaluation execution has ever actually used in this
-repository**: the MEGB-03G.3/G.4 orchestrator running directly against a
-local Docker backend, not through the (still entirely offline/synthetic)
-distributed coordinator/worker system. Neither accepted `EnvironmentClass`
-member (`PERSONAL_BOOTSTRAP`, `COMPANY_PLAYGROUND`) describes this
-"no distributed substrate at all" case, and extending that closed enum is
-explicitly a B.1-owned decision this checkpoint must not silently make.
-Making the fields required would force every non-distributed execution
-path to synthesize a fictitious `DistributedRunContext`/
-`WorkerExecutionContext` pair, which this design does not recommend.
-**Decision needed**: confirm the Optional/`None`-means-legacy design
-(this document's default), or separately authorize a B.1 amendment adding
-a third `EnvironmentClass` (e.g. `LOCAL_DEVELOPMENT`) so the fields can be
-required.
+## 9. Audit-field matrix
 
-**2. Region/zone exclusion from cache identity, restated as a real
-consequence, not merely cited**: because `ProductionIdentityProjection`/
-`AggregateProductionIdentityProjection` exclude region and zone (B.1's own
-timing-only determination, which this design does not redesign), two
-executions in different GCP regions with otherwise-identical
-configuration **share a cache key** under this design. This is the
-literal, intended consequence of not redesigning B.1's decision — flagged
-explicitly here so it is an acknowledged design consequence, not a
-silently-inherited surprise discovered later.
+`ReferenceAuditRecord` gains, as flat scalar fields (never a nested
+object — preserving this record's own established "flat,
+independently-serializable" discipline; the constituent checksums already
+give full reconciliation capability without embedding
+`ReferenceResultProducerProvenance` itself):
 
-**3. Audit/redaction granularity of `contributing_worker_context_checksums`**
-(§5/§7): the exclusion recommendation is B.4A's own judgment, reasoned by
-analogy to `SafeRedactedSummary`'s zone exclusion — the authorizing
-instruction does not itself state whether per-task worker-checksum lists
-are safe to expose. Needs explicit confirmation (or a different call)
-before B.4B implements `redact_task_result`/`ReferenceAuditRecord`.
+| Field | Source (fresh or cache hit, uniformly) |
+|---|---|
+| `consuming_orchestration_substrate` | `run_context.orchestration_substrate` (`representative.run_context`, i.e. the current work item's context — unchanged sourcing from today's code) |
+| `consuming_distributed_run_context_checksum` | `run_context.distributed_run_context_checksum` |
+| `consuming_distributed_provenance_manifest_checksum` | `run_context.distributed_provenance_manifest_checksum` |
+| `producing_orchestration_substrate` | `task_result.producer_provenance.substrate` |
+| `producing_distributed_run_context_checksum` | `task_result.producer_provenance.distributed_run_context_checksum` |
+| `producing_distributed_provenance_manifest_checksum` | `task_result.producer_provenance.distributed_provenance_manifest_checksum` |
+| `production_identity_checksum` | `task_result.producer_provenance.production_identity_checksum` — inherently a producer-side fact only; no separate "consuming" variant exists (production identity describes who executed the candidate, never who is now reading the result) |
+| `contributing_worker_contexts_checksum` | `task_result.producer_provenance.contributing_worker_contexts_checksum` |
+| `contributing_worker_count` | `task_result.producer_provenance.contributing_worker_count` |
+| `cache_disposition` | unchanged, existing field |
 
-**4. `None`-vs-`None` cache equivalence**: with fields Optional, two
-distinct non-distributed (legacy/local) executions currently share a
-cache key already (today's pre-B.4 behavior, unchanged) — this design
-does not attempt to further distinguish "which laptop" produced a local
-result, since no such distinction exists in today's schema either. Noted
-as a pre-existing characteristic this checkpoint does not resolve, not a
-regression this design introduces.
+**Nullability rule, stated once, governed by substrate alone — not by
+`cache_disposition`**: every `consuming_*`/`producing_*` pair is
+`None`/`0` **if and only if** its own substrate value is
+`LOCAL_REFERENCE_ORCHESTRATOR`; populated and internally verified
+whenever its substrate is `DISTRIBUTED_REFERENCE_ORCHESTRATOR` — per §1's
+invariants, independent of whether the record describes a fresh execution
+or a cache hit. `cache_disposition` is an orthogonal axis: it says
+*whether* a cache lookup occurred and what it found, not *what
+substrate* was involved.
 
-## 9. Cache-reuse decision table
+**Illustrative combinations** (not exhaustive — the general rule above is
+authoritative):
 
-All nine required scenarios, evaluated against `production_identity_checksum`
-(§4) — the only new field entering cache identity.
-
-| # | Scenario | `production_identity_checksum` | Cache outcome |
+| Scenario | `consuming_orchestration_substrate` | `producing_orchestration_substrate` | `production_identity_checksum` |
 |---|---|---|---|
-| 1 | Same run, same worker | Identical | **Hit** |
-| 2 | Same run, different worker with equivalent (byte-identical) configuration | Identical (`worker_participant_id` excluded from the projection) | **Hit** |
-| 3 | Different run, equivalent production identity (same machine type/provisioning class/image/implementation version/host-runtime/telemetry-policy/environment) | Identical (`distributed_run_id`/manifest checksum excluded from the projection) | **Hit** — the explicitly required cross-run reuse property |
-| 4 | Different worker image (`worker_image_digest`) | Differs | **Miss** |
-| 5 | Different machine type or resource profile | Differs | **Miss** |
-| 6a | Different region or zone only, configuration otherwise identical | Identical (region/zone excluded per B.1, §8 Decision 2) | **Hit** — acknowledged consequence, not redesigned |
-| 6b | Different provisioning class (Spot ↔ On-Demand) only | Differs | **Miss** |
-| 7 | Different distributed manifest/run, equivalent production identity | Identical `production_identity_checksum`; `distributed_run_context_checksum`/`distributed_provenance_manifest_checksum` differ | **Hit** — cache identity and run-provenance-traceability are intentionally decoupled (§1 vs. §4) |
-| 8 | Stale or unverifiable worker provenance (`contributing_worker_context_checksums` entry does not resolve against the claimed manifest via `resolve_worker_context`) | N/A — never reaches key construction | **Rejected at construction/verification**, not a cache miss — mirrors `resolve_worker_context`'s existing "insufficient without a verifiable manifest" rule |
-| 9 | Legacy pre-B.4 cache entry (old `cache_key_schema_version`) vs. a new-schema entry with `production_identity_checksum = None` | Schema version differs (old entries lack the field/version entirely) | Old entry: **`STALE_INCOMPATIBLE`**, rejected outright by the existing schema-version check (no migration, matching every prior schema bump's own precedent). New-schema `None` (local/legacy) entry: its own valid, distinct partition — **never** treated as equivalent to any real distributed `production_identity_checksum` |
+| Fresh execution, local session | `LOCAL_...` | `LOCAL_...` | `None` |
+| Fresh execution, distributed session | `DISTRIBUTED_...` | `DISTRIBUTED_...` (equal to consuming — producer = consumer for fresh) | Present |
+| Cache hit, local session, local-produced entry | `LOCAL_...` | `LOCAL_...` | `None` |
+| Cache hit, distributed session, **local**-produced (legacy) entry | `DISTRIBUTED_...` | `LOCAL_...` | `None` |
+| Cache hit, distributed session, distributed-produced entry from a **different** historical run | `DISTRIBUTED_...` | `DISTRIBUTED_...` (values differ from consuming) | Present, equal to the producing run's own |
+| Cache hit, distributed session, distributed-produced entry from **this same** run (a retry-then-reused-within-run case) | `DISTRIBUTED_...` | `DISTRIBUTED_...` (values equal consuming) | Present |
 
-## 10. Persisted-artifact audit (read-only; no privileged content opened)
+## 10. Remaining and updated unresolved decisions
 
-**Tracked, committed artifacts**: a repository-wide search (`grep -rl`,
-`.json`/`.jsonl`, entire working tree including gitignored paths on disk)
-for the literal strings `reference-result-schema-v*`,
-`reference-result-cache-key-v*`, `reference-result-cache-entry-v*`, and
-`reference-audit-record-v*` returns **zero matches**. This matches each
-schema's own module docstring claim that no persisted artifact of any of
-these four families has ever existed as a *tracked* artifact.
+**Resolved by this correction** (were open in the original design):
 
-**Gitignored, regenerable, non-privileged**:
-`artifacts/reference/g4_benchmark_audit/g4_benchmark_audit_log.jsonl` — 66
-`reference-audit-record-v2`-stamped records from the real MEGB-03G.4
-benchmark run, per `reference_audit.py`'s own module docstring (this
-document did not re-open the file; the docstring's existing statement was
-relied on, since audit records are structurally non-privileged by design
-and this fact is already recorded). Already stale today, following the
-v2→v3 `cache_disposition` addendum (no migration provided, regenerable by
-rerunning G.4) — the same fate a B.4B `AUDIT_RECORD_SCHEMA_VERSION`
-v3→v4 bump (§11) would give it again, consistent with this project's
-established no-migration-for-regenerable-artifacts precedent.
+- Producer-vs-consumer cache-hit handling: §6's rebinding mechanism,
+  concretely specified, not deferred to B.4B.
+- The substrate-vs-`None` ambiguity: §1's explicit enum.
+- Worker-set exposure vs. reconciliation tension: §4's derived-checksum
+  split.
 
-**Gitignored, regenerable, but genuinely privileged — found, not opened**:
-`artifacts/privileged/reference/g4_benchmark_cache/` contains **49 real
-files**, content-addressed by cache-key digest filenames (confirmed by
-directory listing only — `find`, not `cat`/`Read`), produced by the same
-real MEGB-03G.4 benchmark run. **This document did not open, read, or
-inspect any of these 49 files** — per instruction, doing so would be
-opening real privileged benchmark contents. Their likely stamp is
-`reference-result-cache-entry-v2` / `RESULT_SCHEMA_VERSION
-reference-result-schema-v4` / `CACHE_KEY_SCHEMA_VERSION
-reference-result-cache-key-v2` (today's current versions, per
-`reference_cache.py`'s own docstring cross-reference to this same G.4
-run) — **inferred from existing documentation, not confirmed by direct
-inspection**, and B.4B should treat this as needing explicit confirmation
-(or simply proceed on the assumption below) before touching this
-directory. **Consequence for B.4B**: under the version-bump matrix in
-§11, all 49 entries become schema-incompatible and are rejected via the
-cache's own existing `STALE_INCOMPATIBLE` disposition (never silently
-reinterpreted) — exactly the audit-log precedent above, and exactly
-scenario 9 in §9's decision table. This is expected, acceptable fallout
-(gitignored, non-committed, regenerable by rerunning G.4), not a blocker,
-and not a migration this document is designing.
+**Still open, carried forward or newly surfaced**:
 
-**Tracked, non-artifact (source) fixtures**: 16 test files construct
-`ReferenceRunContext` directly, 7 construct `ReferenceResultCacheKey`
-(directly or via `cache_key_for`), and 1 constructs `ReferenceAuditRecord`
-(directly or via `build_audit_record`) — ordinary, expected,
-mechanically-updatable call sites (adding the new Optional fields, which
-default-compatible construction can supply as `None`/`()`), the same kind
-of update every prior schema-version bump in this codebase has already
-required and performed. Not enumerated file-by-file here; B.4B's own
-implementation pass is the correct place to update them.
+1. **Naming**: `ReferenceOrchestrationSubstrate`,
+   `ReferenceResultProducerProvenance`, and
+   `rebind_cached_result_to_consuming_context` are this document's
+   proposed names — provisional, per the correction's own framing of the
+   enum values as "provisionally" named; B.4B may rename during
+   implementation review without needing a further B.4A round, provided
+   the field semantics/invariants above are preserved.
+2. **`resolve_verified_manifest`** (§3, step 1) is a new small public
+   primitive this design depends on but does not implement — B.4B must
+   add it to `provenance_manifest_lock.py` before
+   `build_reference_result_producer_provenance` can be implemented.
+3. **Audit/redaction granularity of `contributing_worker_contexts_checksum`/`count`**
+   (§8/§9): including these two derived (non-raw) fields is this
+   document's recommendation, reasoned by analogy, not an
+   instruction-mandated resolution — needs explicit confirmation before
+   B.4B implements `redact_task_result`/`ReferenceAuditRecord`.
+4. **Optional benchmark-level "producer substrates observed" summary**
+   (§1, invariant 3): flagged as an option, not required.
+5. **Local-mode cache non-distinguishability** (unchanged from the
+   original design): two distinct `LOCAL_REFERENCE_ORCHESTRATOR`
+   executions still share a cache key with no further distinction (e.g.
+   different developer machines) — a pre-existing characteristic, not a
+   regression this design introduces, and out of this checkpoint's scope
+   to resolve.
 
-## 11. Proposed version-bump matrix
+## 11. Cache-reuse decision table
 
-| Constant | Current | Proposed | Reason |
+Revised to reflect §1's `orchestration_substrate` participating in the
+digest directly, alongside `production_identity_checksum`.
+
+| # | Scenario | `orchestration_substrate` | `production_identity_checksum` | Cache outcome |
+|---|---|---|---|---|
+| 1 | Same run, same worker | Identical (`DISTRIBUTED_...`) | Identical | **Hit** |
+| 2 | Same run, different worker, equivalent configuration | Identical | Identical (`worker_participant_id` excluded from the projection) | **Hit** |
+| 3 | Different run, equivalent production identity | Identical | Identical (`distributed_run_id`/manifest checksum excluded from the projection) | **Hit** — the required cross-run reuse property |
+| 4 | Different worker image | Identical | Differs | **Miss** |
+| 5 | Different machine type/resource profile | Identical | Differs | **Miss** |
+| 6a | Different region/zone only | Identical | Identical (region/zone excluded per B.1, unchanged) | **Hit** — acknowledged consequence, not redesigned |
+| 6b | Different provisioning class (Spot ↔ On-Demand) | Identical | Differs | **Miss** |
+| 7 | Different manifest/run, equivalent production identity | Identical | Identical; `producer_provenance.distributed_run_context_checksum`/`manifest_checksum` differ from the consuming session's own (§2/§6) | **Hit** — cache identity and run-provenance-traceability intentionally decoupled |
+| 8 | Stale or unverifiable worker provenance | N/A — never reaches key construction | N/A | **Rejected at construction** (§3 steps 3/4), not a cache miss |
+| 9 | Legacy pre-B.4 entry vs. new-schema `None` (local) entry | Old entry lacks the field/version entirely | — | Old: `STALE_INCOMPATIBLE`. New `None` (local): its own distinct partition |
+| 10 (**new**) | Local-mode consumer, distributed-mode cache entry, or vice versa | Differs (`LOCAL_...` vs. `DISTRIBUTED_...`) | — (moot — substrate alone already differs) | **Miss** — structurally guaranteed by §1's cache-key participation, independent of `production_identity_checksum`'s own value |
+
+## 12. Persisted-artifact audit (unchanged from the original round; read-only, no privileged content opened)
+
+Carried forward verbatim — this correction added no new field to any
+persisted-artifact-relevant constant beyond what was already anticipated
+(the version-bump matrix, §13, still bumps the same four constants; the
+reasons are refined, not the artifact-impact conclusion).
+
+Zero tracked `.json`/`.jsonl` artifacts anywhere in the repository
+(including gitignored paths on disk) are stamped with any of the four
+affected schema-version strings. One gitignored, non-privileged artifact
+exists and is already documented stale
+(`artifacts/reference/g4_benchmark_audit/g4_benchmark_audit_log.jsonl`,
+66 `reference-audit-record-v2` records — relied on its own module
+docstring, not re-opened). One real, gitignored, genuinely privileged
+artifact exists: `artifacts/privileged/reference/g4_benchmark_cache/`,
+49 real files from the same G.4 run (confirmed by directory listing
+only — **still not opened, not read, by this correction either**). Under
+the version bumps below, all 49 become schema-incompatible and are
+rejected via the cache's own existing `STALE_INCOMPATIBLE` disposition —
+expected, non-blocking, regenerable by rerunning G.4, no migration
+provided, exactly the same conclusion as the original round.
+
+## 13. Proposed version-bump matrix (revised)
+
+| Constant | Current | Proposed | Reason (revised) |
 |---|---|---|---|
-| `RESULT_SCHEMA_VERSION` | `reference-result-schema-v4` | `reference-result-schema-v5` | `ReferenceRunContext` gains 2 fields (§1); `ReferenceTaskResult` gains 3 fields (§2/§3) — a field-shape change, same discipline as every prior bump in this module |
-| `CACHE_KEY_SCHEMA_VERSION` | `reference-result-cache-key-v2` | `reference-result-cache-key-v3` | `ReferenceResultCacheKey` gains 1 field (§4) |
-| `CACHE_ENTRY_SCHEMA_VERSION` | `reference-result-cache-entry-v2` | `reference-result-cache-entry-v3` | Depends on both `RESULT_SCHEMA_VERSION` (embedded `task_result`) and `CACHE_KEY_SCHEMA_VERSION` (embedded `cache_key`), mirroring the existing v1→v2 bump's own stated reason |
-| `AUDIT_RECORD_SCHEMA_VERSION` | `reference-audit-record-v3` | `reference-audit-record-v4` | `ReferenceAuditRecord` gains 3 fields (§5) |
-| Redacted/safe-report schema (`result_redaction.py` — no dedicated version constant exists today; redaction follows `RESULT_SCHEMA_VERSION`) | n/a | n/a — tracks `RESULT_SCHEMA_VERSION` v5 | No independent version constant to bump; the recommended §7 allowlist is a code-level change to `redact_task_result`, gated by the same v5 stamp |
-| `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION` | `megb-03h2c3b3-distributed-provenance-manifest-v1` | **Unchanged** | This design reads `DistributedProvenanceManifest`/`resolve_worker_context` but adds no field to it — no reason to bump |
-| `src/distributed/identity.py` types (`ProductionIdentityProjection`, `AggregateProductionIdentityProjection`) | Already versioned via `DISTRIBUTED_PROVENANCE_SCHEMA_VERSION` | **Unchanged** | Reused as-is (§3) — this design adds no field to either type |
+| `RESULT_SCHEMA_VERSION` | `reference-result-schema-v4` | `reference-result-schema-v5` | `ReferenceRunContext` gains `orchestration_substrate` + 2 checksum fields (§2); `ReferenceTaskResult` gains one new field, `producer_provenance: ReferenceResultProducerProvenance` (§3/§4) — a nested nested type, not independently versioned (mirrors `FullSuiteDiagnostic`/`CandidateSetEntry`'s existing precedent of participating in `RESULT_SCHEMA_VERSION` without their own constant) |
+| `CACHE_KEY_SCHEMA_VERSION` | `reference-result-cache-key-v2` | `reference-result-cache-key-v3` | `ReferenceResultCacheKey` gains **two** fields (§5: `orchestration_substrate`, `production_identity_checksum`) — revised from the original round's one-field reason |
+| `CACHE_ENTRY_SCHEMA_VERSION` | `reference-result-cache-entry-v2` | `reference-result-cache-entry-v3` | Depends on both `RESULT_SCHEMA_VERSION` and `CACHE_KEY_SCHEMA_VERSION`, unchanged reasoning from the original round |
+| `AUDIT_RECORD_SCHEMA_VERSION` | `reference-audit-record-v3` | `reference-audit-record-v4` | `ReferenceAuditRecord` gains 9 fields (§9) — revised in count and shape from the original round's 3-field proposal (adds the explicit consuming/producing split and the two substrate fields) |
+| Redacted/safe-report schema (`result_redaction.py`) | n/a (no independent constant) | n/a — tracks `RESULT_SCHEMA_VERSION` v5 | Unchanged from the original round; §8's allowlist is code-level only |
+| `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION`, `src/distributed/identity.py` types | Unchanged | **Unchanged** | Still reused as-is; this correction adds no field to either |
+| **New**: `resolve_verified_manifest` (§3 step 1) | Does not exist | New public function, `src/distributed/provenance_manifest_lock.py` | No new schema-version constant of its own — a function addition, not a persisted-shape change; named here as a B.4B implementation dependency |
+| **New**: `ReferenceResultProducerProvenance` (§3) | Does not exist | New nested type, `src/reference/result_schema.py`, participates in `RESULT_SCHEMA_VERSION` v5 | Owns `producer_provenance_checksum` as its own self-check field; no independent version constant, per the `FullSuiteDiagnostic` precedent cited above |
 
-**`EXECUTION_PROTOCOL_VERSION` — explicitly not bumped, determination
-explained**: two distinct, same-named-in-spirit but unrelated constants
-exist. `EXECUTION_PROTOCOL_VERSION = "reference-evaluator-execution-protocol-v1"`
-(`src/reference/reference_evaluator.py`) is the reference-evaluator's own
-comparison/execution-profile identity — already persisted on
-`ReferenceRunContext.execution_protocol_version` since the v4 correction,
-unaffected by this design. The actual MEGB-02 candidate-execution **wire**
-protocol identity lives on `CandidateExecutionRequest.protocol_version`/
-`CandidateExecutionResult.protocol_version` (`src/execution/protocol.py`),
-serialized by `src/execution/wire.py`. **None of the fields this design
-adds cross that wire boundary** — nothing here changes what a Docker
-runner container sends or receives; the new fields are populated entirely
-on the controller/reference side, after execution, from
-`src/distributed/` types. No wire-protocol version bump is warranted.
+`EXECUTION_PROTOCOL_VERSION` determination is unchanged from the original
+round (not bumped; the actual MEGB-02 wire-protocol identity lives on
+`CandidateExecutionRequest`/`Result.protocol_version` in
+`src/execution/protocol.py`/`wire.py`, untouched by any field this design
+adds).
 
-## 12. Required B.4B negative-test matrix
+## 14. Required B.4B negative-test matrix (extended)
 
-All ten scenarios named by the authorizing instruction, each mapped to the
-mechanism in this design that must reject it:
+The 10 items from the original round, revised where the corrected design
+changes what's being tested, plus the 11 new items this correction's
+instruction requires:
 
-1. **Missing/dangling manifest checksum** — `distributed_provenance_manifest_checksum`
-   set but does not resolve to any real manifest available to the
-   verifier → reject at the same boundary `resolve_worker_context` already
-   rejects an unresolvable `worker_context_checksum`.
-2. **Unadmitted or substituted worker** — a `contributing_worker_context_checksums`
-   entry not present in the claimed run's `DistributedProvenanceManifest`
-   → `InvalidDistributedProvenanceError` via `resolve_worker_context`.
-3. **Mismatched production-identity projection** — a `production_identity_checksum`
-   that does not equal `aggregate_production_identity_for(run_context,
-   resolved_workers).projection_checksum` when independently recomputed
-   → reject (tampered or fabricated claim).
-4. **Mixed workers in one aggregate that do not share
-   `parent_run_context_checksum`** — already rejected by
-   `require_workers_belong_to_run`/`MismatchedWorkerContextError`
-   (existing, reused unchanged) when resolving `contributing_worker_context_checksums`.
-5. **Cross-run equivalent cache reuse** — a **positive** test: two
-   `ReferenceTaskResult`s built from different `DistributedRunContext`s
-   with byte-identical `AggregateProductionIdentityProjection` inputs
-   produce an **identical** `ReferenceResultCacheKey.key_digest` (proves
-   §9 scenario 3, not a rejection).
-6. **Changed worker image/machine type cache invalidation** — a **positive**
-   contrast test: identical run/task, one field of the projection changed
-   → different `key_digest` (proves §9 scenarios 4/5).
-7. **Stale pre-B.4 schema rejection** — a `reference-result-cache-key-v2`-stamped
-   payload (missing `production_identity_checksum` entirely) deserialized
-   under v3 code → `InvalidCacheKeyError`/`STALE_INCOMPATIBLE`, no silent
-   reinterpretation under the new field names.
-8. **Audit/cache/result disagreement** — a `ReferenceAuditRecord` whose
-   `production_identity_checksum` does not equal the `ReferenceTaskResult`/
-   `ReferenceResultCacheKey` it accompanies → reconciliation failure (new
-   check; no such cross-check exists pre-B.4, since the field itself is
-   new).
-9. **Safe-report leakage** — a structural field-allowlist test (mirroring
-   `tests/test_distributed_leakage.py`'s existing pattern) asserting
-   `contributing_worker_context_checksums` is absent from whatever
-   `redact_task_result` returns, and that no raw project ID, hostname, or
-   any other `ProtectedOperationalMapping`-owned field name ever appears
-   on any of the four new field sets.
-10. **Raw GCP identifier rejection** — a `_reject_if_looks_like_secret`
-    style defense-in-depth test (mirroring
-    `src/distributed/protected_mapping.py`'s existing pattern) confirming
-    a value shaped like a raw project ID/service-account email/credential
-    passed into any of the new checksum-typed fields is rejected by the
-    existing sha256-hex-format validation (a raw identifier is
-    structurally not a valid 64-character hex digest, so this is largely
-    already true by construction — the test proves it, not adds new logic).
+1. Missing/dangling manifest checksum → §3 step 1/2 rejection.
+2. Unadmitted or substituted worker → §3 step 3/4 rejection.
+3. Mismatched production-identity projection (caller-supplied value
+   disagrees with the derived one) → §3 step 7 rejection.
+4. Mixed workers not sharing `parent_run_context_checksum` → rejected by
+   the existing, reused `require_workers_belong_to_run` during manifest
+   resolution.
+5. Cross-run equivalent cache reuse (positive test: identical `key_digest`
+   across two different producing runs) → §11 row 3.
+6. Changed worker image/machine type cache invalidation (positive
+   contrast test: differing `key_digest`) → §11 rows 4/5.
+7. Stale pre-B.4 schema rejection (`reference-result-cache-key-v2`-stamped
+   payload under v3 code) → `STALE_INCOMPATIBLE`.
+8. Audit/cache/result disagreement (an audit record whose
+   `production_identity_checksum` does not equal its accompanying
+   result's) → reconciliation-failure test.
+9. Safe-report leakage (structural allowlist test: raw
+   `contributing_worker_context_checksums` absent from `redact_task_result`'s
+   output; no `ProtectedOperationalMapping`-owned field name anywhere).
+10. Raw GCP identifier rejection (defense-in-depth, mirroring
+    `protected_mapping.py`'s pattern; largely already true by the sha256-hex
+    format check).
+11. **(new)** Distributed mode (`orchestration_substrate ==
+    DISTRIBUTED_REFERENCE_ORCHESTRATOR`) with any single required
+    provenance field missing (parametrized over each of
+    `distributed_run_context_checksum`, `distributed_provenance_manifest_checksum`,
+    `contributing_worker_context_checksums`, `production_identity_checksum`)
+    → §1 invariant 2 rejection, one test per field.
+12. **(new)** Local mode carrying any distributed field populated →
+    §1 invariant 1 rejection.
+13. **(new)** Local/distributed cache separation (positive test:
+    identical hypothetical configuration, differing only in
+    `orchestration_substrate` → different `key_digest`) → §11 row 10.
+14. **(new)** Unknown worker checksum (already covered in spirit by item
+    2, made explicit as its own parametrized case here per the
+    correction's own itemization).
+15. **(new)** Duplicate worker checksum in the caller-supplied tuple →
+    §3 step 4 rejection.
+16. **(new)** Substituted worker (a checksum resolving to a real worker
+    from a *different* manifest than claimed) → §3 step 1's manifest
+    resolution scoping rejection.
+17. **(new)** Wrong-run worker (a checksum that would only resolve under
+    a different run's manifest) → same as 16, distinct assertion.
+18. **(new)** Contributor-set change with equivalent production identity
+    (two different, disjoint `contributing_worker_context_checksums` sets
+    that happen to share one `production_identity_checksum`, differing
+    `contributing_worker_contexts_checksum`) → proves §3's "insufficiency"
+    rationale directly, and confirms `contributing_worker_contexts_checksum`
+    actually distinguishes the two.
+19. **(new)** Cross-run cache hit preserving producer and consumer
+    provenance (end-to-end: rebind a cached result from run A into
+    consuming run B; assert `context == run_B`,
+    `producer_provenance == <run A's original>` unchanged) → §6.2's
+    central property.
+20. **(new)** Mixed fresh/cache-hit 164-task aggregation (some tasks
+    fresh under run B, some rebound cache hits originally produced under
+    run A; assert the resulting `ReferenceBenchmarkResult` constructs
+    successfully — the exact scenario §6.1 found broken pre-correction).
+21. **(new)** Stale producer provenance (a cache entry whose stored
+    `producer_provenance` fails its own self-checksum re-verification on
+    load) → rejected via the cache's existing `CORRUPT` disposition,
+    before `rebind_cached_result_to_consuming_context` is ever reached.
+22. **(new)** Cache-hit audit falsely claiming fresh execution (assert
+    `cache_disposition == VALID_HIT` audit records always have
+    `producing_*` fields sourced from `producer_provenance`, never
+    silently equal to `consuming_*` unless they were already equal, i.e.
+    assert the audit builder never substitutes consumer identity into a
+    producing field).
+23. **(new)** Producer/consumer audit-field consistency (parametrized
+    over every row of §9's illustrative combinations table, asserting the
+    nullability rule holds exactly).
 
 ## Related documents
 
@@ -479,6 +787,8 @@ mechanism in this design that must reject it:
   `megb-03h2c3b1-integration-map.md` — the original field-ownership
   determination this design reuses without redesigning.
 - `docs/reference/megb-03h2c3b3-calibration-provenance-integration-design.md`
-  — the calibration-side integration this design's §1 pattern mirrors.
+  — the calibration-side integration this design's §2/§3 pattern mirrors,
+  and whose `src/reference/distributed_provenance_reconciliation.py`
+  precedent this correction's §3 construction path extends.
 - `docs/reference/version-registry.md` — current values for every
-  constant in §11's version-bump matrix.
+  constant in §13's version-bump matrix.
