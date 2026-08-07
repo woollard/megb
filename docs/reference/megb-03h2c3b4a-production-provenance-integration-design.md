@@ -22,6 +22,21 @@ by the correction (§0 scope, most of aggregation reasoning, the
 persisted-artifact audit) are carried forward with field-name updates
 only.
 
+**Amended twice further, in place, same convention**: a second round
+(§1a, §5/§5a/§5b, §6.2, §9, §11) corrected a genuine internal
+contradiction — the first round's own invariant 4 already claimed
+local/distributed cache keys can never collide, while its invariant 3
+simultaneously permitted a distributed session to serve a local-produced
+cache hit — resolving it by prohibiting cross-substrate reuse
+structurally and renaming the cache-key field to `production_substrate`
+with explicit write/lookup ownership rules. A third round (§3a, §6.2
+precondition 5) closed two remaining absences found during final
+acceptance reconciliation: neither round stated *when*, relative to
+cache lookup, a distributed `production_identity_checksum` is even
+derivable (§3 as written was entirely post-hoc), and neither described
+the *consuming* session's own manifest/provenance as independently
+verified — only the producer's.
+
 ## 0. Scope and what this closes
 
 `docs/reference/megb-03h2c3a-gcp-provenance-audit.md`'s "Revised blocking
@@ -345,6 +360,98 @@ changes whenever the actual participant *set* changes (e.g. a retry moves
 a task to a differently-`worker_participant_id`'d but identically
 configured worker), even when `production_identity_checksum` stays fixed.
 
+### 3a. Prospective cache-key derivation before execution (correction)
+
+**Gap this closes**: §3 as written describes `build_reference_result_producer_provenance`
+entirely post-hoc — called with an already-known `contributing_worker_context_checksums`,
+with no statement of *when* this happens relative to cache lookup. This
+is correct for describing provenance **attached to a completed result**,
+but a cache-first orchestrator (§6.1: `CachePolicy.CACHE_FIRST` consults
+`self._cache.get(key)` before ever calling the evaluator) needs a
+`ReferenceResultCacheKey` — and therefore a `production_identity_checksum`
+— **before execution has happened**, when the "actual" contributor set
+in the post-hoc sense does not yet exist. This section freezes how that
+is possible without accepting a speculative or caller-asserted identity.
+
+**The resolution: distinguish *assignment* from *execution*.** A
+distributed coordinator's admission/leasing step (`AtomicWorkStore.acquire_lease`,
+already accepted, B.2B.1) already binds a work item to a specific,
+already-admitted worker **before that worker executes anything** — the
+worker's own `WorkerExecutionContext` already exists in the manifest at
+lease time; only the *candidate's own execution on it* is still pending.
+This existing lease-time binding is exactly the "frozen contributor set"
+this section needs — no new scheduling concept is introduced.
+
+**Frozen sequence, distributed mode only** (local mode has no worker
+set to assign or freeze at any point — `production_identity_checksum`
+is `None` regardless of timing, so this entire section is vacuous for
+`LOCAL_REFERENCE_ORCHESTRATOR`, stated explicitly to avoid implying
+otherwise):
+
+1. **The intended contributor/worker set is assigned and frozen before
+   lookup.** The coordinator's lease/admission decision (already an
+   accepted B.2B.1/B.2B.2 concept) fixes which worker(s)' `WorkerExecutionContext`
+   checksum(s) will execute this task, before execution starts. This
+   assignment is what "frozen" means here — not a new commitment
+   mechanism, the existing lease.
+2. **Its worker contexts are verified against the manifest.** The
+   assigned checksum(s) are resolved via the same
+   `resolve_worker_context(manifest, checksum)` call §3 step 3 already
+   uses — proving the assignment names a real, admitted worker, not a
+   caller-fabricated one, before any lookup is attempted.
+3. **`AggregateProductionIdentityProjection` is derived from that frozen
+   set.** The identical `aggregate_production_identity_for(manifest.run_context,
+   assigned_workers)` call §3 step 5 already uses — the prospective and
+   post-hoc paths share one derivation function; only the *timing* and
+   the *source* of the worker set (assigned-but-not-yet-executed vs.
+   actually-executed) differ.
+4. **The resulting checksum forms the prospective cache key.** The
+   `ReferenceResultCacheKey.production_identity_checksum` used for the
+   lookup is exactly this projection's own `projection_checksum` — the
+   same field, the same derivation, computed one step earlier in the
+   task's lifecycle than §3's post-hoc description covers.
+5. **Cache lookup occurs after contributor assignment but before candidate
+   execution.** Concretely: `_execute_key_group` (§6.1) must compute the
+   lookup key only after the coordinator's own lease/admission step has
+   bound this task to specific worker(s) — never before (a pre-assignment
+   lookup would have nothing real to derive a distributed
+   `production_identity_checksum` from) and never skipped merely because
+   assignment happened (that would silently fall back to executing
+   without ever checking the cache).
+6. **If assignment changes, the old lookup/key cannot be reused.** A
+   lease expiry/reassignment (already an accepted B.2B.2/B.2B.3 concept —
+   fault-conformance covers exactly this) that moves a task to a
+   different worker before it completes invalidates the prospective key
+   computed under step 4 — the orchestrator does not carry that stale key
+   forward into a retry; it recomputes the prospective key fresh from the
+   *new* assignment (steps 1–4 again) before attempting another lookup.
+   No caching of the prospective key across a reassignment boundary.
+7. **No speculative or caller-asserted production identity is accepted,
+   prospectively or post-hoc.** The prospective path is not a relaxed or
+   separate trust boundary — it uses the exact same
+   `build_reference_result_producer_provenance`-family derivation (steps
+   1–5 above mirror §3 steps 1/3/5/6 exactly) and the exact same
+   auto-compute-or-reject discipline (§3 step 7). A caller cannot supply
+   an un-derived `production_identity_checksum` for a lookup any more
+   than for a write.
+8. **If the contributor set cannot be frozen prospectively, execution
+   must not claim a cache hit.** If the scheduling policy in effect
+   cannot yet name a specific assigned worker for a task (e.g. an
+   open-pool policy where any of several idle workers may pick up the
+   work at execution time, not at admission time), no prospective key can
+   be derived — the orchestrator must skip the cache lookup entirely for
+   that task, falling through to fresh execution, mirroring the existing
+   `CacheDisposition.BYPASSED_BY_POLICY` treatment already established
+   for a deliberate policy-level cache bypass (§6.1's own citation of
+   that mechanism). It must never substitute a placeholder, a
+   session-level default, or any value not derived from a real,
+   verified, frozen assignment.
+
+This preserves cache-first candidate execution exactly as already
+designed (§6.1's `CACHE_FIRST` policy is unchanged) while never
+pretending production identity is knowable before scheduling has
+actually committed to it.
+
 ## 4. Worker-set reconciliation without exposure
 
 **`contributing_worker_context_checksums` semantics, stated explicitly**:
@@ -604,12 +711,61 @@ it must be fine"):
    `execution_profile_id`, `execution_protocol_version`) against
    `consuming_context`/the task-level fields explicitly, rather than
    relying on "the lookup already used these fields to compute the key
-   that found this entry." The **consuming** manifest identity
-   (`consuming_context.distributed_provenance_manifest_checksum`, a
-   session-level fact, §2) is explicitly permitted to differ from the
-   cached entry's own **producing** manifest identity — that is exactly
-   the cross-run reuse property §5/§11 require; this step never compares
-   those two, only the fields actually listed above.
+   that found this entry."
+
+   **Producer/consumer manifest verification, clarified explicitly
+   (correction)**:
+   - **Producer manifest integrity and producer provenance are
+     independently verified** — already true, at cache-*write* time, via
+     §3's 7-step `build_reference_result_producer_provenance` path
+     (`resolve_verified_manifest`, checksum cross-checks,
+     `resolve_worker_context` per worker). This precondition does not
+     redo that verification; it relies on `producer_provenance`'s own
+     self-checksum (precondition 1) as proof it already happened and was
+     not tampered with since.
+   - **Consumer manifest integrity and current-run provenance are
+     independently verified** — a genuinely new requirement this
+     correction adds: for a `DISTRIBUTED_REFERENCE_ORCHESTRATOR`
+     consuming session, `consuming_context.distributed_run_context_checksum`/
+     `distributed_provenance_manifest_checksum` must themselves have been
+     verified against a real, lock-validated
+     `DistributedProvenanceManifest` — via a new function,
+     `verify_consuming_run_context_provenance(context, lock)`, added
+     alongside `build_reference_result_producer_provenance` in
+     `src/reference/distributed_provenance_reconciliation.py` (same
+     two-checksum-comparison shape as §3 steps 1–2, applied to the
+     *consuming* context's own claimed run/manifest rather than a
+     producer's). Called once, at the point the consuming session's own
+     `ReferenceRunContext` is first constructed for a distributed run —
+     not repeated per task, since it is a session-level fact (§2) —
+     **before** any task in that session reaches
+     `rebind_cached_result_to_consuming_context` at all. This
+     precondition therefore does not re-run that verification either; it
+     depends on it having already happened, exactly symmetrically with
+     how it depends on the producer side already having happened.
+   - **Scientific/cache-key identity fields must be compatible** — this
+     precondition's own primary check, restated: the fields listed above
+     must match between `cached_result` and `consuming_context`.
+   - **Producer and consumer manifest checksums need not be equal for
+     allowed cross-run reuse** — unchanged from the prior round: the
+     **consuming** manifest identity
+     (`consuming_context.distributed_provenance_manifest_checksum`, a
+     session-level fact, §2) is explicitly permitted to differ from the
+     cached entry's own **producing** manifest identity — that is exactly
+     the cross-run reuse property §5/§11 require; this step never
+     compares those two, only the fields actually listed above.
+   - **Both checksums remain separately attributable in audit** —
+     `consuming_distributed_provenance_manifest_checksum`/
+     `producing_distributed_provenance_manifest_checksum` (§9), unchanged.
+   - **Equality is required only where an existing scientific identity
+     rule genuinely requires it** — stated as the general principle this
+     precondition follows: the fields this step actually compares are
+     exactly, and only, the fields `ReferenceResultCacheKey`/
+     `_require_shared_run_context` already treat as outcome-affecting
+     identity; manifest/run identity is deliberately excluded from that
+     set (§5), so it is correctly excluded from this comparison too — no
+     field is compared here "for extra safety" beyond what an existing
+     rule already requires.
 6. **Reject stale or unverifiable producer provenance.** If step 1's
    self-consistency check fails, or if `producer_provenance` is stamped
    under a schema version this code does not implement, the function
@@ -940,6 +1096,7 @@ provided, exactly the same conclusion as the original round.
 | Redacted/safe-report schema (`result_redaction.py`) | n/a (no independent constant) | n/a — tracks `RESULT_SCHEMA_VERSION` v5 | Unchanged from the original round; §8's allowlist is code-level only |
 | `DISTRIBUTED_PROVENANCE_MANIFEST_SCHEMA_VERSION`, `src/distributed/identity.py` types | Unchanged | **Unchanged** | Still reused as-is; this correction adds no field to either |
 | **New**: `resolve_verified_manifest` (§3 step 1) | Does not exist | New public function, `src/distributed/provenance_manifest_lock.py` | No new schema-version constant of its own — a function addition, not a persisted-shape change; named here as a B.4B implementation dependency |
+| **New** (this correction): `verify_consuming_run_context_provenance` (§6.2 precondition 5) | Does not exist | New function, `src/reference/distributed_provenance_reconciliation.py` | No new schema-version constant — a function addition, verifying the *consuming* session's own claimed distributed run/manifest identity against a real lock-validated manifest, symmetric with `build_reference_result_producer_provenance`'s existing verification of the *producer* side |
 | **New**: `ReferenceResultProducerProvenance` (§3) | Does not exist | New nested type, `src/reference/result_schema.py`, participates in `RESULT_SCHEMA_VERSION` v5 | Owns `producer_provenance_checksum` as its own self-check field; no independent version constant, per the `FullSuiteDiagnostic` precedent cited above |
 
 `EXECUTION_PROTOCOL_VERSION` determination is unchanged from the original
@@ -1066,6 +1223,35 @@ instruction requires:
     `LOCAL_REFERENCE_ORCHESTRATOR` — either because no such cache hit is
     ever reachable (items 24/25) or, defensively, via an explicit
     aggregate-level assertion if B.4B chooses to add one.
+30. **(this correction, new)** Prospective key equals post-hoc key for an
+    unretried task (§3a): execute a task end-to-end under a single,
+    unchanged worker assignment; assert the prospective
+    `production_identity_checksum` computed before execution (§3a steps
+    1–4) equals the post-hoc one `build_reference_result_producer_provenance`
+    derives after execution (§3 steps 5–6) — proves the two derivation
+    paths agree when nothing changes between them.
+31. **(this correction, new)** Prospective key invalidated by
+    reassignment (§3a step 6): compute a prospective key under an initial
+    lease/assignment, then force a lease expiry/reassignment to a
+    different (but configuration-equivalent) worker before completion;
+    assert the orchestrator does not reuse the original prospective
+    lookup result for the eventual cache write — the write's own key is
+    recomputed fresh from the *new* assignment.
+32. **(this correction, new)** Cache lookup skipped, not faked, when
+    assignment cannot be frozen (§3a step 8): under a scheduling policy
+    that cannot yet name a specific worker for a task, assert the
+    orchestrator records `CacheDisposition.BYPASSED_BY_POLICY` (or
+    proceeds directly to fresh execution) rather than constructing any
+    `ReferenceResultCacheKey` with a placeholder or fabricated
+    `production_identity_checksum`.
+33. **(this correction, new)** Consumer manifest/provenance independently
+    verified (§6.2 precondition 5): construct a `DISTRIBUTED_REFERENCE_ORCHESTRATOR`
+    `ReferenceRunContext` whose claimed `distributed_run_context_checksum`/
+    `distributed_provenance_manifest_checksum` do not resolve against any
+    real, lock-validated manifest; assert
+    `verify_consuming_run_context_provenance` rejects it — independent of,
+    and using a different code path than, the producer-side verification
+    §3 already tests.
 
 ## Related documents
 
